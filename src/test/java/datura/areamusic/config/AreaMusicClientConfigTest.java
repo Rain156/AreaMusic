@@ -1,9 +1,17 @@
 package datura.areamusic.config;
 
 import com.electronwill.nightconfig.core.CommentedConfig;
-import net.neoforged.fml.config.IConfigSpec;
+import net.neoforged.bus.api.BusBuilder;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.config.ConfigTracker;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.IModBusEvent;
 import net.neoforged.neoforge.common.ModConfigSpec;
+import net.neoforged.neoforgespi.language.IModInfo;
 import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Proxy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -11,8 +19,7 @@ class AreaMusicClientConfigTest {
     @Test
     void defaultsToFullVolumeAndWritesUpdatesToConfigData() {
         AreaMusicClientConfig config = AreaMusicClientConfig.create();
-        CommentedConfig data = CommentedConfig.inMemory();
-        attach(config, data);
+        CommentedConfig data = attach(config);
         try {
             assertEquals(1.0, config.volume(), 0.0001);
 
@@ -28,8 +35,7 @@ class AreaMusicClientConfigTest {
     @Test
     void programmaticUpdatesAreClampedToTheSliderRange() {
         AreaMusicClientConfig config = AreaMusicClientConfig.create();
-        CommentedConfig data = CommentedConfig.inMemory();
-        attach(config, data);
+        attach(config);
         try {
             config.setVolume(-0.5);
             assertEquals(0.0, config.volume(), 0.0001);
@@ -46,15 +52,35 @@ class AreaMusicClientConfigTest {
         assertEquals("areamusic-client.toml", AreaMusicClientConfig.FILE_NAME);
     }
 
-    private static void attach(AreaMusicClientConfig config, CommentedConfig data) {
+    private static CommentedConfig attach(AreaMusicClientConfig config) {
         ModConfigSpec spec = config.spec();
-        spec.correct(data);
-        spec.acceptConfig(new LoadedConfig(data));
+        ConfigTracker tracker = new ConfigTracker();
+        ModConfig modConfig = tracker.registerConfig(
+                ModConfig.Type.CLIENT,
+                spec,
+                new TestModContainer(),
+                AreaMusicClientConfig.FILE_NAME
+        );
+        ConfigTracker.acceptSyncedConfig(modConfig, new byte[0]);
+        return modConfig.getLoadedConfig().config();
     }
 
-    private record LoadedConfig(CommentedConfig config) implements IConfigSpec.ILoadedConfig {
+    private static final class TestModContainer extends ModContainer {
+        private final IEventBus eventBus;
+
+        private TestModContainer() {
+            super((IModInfo) Proxy.newProxyInstance(
+                    IModInfo.class.getClassLoader(),
+                    new Class<?>[]{IModInfo.class},
+                    (proxy, method, args) -> "getModId".equals(method.getName()) ? "areamusic-test" : null
+            ));
+            eventBus = BusBuilder.builder().markerType(IModBusEvent.class).build();
+            eventBus.start();
+        }
+
         @Override
-        public void save() {
+        public IEventBus getEventBus() {
+            return eventBus;
         }
     }
 }
