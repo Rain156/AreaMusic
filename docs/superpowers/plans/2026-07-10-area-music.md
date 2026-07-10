@@ -350,7 +350,7 @@ git commit --only -m "feat: sync area playback from server" -- src/main/java/dat
 - Create: `src/main/java/datura/areamusic/client/audio/FadeEnvelope.java`
 - Create: `src/main/java/datura/areamusic/client/audio/PcmMath.java`
 
-- [ ] **Step 1: Write failing sample-accurate tests**
+- [x] **Step 1: Write failing sample-accurate tests**
 
 At 1000 frames per second, a 1000 ms fade from 0 to 1 must return 0 at the start, 0.5 after 500 frames, and 1 after 1000 frames. PCM sums must saturate to `Short.MIN_VALUE` and `Short.MAX_VALUE` rather than wrap.
 
@@ -362,7 +362,7 @@ assertEquals(0.5f, fade.value(), 0.001f);
 assertEquals(Short.MAX_VALUE, PcmMath.saturate(40000));
 ```
 
-- [ ] **Step 2: Verify tests fail, implement, and rerun**
+- [x] **Step 2: Verify tests fail, implement, and rerun**
 
 Run before implementation: `.\gradlew.bat test --tests "datura.areamusic.client.audio.*"`
 
@@ -374,7 +374,7 @@ Run after implementation: `.\gradlew.bat test --tests "datura.areamusic.client.a
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Commit audio primitives**
+- [x] **Step 3: Commit audio primitives**
 
 ```powershell
 git add src/main/java/datura/areamusic/client/audio src/test/java/datura/areamusic/client/audio
