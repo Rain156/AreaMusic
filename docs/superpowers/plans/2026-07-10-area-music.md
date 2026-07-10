@@ -109,7 +109,7 @@ git commit --only -m "build: configure AreaMusic dependencies" -- build.gradle g
 - Create: `src/main/java/datura/areamusic/area/AreaDefinition.java`
 - Create: `src/main/java/datura/areamusic/area/AreaResolver.java`
 
-- [ ] **Step 1: Write failing boundary and priority tests**
+- [x] **Step 1: Write failing boundary and priority tests**
 
 Tests construct areas with reversed endpoints and assert inclusive boundaries, dimension isolation, priority descending, block volume ascending, and ID lexical fallback:
 
@@ -124,13 +124,13 @@ assertEquals("narrow", AreaResolver.resolve(List.of(broad, narrow),
         new ResourceLocation("minecraft:overworld"), new BlockPos(3, 65, 3)).orElseThrow().id());
 ```
 
-- [ ] **Step 2: Run tests and verify the model is absent**
+- [x] **Step 2: Run tests and verify the model is absent**
 
 Run: `.\gradlew.bat test --tests "datura.areamusic.area.*"`
 
 Expected: compilation fails because `AreaDefinition` and `AreaResolver` do not exist.
 
-- [ ] **Step 3: Implement validated immutable areas and comparator-based resolution**
+- [x] **Step 3: Implement validated immutable areas and comparator-based resolution**
 
 Use this public contract:
 
@@ -153,13 +153,13 @@ public final class AreaResolver {
 
 Validate the ID regex, nonblank MusicID, finite volume in `[0,1]`, and fade ranges in `[0,60000]`. Normalize endpoints in `create`. Sort matching regions by priority descending, block volume ascending, then ID ascending.
 
-- [ ] **Step 4: Run the area tests**
+- [x] **Step 4: Run the area tests**
 
 Run: `.\gradlew.bat test --tests "datura.areamusic.area.*"`
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit the area core**
+- [x] **Step 5: Commit the area core**
 
 ```powershell
 git add src/main/java/datura/areamusic/area src/test/java/datura/areamusic/area
