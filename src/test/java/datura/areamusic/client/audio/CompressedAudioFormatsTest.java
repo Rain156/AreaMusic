@@ -33,12 +33,16 @@ class CompressedAudioFormatsTest {
     void decodesCompressedFormatsWhenServiceLoaderResourcesAreHidden(String fileName) throws Exception {
         URL resource = getClass().getResource("/datura/areamusic/audio/" + fileName);
         assertNotNull(resource);
+        Path source = tempDir.resolve(fileName);
+        try (InputStream input = resource.openStream()) {
+            Files.copy(input, source);
+        }
 
         Thread thread = Thread.currentThread();
         ClassLoader original = thread.getContextClassLoader();
         thread.setContextClassLoader(new ServiceResourceBlockingClassLoader(original));
         try {
-            try (AudioInputStream decoded = new AudioStreamFactory().open(Path.of(resource.toURI()))) {
+            try (AudioInputStream decoded = new AudioStreamFactory().open(source)) {
                 assertEquals(AudioStreamFactory.MIX_FORMAT, decoded.getFormat());
                 assertTrue(decoded.readNBytes(AudioStreamFactory.MIX_FORMAT.getFrameSize()).length > 0);
             }
