@@ -6,12 +6,30 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.contents.TranslatableContents;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 class AreaMusicSoundOptionsTest {
+    @Test
+    void selectsOnlyOneMatchingSoundOptionsList() {
+        assertEquals("sound", AreaMusicSoundOptions.findUnique(
+                List.of("other", "sound"),
+                value -> value.equals("sound")
+        ));
+        assertNull(AreaMusicSoundOptions.findUnique(
+                List.of("sound-1", "sound-2"),
+                value -> value.startsWith("sound")
+        ));
+        assertNull(AreaMusicSoundOptions.findUnique(
+                List.of("other"),
+                value -> value.equals("sound")
+        ));
+    }
+
     @Test
     void createsTheSliderFromTheSavedIndependentVolume() {
         AtomicReference<Double> update = new AtomicReference<>();

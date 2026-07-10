@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import java.util.List;
 import java.util.function.DoubleConsumer;
 import java.util.function.DoubleSupplier;
+import java.util.function.Predicate;
 
 @Mod.EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT)
 public final class AreaMusicSoundOptions {
@@ -37,13 +38,20 @@ public final class AreaMusicSoundOptions {
             return;
         }
 
-        OptionsList list = event.getListenersList().stream()
+        Options options = Minecraft.getInstance().options;
+        OptionInstance<Double> masterVolume = options.getSoundSourceOptionInstance(SoundSource.MASTER);
+        OptionInstance<Double> voiceVolume = options.getSoundSourceOptionInstance(SoundSource.VOICE);
+        List<OptionsList> optionLists = event.getListenersList().stream()
                 .filter(OptionsList.class::isInstance)
                 .map(OptionsList.class::cast)
-                .findFirst()
-                .orElse(null);
+                .toList();
+        OptionsList list = findUnique(
+                optionLists,
+                candidate -> candidate.findOption(masterVolume) != null
+                        && candidate.findOption(voiceVolume) != null
+        );
         if (list == null) {
-            LOGGER.warn("Could not find the sound options list; skipping the AreaMusic volume slider");
+            LOGGER.warn("Could not identify one unique sound options list; skipping the AreaMusic volume slider");
             return;
         }
 
@@ -52,7 +60,21 @@ public final class AreaMusicSoundOptions {
                 config::volume,
                 config::setVolume
         );
-        insertVolumeOption(list, Minecraft.getInstance().options, areaMusicVolume);
+        insertVolumeOption(list, options, areaMusicVolume);
+    }
+
+    static <T> T findUnique(List<T> candidates, Predicate<? super T> predicate) {
+        T match = null;
+        for (T candidate : candidates) {
+            if (!predicate.test(candidate)) {
+                continue;
+            }
+            if (match != null) {
+                return null;
+            }
+            match = candidate;
+        }
+        return match;
     }
 
     static OptionInstance<Double> createVolumeOption(

@@ -48,9 +48,9 @@
 
 ### Task 4: Verify behavior and package the mod
 
-- [ ] Run `clean test build reobfJarJar runGameTestServer`.
-- [ ] Inspect the all-in-one JAR and confirm decoder dependencies remain embedded.
-- [ ] Launch the development client and verify the slider visually.
-- [ ] Verify persistence after reopening the screen/client.
-- [ ] Verify vanilla Music at 0% leaves AreaMusic audible and Master at 0% silences it.
+- [x] Run `clean test build reobfJarJar runGameTestServer`.
+- [x] Inspect the all-in-one JAR and confirm decoder dependencies remain embedded.
+- [x] Launch the development client and verify the slider visually.
+- [x] Verify persistence after reopening the screen/client.
+- [x] Verify vanilla Music at 0% leaves AreaMusic audible and Master at 0% silences it.
 - [ ] Review the diff and deliver the updated `build/libs/areamusic-0.0.1-all.jar`.
