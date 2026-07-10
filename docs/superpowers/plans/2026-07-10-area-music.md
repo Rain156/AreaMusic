@@ -172,7 +172,7 @@ git commit --only -m "feat: model and resolve music areas" -- src/main/java/datu
 - Create: `src/test/java/datura/areamusic/music/MusicLibraryTest.java`
 - Create: `src/main/java/datura/areamusic/music/MusicLibrary.java`
 
-- [ ] **Step 1: Write failing temporary-directory tests**
+- [x] **Step 1: Write failing temporary-directory tests**
 
 Create `village/day.mp3`, `ambient/Cave.OGG`, an unsupported text file, and a case-only duplicate. Assert recursive IDs use `/`, extensions are case-insensitive, maps are immutable, and case-only duplicates fail the scan.
 
@@ -182,13 +182,13 @@ assertEquals(Set.of("ambient/Cave.OGG", "village/day.mp3"), library.ids());
 assertThrows(MusicLibrary.ScanException.class, () -> MusicLibrary.scan(tempDirWithCaseConflict));
 ```
 
-- [ ] **Step 2: Verify the scanner tests fail**
+- [x] **Step 2: Verify the scanner tests fail**
 
 Run: `.\gradlew.bat test --tests "datura.areamusic.music.MusicLibraryTest"`
 
 Expected: compilation fails because `MusicLibrary` does not exist.
 
-- [ ] **Step 3: Implement a safe immutable scan**
+- [x] **Step 3: Implement a safe immutable scan**
 
 Use this contract:
 
@@ -206,7 +206,7 @@ public final class MusicLibrary {
 
 Create the root directory, walk without following links, accept only regular non-link files, check normalized paths remain under the normalized root, sort by ID, and maintain a `Locale.ROOT` lowercase collision map.
 
-- [ ] **Step 4: Run scanner tests and commit**
+- [x] **Step 4: Run scanner tests and commit**
 
 Run: `.\gradlew.bat test --tests "datura.areamusic.music.MusicLibraryTest"`
 
