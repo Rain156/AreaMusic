@@ -64,6 +64,10 @@ public final class AreaMusicNetwork {
         clientHandler = Objects.requireNonNull(handler, "handler");
     }
 
+    public static void clearClientHandler() {
+        clientHandler = NO_OP_CLIENT_HANDLER;
+    }
+
     public static void sendPlayback(ServerPlayer player, long revision, PlaybackState state) {
         requireChannel().send(
                 PacketDistributor.PLAYER.with(() -> player),

@@ -28,6 +28,7 @@
 - `src/main/java/datura/areamusic/client/audio/AudioStreamFactory.java`: Java Sound SPI decoding to common PCM.
 - `src/main/java/datura/areamusic/client/audio/FadeEnvelope.java`: sample-accurate linear fade state.
 - `src/main/java/datura/areamusic/client/audio/PcmMath.java`: saturating PCM mixing.
+- `src/main/java/datura/areamusic/client/audio/PcmMixerEngine.java`: testable streaming track and crossfade state machine.
 - `src/main/java/datura/areamusic/client/audio/PcmAudioMixer.java`: streaming tracks, looping, transitions, pause, cleanup.
 - `src/main/resources/assets/areamusic/lang/en_us.json`: English feedback.
 - `src/main/resources/assets/areamusic/lang/zh_cn.json`: Simplified Chinese feedback.
@@ -388,7 +389,7 @@ git commit --only -m "feat: add deterministic audio fades" -- src/main/java/datu
 - Create: `src/main/java/datura/areamusic/client/audio/PcmAudioMixer.java`
 - Create: `src/main/java/datura/areamusic/client/ClientAreaMusic.java`
 
-- [ ] **Step 1: Implement normalized streaming decode**
+- [x] **Step 1: Implement normalized streaming decode**
 
 Use one target format for every track:
 
@@ -406,19 +407,19 @@ public AudioInputStream open(Path path) throws UnsupportedAudioFileException, IO
 }
 ```
 
-- [ ] **Step 2: Implement the owned mixer thread and track lifecycle**
+- [x] **Step 2: Implement the owned mixer thread and track lifecycle**
 
 `PcmAudioMixer` owns a daemon thread, one `SourceDataLine`, an `AtomicReference<PlaybackState>` for latest-state coalescing, volatile master gain/pause values, and a bounded list of streaming tracks. Process 1024 frames per block. Reopen a stream at EOF only when `loop` is true. Remove silent completed tracks and close all resources during shutdown.
 
-- [ ] **Step 3: Implement transition behavior**
+- [x] **Step 3: Implement transition behavior**
 
 When applying a different MusicID, fade every current track to zero using the previous state's `fadeOutMs`, open the new track at zero, and fade it to region volume using the new state's `fadeInMs`. For the same MusicID, retain the stream and adjust its target volume. For stopped state, fade current tracks to zero. A non-looping completed track remains marked complete until a different state is observed.
 
-- [ ] **Step 4: Add client lifecycle and error delivery**
+- [x] **Step 4: Add client lifecycle and error delivery**
 
 Client setup creates and scans `<gameDir>/AreaMusic`. Client ticks update `master * music` gain and real pause state. Login/reload rescans transactionally. Logout and game shutdown stop the mixer. Missing/invalid audio posts one translatable client message per error key per successful reload and logs the exception.
 
-- [ ] **Step 5: Compile client-only integration and commit**
+- [x] **Step 5: Compile client-only integration and commit**
 
 Run: `.\gradlew.bat compileJava test`
 

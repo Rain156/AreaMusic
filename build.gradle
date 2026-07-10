@@ -136,6 +136,10 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
 
+    runtimeOnly 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+    runtimeOnly 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
+    runtimeOnly 'org.jflac:jflac-codec:1.5.2'
+
     jarJar(group: 'com.googlecode.soundlibs', name: 'mp3spi', version: '1.9.5.4') {
         jarJar.pin(it, '[1.9.5.4,1.9.6)')
     }
