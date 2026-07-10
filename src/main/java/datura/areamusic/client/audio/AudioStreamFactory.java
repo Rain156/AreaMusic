@@ -42,9 +42,6 @@ public class AudioStreamFactory {
             if (MIX_FORMAT.matches(sourceFormat)) {
                 return current;
             }
-            if (decoder != null && decoder.converter().isConversionSupported(MIX_FORMAT, sourceFormat)) {
-                return decoder.converter().getAudioInputStream(MIX_FORMAT, current);
-            }
             if (decoder != null) {
                 AudioFormat decodedFormat = chooseDecodedPcmFormat(decoder.converter(), sourceFormat);
                 if (decodedFormat != null) {
@@ -74,6 +71,20 @@ public class AudioStreamFactory {
             FormatConversionProvider converter,
             AudioFormat sourceFormat
     ) {
+        if (sourceFormat.getSampleRate() > 0.0f && sourceFormat.getChannels() > 0) {
+            AudioFormat nativePcmFormat = new AudioFormat(
+                    AudioFormat.Encoding.PCM_SIGNED,
+                    sourceFormat.getSampleRate(),
+                    16,
+                    sourceFormat.getChannels(),
+                    sourceFormat.getChannels() * 2,
+                    sourceFormat.getSampleRate(),
+                    false
+            );
+            if (converter.isConversionSupported(nativePcmFormat, sourceFormat)) {
+                return nativePcmFormat;
+            }
+        }
         return Arrays.stream(converter.getTargetFormats(AudioFormat.Encoding.PCM_SIGNED, sourceFormat))
                 .filter(format -> format.getSampleRate() > 0.0f && format.getChannels() > 0)
                 .min(Comparator

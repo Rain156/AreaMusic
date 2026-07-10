@@ -11,6 +11,7 @@ Preserve the original duration and playback speed of compressed audio whose sour
 ## Approved behavior
 
 - Decode MP3, OGG, and FLAC to signed PCM at the source sample rate first.
+- When a decoder does not enumerate targets correctly, construct the canonical signed 16-bit PCM format from the source sample rate and channel count and verify that the decoder accepts it.
 - If that decoded PCM already matches `MIX_FORMAT`, return it unchanged.
 - Otherwise let Java Sound convert the decoded PCM to `MIX_FORMAT`, which performs real sample-rate conversion.
 - Keep WAV handling, the mixer, crossfades, area selection, and independent volume behavior unchanged.
@@ -18,7 +19,7 @@ Preserve the original duration and playback speed of compressed audio whose sour
 
 ## Regression strategy
 
-The existing licensed OGG silence fixture is transformed in memory into a valid 48 kHz fixture by changing its Vorbis identification sample rate and recomputing the Ogg page checksum. The test independently decodes that fixture at its native rate, then compares native PCM duration with the duration returned by `AudioStreamFactory` at 44.1 kHz.
+The test uses a 672-byte, 48 kHz stereo MP3 frame from JCodec's BSD-licensed test resources, stored as Base64 text with its source and SHA-256 recorded. It repeats the frame in memory to give the decoder enough input, independently decodes the stream at its native rate, then compares native PCM duration with the duration returned by `AudioStreamFactory` at 44.1 kHz.
 
 The old implementation must fail because it returns nearly the same frame count under a different sample-rate label. The fixed implementation must preserve duration within a small tolerance. Existing MP3, OGG, FLAC, and WAV decoding tests remain in the full suite.
 

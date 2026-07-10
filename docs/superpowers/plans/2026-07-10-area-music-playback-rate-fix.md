@@ -14,31 +14,34 @@
 
 **Files:**
 - Modify: `src/test/java/datura/areamusic/client/audio/CompressedAudioFormatsTest.java`
-- Reuse: `src/test/resources/datura/areamusic/audio/test.ogg`
+- Create: `src/test/resources/datura/areamusic/audio/test-48000.mp3.b64`
+- Create: `src/test/resources/datura/areamusic/audio/JCODEC-LICENSE.txt`
+- Modify: `src/test/resources/datura/areamusic/audio/SOURCES.md`
 
-- [ ] **Step 1: Build a valid 48 kHz compressed fixture in the test**
+- [x] **Step 1: Build a valid 48 kHz compressed fixture in the test**
 
-Read `test.ogg`, replace the Vorbis identification packet's 44,100 Hz little-endian field with 48,000 Hz, zero the first Ogg page checksum, recompute it with polynomial `0x04C11DB7`, and write the result to `@TempDir`. Assert the format-specific reader reports 48,000 Hz so a malformed transformation cannot produce a misleading test result.
+Decode the BSD-licensed JCodec MP3 frame from Base64, repeat it 32 times in memory so the decoder emits enough PCM for a strong duration assertion, and write it to `@TempDir`. Assert the format-specific reader reports 48,000 Hz, stereo, and support for the faulty direct conversion path.
 
 ```java
-byte[] ogg = resource.readAllBytes();
-int identification = indexOf(ogg, new byte[]{1, 'v', 'o', 'r', 'b', 'i', 's'});
-writeLittleEndianInt(ogg, identification + 12, 48_000);
-rewriteFirstPageChecksum(ogg);
-Files.write(tempDir.resolve("source-48000.ogg"), ogg);
+byte[] frame = Base64.getMimeDecoder().decode(resource.readAllBytes());
+byte[] mp3 = new byte[frame.length * 32];
+for (int offset = 0; offset < mp3.length; offset += frame.length) {
+    System.arraycopy(frame, 0, mp3, offset, frame.length);
+}
+Files.write(tempDir.resolve("source-48000.mp3"), mp3);
 ```
 
-- [ ] **Step 2: Compare native and mixer durations**
+- [x] **Step 2: Compare native and mixer durations**
 
-Decode the transformed OGG once through `VorbisFormatConversionProvider` to 48 kHz signed 16-bit PCM and once through `AudioStreamFactory` to `MIX_FORMAT`. Count complete PCM frames and compare `nativeFrames / 48000.0` with `mixerFrames / 44100.0` using a `0.01` second tolerance.
+Decode the MP3 once through `MpegFormatConversionProvider` to 48 kHz signed 16-bit PCM and once through `AudioStreamFactory` to `MIX_FORMAT`. Count complete PCM frames and compare `nativeFrames / 48000.0` with `mixerFrames / 44100.0` using a `0.0001` second tolerance.
 
 ```java
 double nativeDuration = readFrames(nativePcm) / 48_000.0;
 double mixerDuration = readFrames(mixerPcm) / AudioStreamFactory.SAMPLE_RATE;
-assertEquals(nativeDuration, mixerDuration, 0.01);
+assertEquals(nativeDuration, mixerDuration, 0.0001);
 ```
 
-- [ ] **Step 3: Run the focused test and confirm RED**
+- [x] **Step 3: Run the focused test and confirm RED**
 
 Run:
 
@@ -48,14 +51,14 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 .\gradlew.bat test --tests datura.areamusic.client.audio.CompressedAudioFormatsTest
 ```
 
-Expected: the new duration assertion fails on the old direct compressed-to-44.1 kHz conversion because the returned duration is about `48000 / 44100` times too long.
+Observed: the native duration was `0.384` seconds while the old direct compressed-to-44.1 kHz conversion returned `0.417959` seconds, about 8.84% too long.
 
 ### Task 2: Decode compressed streams at their native sample rate
 
 **Files:**
 - Modify: `src/main/java/datura/areamusic/client/audio/AudioStreamFactory.java`
 
-- [ ] **Step 1: Remove the incorrect direct conversion shortcut**
+- [x] **Step 1: Remove the incorrect direct conversion shortcut and select native PCM reliably**
 
 Delete only this branch from `AudioStreamFactory.open`:
 
@@ -65,13 +68,13 @@ if (decoder != null && decoder.converter().isConversionSupported(MIX_FORMAT, sou
 }
 ```
 
-Keep `chooseDecodedPcmFormat` as the sole compressed-decoder target selection. It preserves the source sample rate exposed by each provider. Keep the subsequent `AudioSystem.getAudioInputStream(MIX_FORMAT, current)` call as the sole sample-rate conversion step.
+Keep `chooseDecodedPcmFormat` as the sole compressed-decoder target selection. First construct signed 16-bit little-endian PCM from the known source sample rate and channel count and use it when supported; this handles MP3 SPI streams for which `getTargetFormats` incorrectly returns an empty array. Retain target enumeration as a fallback. Keep the subsequent `AudioSystem.getAudioInputStream(MIX_FORMAT, current)` call as the sole sample-rate conversion step.
 
-- [ ] **Step 2: Run the focused test and confirm GREEN**
+- [x] **Step 2: Run the focused test and confirm GREEN**
 
-Run the Task 1 command again. Expected: all `CompressedAudioFormatsTest` cases pass and the 48 kHz duration difference stays within `0.01` seconds.
+Run the Task 1 command again. Expected: all `CompressedAudioFormatsTest` cases pass and the 48 kHz duration difference stays within `0.0001` seconds.
 
-- [ ] **Step 3: Run all unit tests**
+- [x] **Step 3: Run all unit tests**
 
 Run `./gradlew.bat test`. Expected: zero failed tests.
 
@@ -82,11 +85,13 @@ Run `./gradlew.bat test`. Expected: zero failed tests.
 - Verify: `run/AreaMusic/Warsic,壹勺籽糖 - 坠入星河的帷幕.mp3`
 - Produce: `build/libs/areamusic-0.0.1-all.jar`
 
-- [ ] **Step 1: Measure both real 48 kHz MP3 paths**
+- [x] **Step 1: Measure both real 48 kHz MP3 paths**
 
 For each MP3, count frames after native 48 kHz PCM decode and after `AudioStreamFactory` 44.1 kHz output. Assert their frame-derived durations differ by no more than `0.02` seconds. This is a local diagnostic and must not add either song to Git.
 
-- [ ] **Step 2: Run the complete verification pipeline**
+Observed: `Chace - Auto-Save.mp3` differed by `0.006504` seconds (`269.063995` vs. `269.070499`), and the second MP3 differed by `0.005344` seconds (`220.272003` vs. `220.277347`).
+
+- [x] **Step 2: Run the complete verification pipeline**
 
 Run:
 
@@ -96,10 +101,12 @@ Run:
 
 Expected: Gradle exits `0`, all unit tests pass, and Forge GameTest reports all tests successful.
 
-- [ ] **Step 3: Inspect and fingerprint the bundled JAR**
+- [x] **Step 3: Inspect and fingerprint the bundled JAR**
 
 Confirm `build/libs/areamusic-0.0.1-all.jar` contains AreaMusic classes and the bundled MP3, OGG, and FLAC decoder libraries. Record its SHA-256 hash.
 
-- [ ] **Step 4: Review and commit**
+Observed: the all-in-one JAR is 557,995 bytes and has SHA-256 `18AB1B6BEFB3332A2275A60301B6E8BE66659ACEA390DD65037A7FD1A4FC1C21`.
+
+- [x] **Step 4: Review and commit**
 
 Run `git diff --check`, inspect the focused diff, then commit the test, production fix, and completed plan with message `fix: preserve compressed audio playback rate`.
