@@ -1,28 +1,35 @@
 package datura.areamusic.network;
 
+import datura.areamusic.AreaMusic;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
 
-import java.util.function.Supplier;
+public record ClientboundReloadMusic(long revision) implements CustomPacketPayload {
+    public static final Type<ClientboundReloadMusic> TYPE = new Type<>(
+            ResourceLocation.fromNamespaceAndPath(AreaMusic.MOD_ID, "reload_music")
+    );
+    public static final StreamCodec<FriendlyByteBuf, ClientboundReloadMusic> STREAM_CODEC = new StreamCodec<>() {
+        @Override
+        public ClientboundReloadMusic decode(FriendlyByteBuf buffer) {
+            return new ClientboundReloadMusic(buffer.readVarLong());
+        }
 
-public record ClientboundReloadMusic(long revision) {
+        @Override
+        public void encode(FriendlyByteBuf buffer, ClientboundReloadMusic value) {
+            buffer.writeVarLong(value.revision());
+        }
+    };
+
     public ClientboundReloadMusic {
         if (revision < 0) {
             throw new IllegalArgumentException("Revision must not be negative");
         }
     }
 
-    public static void encode(ClientboundReloadMusic message, FriendlyByteBuf buffer) {
-        buffer.writeVarLong(message.revision);
-    }
-
-    public static ClientboundReloadMusic decode(FriendlyByteBuf buffer) {
-        return new ClientboundReloadMusic(buffer.readVarLong());
-    }
-
-    public static void handle(ClientboundReloadMusic message, Supplier<NetworkEvent.Context> contextSupplier) {
-        NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> AreaMusicNetwork.handleClientReload(message));
-        context.setPacketHandled(true);
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
     }
 }

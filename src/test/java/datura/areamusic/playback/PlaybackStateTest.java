@@ -17,8 +17,8 @@ class PlaybackStateTest {
         ClientboundPlaybackState message = new ClientboundPlaybackState(7L, state);
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
 
-        ClientboundPlaybackState.encode(message, buffer);
-        ClientboundPlaybackState decoded = ClientboundPlaybackState.decode(buffer);
+        ClientboundPlaybackState.STREAM_CODEC.encode(buffer, message);
+        ClientboundPlaybackState decoded = ClientboundPlaybackState.STREAM_CODEC.decode(buffer);
 
         assertEquals(message, decoded);
     }
@@ -28,8 +28,8 @@ class PlaybackStateTest {
         PlaybackState stopped = PlaybackState.stopped();
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
 
-        ClientboundPlaybackState.encode(new ClientboundPlaybackState(8L, stopped), buffer);
-        ClientboundPlaybackState decoded = ClientboundPlaybackState.decode(buffer);
+        ClientboundPlaybackState.STREAM_CODEC.encode(buffer, new ClientboundPlaybackState(8L, stopped));
+        ClientboundPlaybackState decoded = ClientboundPlaybackState.STREAM_CODEC.decode(buffer);
 
         assertFalse(decoded.state().playing());
         assertEquals("", decoded.state().musicId());
@@ -52,9 +52,9 @@ class PlaybackStateTest {
     void reloadNoticeRoundTripsItsRevision() {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
 
-        ClientboundReloadMusic.encode(new ClientboundReloadMusic(42L), buffer);
+        ClientboundReloadMusic.STREAM_CODEC.encode(buffer, new ClientboundReloadMusic(42L));
 
-        assertEquals(new ClientboundReloadMusic(42L), ClientboundReloadMusic.decode(buffer));
+        assertEquals(new ClientboundReloadMusic(42L), ClientboundReloadMusic.STREAM_CODEC.decode(buffer));
         assertEquals(0, buffer.readableBytes());
     }
 }
