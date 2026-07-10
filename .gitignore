@@ -22,3 +22,6 @@ run
 
 # Runtime logs created outside the configured run directory
 /logs/
+
+# Local Git worktrees
+.worktrees/
