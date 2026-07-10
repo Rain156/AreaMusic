@@ -1,6 +1,7 @@
 package datura.areamusic.config;
 
 import com.electronwill.nightconfig.core.CommentedConfig;
+import net.neoforged.fml.config.IConfigSpec;
 import net.neoforged.neoforge.common.ModConfigSpec;
 import org.junit.jupiter.api.Test;
 
@@ -48,6 +49,12 @@ class AreaMusicClientConfigTest {
     private static void attach(AreaMusicClientConfig config, CommentedConfig data) {
         ModConfigSpec spec = config.spec();
         spec.correct(data);
-        spec.acceptConfig(data);
+        spec.acceptConfig(new LoadedConfig(data));
+    }
+
+    private record LoadedConfig(CommentedConfig config) implements IConfigSpec.ILoadedConfig {
+        @Override
+        public void save() {
+        }
     }
 }
