@@ -140,15 +140,12 @@ dependencies {
     runtimeOnly 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
     runtimeOnly 'org.jflac:jflac-codec:1.5.2'
 
-    jarJar(group: 'com.googlecode.soundlibs', name: 'mp3spi', version: '1.9.5.4') {
-        jarJar.pin(it, '[1.9.5.4,1.9.6)')
-    }
-    jarJar(group: 'com.googlecode.soundlibs', name: 'vorbisspi', version: '1.0.3.3') {
-        jarJar.pin(it, '[1.0.3.3,1.0.4)')
-    }
-    jarJar(group: 'org.jflac', name: 'jflac-codec', version: '1.5.2') {
-        jarJar.pin(it, '[1.5.2,1.6)')
-    }
+    jarJar(group: 'com.googlecode.soundlibs', name: 'mp3spi', version: '[1.9.5.4,1.9.5.5)')
+    jarJar(group: 'com.googlecode.soundlibs', name: 'jlayer', version: '[1.0.1.4,1.0.1.5)')
+    jarJar(group: 'com.googlecode.soundlibs', name: 'vorbisspi', version: '[1.0.3.3,1.0.3.4)')
+    jarJar(group: 'com.googlecode.soundlibs', name: 'jorbis', version: '[0.0.17.4,0.0.17.5)')
+    jarJar(group: 'com.googlecode.soundlibs', name: 'tritonus-share', version: '[0.3.7.4,0.3.7.5)')
+    jarJar(group: 'org.jflac', name: 'jflac-codec', version: '[1.5.2,1.5.3)')
 
     // Example mod dependency with JEI - using fg.deobf() ensures the dependency is remapped to your development mappings
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime

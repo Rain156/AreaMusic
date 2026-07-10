@@ -464,13 +464,13 @@ git commit --only -m "chore: finish AreaMusic metadata and messages" -- src/main
 **Files:**
 - Modify only files implicated by verification failures.
 
-- [ ] **Step 1: Run the complete automated suite**
+- [x] **Step 1: Run the complete automated suite**
 
 Run: `.\gradlew.bat clean test build --stacktrace`
 
 Expected: `BUILD SUCCESSFUL` with all JUnit tests passing and a reobfuscated Jar-in-Jar artifact under `build/libs`.
 
-- [ ] **Step 2: Inspect the built artifact**
+- [x] **Step 2: Inspect the built artifact**
 
 Run: `jar tf build\libs\areamusic-0.0.1-all.jar`
 
