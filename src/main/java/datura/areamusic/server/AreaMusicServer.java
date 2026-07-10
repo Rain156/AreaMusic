@@ -14,14 +14,14 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelResource;
-import net.minecraftforge.event.RegisterCommandsEvent;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.player.PlayerEvent;
-import net.minecraftforge.event.server.ServerStartedEvent;
-import net.minecraftforge.event.server.ServerStoppingEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.loading.FMLPaths;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.loading.FMLPaths;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import org.slf4j.Logger;
 
 import java.nio.file.Path;
@@ -34,7 +34,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
-@Mod.EventBusSubscriber(modid = AreaMusic.MOD_ID)
+@EventBusSubscriber(modid = AreaMusic.MOD_ID)
 public final class AreaMusicServer {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Map<UUID, PlayerAreaTracker> PLAYER_TRACKERS = new HashMap<>();
@@ -69,8 +69,8 @@ public final class AreaMusicServer {
     }
 
     @SubscribeEvent
-    public static void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        if (event.phase == TickEvent.Phase.END && event.player instanceof ServerPlayer player) {
+    public static void onPlayerTick(PlayerTickEvent.Post event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
             syncPlayer(player);
         }
     }
@@ -309,7 +309,7 @@ public final class AreaMusicServer {
     }
 
     private static void forceSync(ServerPlayer player, boolean reloadClientLibrary) {
-        if (server == null || player.server != server) {
+        if (server == null || player.getServer() != server) {
             return;
         }
         PLAYER_TRACKERS.remove(player.getUUID());
@@ -320,7 +320,7 @@ public final class AreaMusicServer {
     }
 
     private static void syncPlayer(ServerPlayer player) {
-        if (server == null || player.server != server) {
+        if (server == null || player.getServer() != server) {
             return;
         }
         PlayerAreaTracker tracker = PLAYER_TRACKERS.computeIfAbsent(

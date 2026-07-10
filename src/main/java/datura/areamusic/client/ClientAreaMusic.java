@@ -11,14 +11,14 @@ import datura.areamusic.playback.PlaybackState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundSource;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
-import net.minecraftforge.event.GameShuttingDownEvent;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
-import net.minecraftforge.fml.loading.FMLPaths;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
+import net.neoforged.fml.loading.FMLPaths;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.event.GameShuttingDownEvent;
 import org.slf4j.Logger;
 
 import java.nio.file.Files;
@@ -163,7 +163,7 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
         return current;
     }
 
-    @Mod.EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)
+    @EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
     public static final class ModEvents {
         private ModEvents() {
         }
@@ -174,16 +174,14 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
         }
     }
 
-    @Mod.EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT)
-    public static final class ForgeEvents {
-        private ForgeEvents() {
+    @EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT)
+    public static final class GameEvents {
+        private GameEvents() {
         }
 
         @SubscribeEvent
-        public static void onClientTick(TickEvent.ClientTickEvent event) {
-            if (event.phase == TickEvent.Phase.END && instance != null) {
-                instance.tick();
-            }
+        public static void onClientTick(ClientTickEvent.Post event) {
+            if (instance != null) instance.tick();
         }
 
         @SubscribeEvent

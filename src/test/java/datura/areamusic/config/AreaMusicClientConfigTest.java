@@ -1,7 +1,7 @@
 package datura.areamusic.config;
 
 import com.electronwill.nightconfig.core.CommentedConfig;
-import net.minecraftforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -46,7 +46,7 @@ class AreaMusicClientConfigTest {
     }
 
     private static void attach(AreaMusicClientConfig config, CommentedConfig data) {
-        ForgeConfigSpec spec = config.spec();
+        ModConfigSpec spec = config.spec();
         spec.correct(data);
         spec.acceptConfig(data);
     }

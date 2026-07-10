@@ -1,28 +1,28 @@
 package datura.areamusic.config;
 
-import net.minecraftforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 
 public final class AreaMusicClientConfig {
     public static final String FILE_NAME = "areamusic-client.toml";
     public static final AreaMusicClientConfig INSTANCE = create();
 
-    private final ForgeConfigSpec spec;
-    private final ForgeConfigSpec.DoubleValue volume;
+    private final ModConfigSpec spec;
+    private final ModConfigSpec.DoubleValue volume;
 
-    private AreaMusicClientConfig(ForgeConfigSpec spec, ForgeConfigSpec.DoubleValue volume) {
+    private AreaMusicClientConfig(ModConfigSpec spec, ModConfigSpec.DoubleValue volume) {
         this.spec = spec;
         this.volume = volume;
     }
 
     static AreaMusicClientConfig create() {
-        ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
-        ForgeConfigSpec.DoubleValue volume = builder
+        ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
+        ModConfigSpec.DoubleValue volume = builder
                 .comment("Independent AreaMusic volume from 0.0 to 1.0")
                 .defineInRange("volume", 1.0, 0.0, 1.0);
         return new AreaMusicClientConfig(builder.build(), volume);
     }
 
-    public ForgeConfigSpec spec() {
+    public ModConfigSpec spec() {
         return spec;
     }
 
