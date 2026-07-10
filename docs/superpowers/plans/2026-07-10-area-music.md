@@ -42,7 +42,7 @@
 - Delete: `src/main/java/datura/areamusic/Areamusic.java`
 - Delete: `src/main/java/datura/areamusic/Config.java`
 
-- [ ] **Step 1: Add the test and embedded-codec build configuration**
+- [x] **Step 1: Add the test and embedded-codec build configuration**
 
 Add before `minecraft {`:
 
@@ -75,7 +75,7 @@ tasks.named('test', Test).configure {
 }
 ```
 
-- [ ] **Step 2: Replace the example entry point**
+- [x] **Step 2: Replace the example entry point**
 
 ```java
 package datura.areamusic;
@@ -88,13 +88,13 @@ public final class AreaMusic {
 }
 ```
 
-- [ ] **Step 3: Resolve dependencies and compile the empty entry point**
+- [x] **Step 3: Resolve dependencies and compile the empty entry point**
 
 Run: `.\gradlew.bat compileJava --stacktrace`
 
 Expected: `BUILD SUCCESSFUL`; no example item, block, or config references remain.
 
-- [ ] **Step 4: Commit the build baseline**
+- [x] **Step 4: Commit the build baseline**
 
 ```powershell
 git add build.gradle gradle.properties src/main/java/datura/areamusic
