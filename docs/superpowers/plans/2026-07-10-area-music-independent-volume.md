@@ -53,4 +53,4 @@
 - [x] Launch the development client and verify the slider visually.
 - [x] Verify persistence after reopening the screen/client.
 - [x] Verify vanilla Music at 0% leaves AreaMusic audible and Master at 0% silences it.
-- [ ] Review the diff and deliver the updated `build/libs/areamusic-0.0.1-all.jar`.
+- [x] Review the diff and deliver the updated `build/libs/areamusic-0.0.1-all.jar`.
