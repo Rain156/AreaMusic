@@ -23,6 +23,10 @@ neoForge {
         mappingsVersion = parchment_mappings_version
     }
 
+    unitTest {
+        enable()
+    }
+
     runs {
         client {
             client()
