@@ -438,21 +438,21 @@ git commit --only -m "feat: stream and crossfade local music" -- src/main/java/d
 - Create: `src/main/resources/assets/areamusic/lang/zh_cn.json`
 - Modify: `src/main/java/datura/areamusic/AreaMusic.java`
 
-- [ ] **Step 1: Add complete translatable feedback**
+- [x] **Step 1: Add complete translatable feedback**
 
 Define keys for directory creation, reload started/succeeded/failed, create succeeded/duplicate/invalid MusicID, missing client file, decode failure, and audio device failure. Use `Component.translatable` for all player-facing text and keep detailed exceptions in logs.
 
-- [ ] **Step 2: Complete mod metadata**
+- [x] **Step 2: Complete mod metadata**
 
 Set author to `Datura`, describe external per-area music, and remove template commentary that no longer documents behavior. Keep dependencies on Forge 47+ and Minecraft 1.20.1.
 
-- [ ] **Step 3: Verify the dedicated-server classpath**
+- [x] **Step 3: Verify the dedicated-server classpath**
 
 Run: `.\gradlew.bat runServer --args "--help"`
 
 Expected: Forge reaches server argument handling without `net.minecraft.client` or Java Sound client initialization errors. If the run task does not honor `--help`, use `.\gradlew.bat runGameTestServer` and confirm AreaMusic loads before the expected no-tests exit.
 
-- [ ] **Step 4: Commit resources and metadata**
+- [x] **Step 4: Commit resources and metadata**
 
 ```powershell
 git add src/main/resources src/main/java/datura/areamusic/AreaMusic.java

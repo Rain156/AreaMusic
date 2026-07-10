@@ -1,0 +1,11 @@
+AreaMusic embeds the following Java Sound decoder libraries through Forge Jar-in-Jar:
+
+- MP3SPI 1.9.5.4 and JLayer 1.0.1.4
+  https://github.com/pdudits/soundlibs
+- VorbisSPI 1.0.3.3 and JOrbis 0.0.17.4
+  https://github.com/pdudits/soundlibs
+- jFLAC Codec 1.5.2
+  https://github.com/nguillaumin/jflac
+
+These libraries are distributed under the GNU Lesser General Public License.
+Their nested JAR files retain the upstream metadata and license materials.
