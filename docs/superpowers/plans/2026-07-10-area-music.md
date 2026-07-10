@@ -482,7 +482,7 @@ Place short OGG, MP3, WAV, and FLAC fixtures under `run/AreaMusic`, launch `.\gr
 
 Verified with Quick Play client runs for MP3, OGG, and FLAC under Forge's module classloader; the mixer thread remained active in Java Sound output with no audio errors. WAV decoding, looping, fades, crossfades, same-ID continuity, priority, reload sequencing, and structured failure mapping are covered by the focused automated suite; client error delivery deduplicates each failure kind and MusicID until the next successful reload.
 
-- [ ] **Step 4: Record final repository state**
+- [x] **Step 4: Record final repository state**
 
 Run: `git status --short` and `git log --oneline -10`.
 
