@@ -283,7 +283,7 @@ git commit --only -m "feat: persist areas per world" -- src/main/java/datura/are
 - Create: `src/main/java/datura/areamusic/server/AreaMusicCommands.java`
 - Modify: `src/main/java/datura/areamusic/AreaMusic.java`
 
-- [ ] **Step 1: Write failing playback-state validation and buffer round-trip tests**
+- [x] **Step 1: Write failing playback-state validation and buffer round-trip tests**
 
 ```java
 PlaybackState state = PlaybackState.playing("square", "village/day.mp3", 0.75f, true, 1000, 2500);
@@ -292,7 +292,7 @@ ClientboundPlaybackState.encode(new ClientboundPlaybackState(7, state), buffer);
 assertEquals(state, ClientboundPlaybackState.decode(buffer).state());
 ```
 
-- [ ] **Step 2: Implement common playback values and client-bound packets**
+- [x] **Step 2: Implement common playback values and client-bound packets**
 
 ```java
 public record PlaybackState(boolean playing, String areaId, String musicId, float volume,
@@ -313,7 +313,7 @@ public AreaMusic() {
 }
 ```
 
-- [ ] **Step 3: Register server events and the command tree**
+- [x] **Step 3: Register server events and the command tree**
 
 Build this tree with permission level 2:
 
@@ -325,17 +325,17 @@ areamusic
 
 `musicId` suggestions come from the current immutable server `MusicLibrary`. `create` validates, writes asynchronously, then applies a new area snapshot on the server executor. `reload` constructs both candidate snapshots on a background executor and swaps them only when both succeed.
 
-- [ ] **Step 4: Implement player change caching and sync**
+- [x] **Step 4: Implement player change caching and sync**
 
 Cache `(dimension, blockPos, revision, playbackState)` by player UUID. On end-phase server player ticks, skip unchanged inputs; otherwise resolve the active area. Send only changed `PlaybackState` values. Force checks on login, respawn, dimension change, successful reload, and area creation; remove cache entries on logout and server stop.
 
-- [ ] **Step 5: Run unit tests and compile Forge integration**
+- [x] **Step 5: Run unit tests and compile Forge integration**
 
 Run: `.\gradlew.bat test --tests "datura.areamusic.playback.*" compileJava`
 
 Expected: tests pass and Forge event/command/network APIs compile.
 
-- [ ] **Step 6: Commit server integration**
+- [x] **Step 6: Commit server integration**
 
 ```powershell
 git add src/main/java/datura/areamusic/playback src/main/java/datura/areamusic/network src/main/java/datura/areamusic/server src/test/java/datura/areamusic/playback
