@@ -147,7 +147,7 @@ tasks.named('test', Test).configure {
     useJUnitPlatform()
 }
 
-tasks.named('jarJar').configure {
+tasks.named('jar', Jar).configure {
     archiveClassifier = 'all'
 }
 
