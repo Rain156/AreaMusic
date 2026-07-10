@@ -2,6 +2,7 @@ package datura.areamusic.client;
 
 import com.mojang.logging.LogUtils;
 import datura.areamusic.AreaMusic;
+import datura.areamusic.client.audio.AudioFailure;
 import datura.areamusic.client.audio.PcmAudioMixer;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.network.AreaMusicNetwork;
@@ -31,15 +32,16 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
     private static ClientAreaMusic instance;
 
     private final Path musicRoot;
-    private final PcmAudioMixer mixer;
+    private final ClientPlaybackSession playbackSession;
     private final Set<String> reportedErrors = ConcurrentHashMap.newKeySet();
     private final AtomicLong scanGeneration = new AtomicLong();
-    private volatile PlaybackState desiredState = PlaybackState.stopped();
-    private volatile long latestRevision = -1L;
 
     private ClientAreaMusic(Path musicRoot, MusicLibrary initialLibrary) {
         this.musicRoot = musicRoot;
-        mixer = new PcmAudioMixer(initialLibrary, this::onAudioError);
+        playbackSession = new ClientPlaybackSession(
+                initialLibrary,
+                library -> new PcmAudioMixer(library, this::onAudioError)
+        );
     }
 
     public static synchronized void initialize() {
@@ -56,27 +58,19 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
         ClientAreaMusic created = new ClientAreaMusic(root, MusicLibrary.empty(root));
         instance = created;
         AreaMusicNetwork.setClientHandler(created);
-        created.mixer.start();
         created.reloadLocalLibrary();
     }
 
     @Override
     public void onPlayback(long revision, PlaybackState state) {
-        if (revision < latestRevision) {
-            return;
-        }
-        latestRevision = revision;
-        desiredState = state;
-        mixer.apply(state);
+        playbackSession.apply(revision, state);
     }
 
     @Override
     public void onReload(long revision) {
-        if (revision < latestRevision) {
-            return;
+        if (playbackSession.beginReload(revision)) {
+            reloadLocalLibrary();
         }
-        latestRevision = revision;
-        reloadLocalLibrary();
     }
 
     private void reloadLocalLibrary() {
@@ -93,12 +87,12 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
             return;
         }
         if (throwable != null) {
-            onAudioError("scan", rootCause(throwable));
+            onAudioError(new AudioFailure(AudioFailure.Kind.SCAN, "", rootCause(throwable)));
+            playbackSession.failReload();
             return;
         }
         reportedErrors.clear();
-        mixer.updateMusicLibrary(library);
-        mixer.apply(desiredState);
+        playbackSession.finishReload(library);
         LOGGER.info("Loaded {} local AreaMusic tracks", library.ids().size());
     }
 
@@ -114,46 +108,48 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
         Minecraft minecraft = Minecraft.getInstance();
         float master = minecraft.options.getSoundSourceVolume(SoundSource.MASTER);
         float music = minecraft.options.getSoundSourceVolume(SoundSource.MUSIC);
-        mixer.setMasterGain(master * music);
-        mixer.setPaused(minecraft.isPaused());
+        playbackSession.setMasterGain(master * music);
+        playbackSession.setPaused(minecraft.isPaused());
     }
 
     private void onConnected() {
+        playbackSession.connect();
         reloadLocalLibrary();
     }
 
     private void onDisconnected() {
         scanGeneration.incrementAndGet();
-        latestRevision = -1L;
-        desiredState = PlaybackState.stopped();
-        mixer.apply(desiredState);
+        playbackSession.disconnect();
     }
 
     private synchronized void shutdown() {
         scanGeneration.incrementAndGet();
         AreaMusicNetwork.clearClientHandler();
-        mixer.close();
+        playbackSession.close();
         if (instance == this) {
             instance = null;
         }
     }
 
-    private void onAudioError(String code, Throwable error) {
-        Throwable cause = rootCause(error);
-        LOGGER.error("AreaMusic client audio error ({})", code, cause);
-        String detail = message(cause);
+    private void onAudioError(AudioFailure failure) {
+        if (!reportedErrors.add(failure.deduplicationKey())) {
+            return;
+        }
+        Throwable cause = rootCause(failure.cause());
+        LOGGER.error("AreaMusic client audio error ({}, MusicID '{}')", failure.kind(), failure.musicId(), cause);
         Minecraft.getInstance().execute(() -> {
-            String errorKey = code + ':' + detail;
-            if (!reportedErrors.add(errorKey)) {
-                return;
-            }
             if (Minecraft.getInstance().player != null) {
                 Minecraft.getInstance().player.displayClientMessage(
-                        Component.translatable("message.areamusic.audio_error", detail),
+                        errorMessage(failure),
                         false
                 );
             }
         });
+    }
+
+    private static Component errorMessage(AudioFailure failure) {
+        ClientErrorMessage message = ClientErrorMessage.from(failure);
+        return Component.translatable(message.translationKey(), message.arguments().toArray());
     }
 
     private static Throwable rootCause(Throwable throwable) {
@@ -162,11 +158,6 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
             current = current.getCause();
         }
         return current;
-    }
-
-    private static String message(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message;
     }
 
     @Mod.EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)

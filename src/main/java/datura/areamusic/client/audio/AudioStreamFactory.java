@@ -1,13 +1,23 @@
 package datura.areamusic.client.audio;
 
+import javazoom.spi.mpeg.sampled.convert.MpegFormatConversionProvider;
+import javazoom.spi.mpeg.sampled.file.MpegAudioFileReader;
+import javazoom.spi.vorbis.sampled.convert.VorbisFormatConversionProvider;
+import javazoom.spi.vorbis.sampled.file.VorbisAudioFileReader;
+import org.jflac.sound.spi.FlacAudioFileReader;
+import org.jflac.sound.spi.FlacFormatConversionProvider;
+
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.UnsupportedAudioFileException;
+import javax.sound.sampled.spi.AudioFileReader;
+import javax.sound.sampled.spi.FormatConversionProvider;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Locale;
 
 public class AudioStreamFactory {
     public static final int SAMPLE_RATE = 44_100;
@@ -22,31 +32,49 @@ public class AudioStreamFactory {
     );
 
     public AudioInputStream open(Path path) throws UnsupportedAudioFileException, IOException {
-        AudioInputStream encoded = AudioSystem.getAudioInputStream(path.toFile());
-        AudioFormat sourceFormat = encoded.getFormat();
-        if (AudioSystem.isConversionSupported(MIX_FORMAT, sourceFormat)) {
-            return AudioSystem.getAudioInputStream(MIX_FORMAT, encoded);
-        }
-
-        AudioFormat decodedFormat = chooseDecodedPcmFormat(sourceFormat);
-        if (decodedFormat == null) {
-            encoded.close();
+        Decoder decoder = decoderFor(path);
+        AudioInputStream encoded = decoder == null
+                ? AudioSystem.getAudioInputStream(path.toFile())
+                : decoder.reader().getAudioInputStream(path.toFile());
+        AudioInputStream current = encoded;
+        AudioFormat sourceFormat = current.getFormat();
+        try {
+            if (MIX_FORMAT.matches(sourceFormat)) {
+                return current;
+            }
+            if (decoder != null && decoder.converter().isConversionSupported(MIX_FORMAT, sourceFormat)) {
+                return decoder.converter().getAudioInputStream(MIX_FORMAT, current);
+            }
+            if (decoder != null) {
+                AudioFormat decodedFormat = chooseDecodedPcmFormat(decoder.converter(), sourceFormat);
+                if (decodedFormat != null) {
+                    current = decoder.converter().getAudioInputStream(decodedFormat, current);
+                    sourceFormat = current.getFormat();
+                    if (MIX_FORMAT.matches(sourceFormat)) {
+                        return current;
+                    }
+                }
+            }
+            if (AudioSystem.isConversionSupported(MIX_FORMAT, sourceFormat)) {
+                return AudioSystem.getAudioInputStream(MIX_FORMAT, current);
+            }
             throw unsupported(path, sourceFormat);
+        } catch (UnsupportedAudioFileException exception) {
+            current.close();
+            throw exception;
+        } catch (IllegalArgumentException exception) {
+            current.close();
+            UnsupportedAudioFileException unsupported = unsupported(path, sourceFormat);
+            unsupported.initCause(exception);
+            throw unsupported;
         }
-
-        AudioInputStream decoded = AudioSystem.getAudioInputStream(decodedFormat, encoded);
-        if (MIX_FORMAT.matches(decoded.getFormat())) {
-            return decoded;
-        }
-        if (!AudioSystem.isConversionSupported(MIX_FORMAT, decoded.getFormat())) {
-            decoded.close();
-            throw unsupported(path, sourceFormat);
-        }
-        return AudioSystem.getAudioInputStream(MIX_FORMAT, decoded);
     }
 
-    private static AudioFormat chooseDecodedPcmFormat(AudioFormat sourceFormat) {
-        return Arrays.stream(AudioSystem.getTargetFormats(AudioFormat.Encoding.PCM_SIGNED, sourceFormat))
+    private static AudioFormat chooseDecodedPcmFormat(
+            FormatConversionProvider converter,
+            AudioFormat sourceFormat
+    ) {
+        return Arrays.stream(converter.getTargetFormats(AudioFormat.Encoding.PCM_SIGNED, sourceFormat))
                 .filter(format -> format.getSampleRate() > 0.0f && format.getChannels() > 0)
                 .min(Comparator
                         .comparingInt((AudioFormat format) -> format.getSampleSizeInBits() == 16 ? 0 : 1)
@@ -54,9 +82,24 @@ public class AudioStreamFactory {
                 .orElse(null);
     }
 
+    private static Decoder decoderFor(Path path) {
+        String fileName = path.getFileName().toString();
+        int dot = fileName.lastIndexOf('.');
+        String extension = dot < 0 ? "" : fileName.substring(dot + 1).toLowerCase(Locale.ROOT);
+        return switch (extension) {
+            case "mp3" -> new Decoder(new MpegAudioFileReader(), new MpegFormatConversionProvider());
+            case "ogg" -> new Decoder(new VorbisAudioFileReader(), new VorbisFormatConversionProvider());
+            case "flac" -> new Decoder(new FlacAudioFileReader(), new FlacFormatConversionProvider());
+            default -> null;
+        };
+    }
+
     private static UnsupportedAudioFileException unsupported(Path path, AudioFormat sourceFormat) {
         return new UnsupportedAudioFileException(
                 "Cannot convert " + sourceFormat + " to " + MIX_FORMAT + " for " + path
         );
+    }
+
+    private record Decoder(AudioFileReader reader, FormatConversionProvider converter) {
     }
 }

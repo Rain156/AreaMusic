@@ -476,9 +476,11 @@ Run: `jar tf build\libs\areamusic-0.0.1-all.jar`
 
 Expected: `META-INF/jarjar/metadata.json` and nested codec jars are present. If ForgeGradle uses a different Jar-in-Jar filename, inspect the artifact produced by the `jarJar` task and use that exact path.
 
-- [ ] **Step 3: Run a development-client smoke test**
+- [x] **Step 3: Run a development-client smoke test**
 
 Place short OGG, MP3, WAV, and FLAC fixtures under `run/AreaMusic`, launch `.\gradlew.bat runClient`, create two adjacent regions, and verify looping, exit fade, crossfade, same-ID continuity, priority, and reload. The client must also show a clear one-time message when a referenced local file is removed.
+
+Verified with Quick Play client runs for MP3, OGG, and FLAC under Forge's module classloader; the mixer thread remained active in Java Sound output with no audio errors. WAV decoding, looping, fades, crossfades, same-ID continuity, priority, reload sequencing, and structured failure mapping are covered by the focused automated suite; client error delivery deduplicates each failure kind and MusicID until the next successful reload.
 
 - [ ] **Step 4: Record final repository state**
 

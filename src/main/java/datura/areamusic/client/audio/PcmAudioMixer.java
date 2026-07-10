@@ -8,8 +8,10 @@ import javax.sound.sampled.DataLine;
 import javax.sound.sampled.SourceDataLine;
 import java.util.Objects;
 
-public final class PcmAudioMixer implements AutoCloseable {
+public final class PcmAudioMixer implements ClientAudioMixer {
     private static final int BLOCK_FRAMES = 1024;
+    private static final long INITIAL_DEVICE_RETRY_MS = 250L;
+    private static final long MAX_DEVICE_RETRY_MS = 5000L;
 
     private final Object signal = new Object();
     private final MusicLibrary initialLibrary;
@@ -106,6 +108,7 @@ public final class PcmAudioMixer implements AutoCloseable {
     private void runAudioLoop() {
         AudioOutput output = null;
         boolean outputStarted = false;
+        long deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
         try (PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), initialLibrary)) {
             while (running) {
                 PendingUpdate update = drainPendingUpdate();
@@ -116,16 +119,43 @@ public final class PcmAudioMixer implements AutoCloseable {
                     try {
                         engine.apply(update.playbackState());
                     } catch (PcmMixerEngine.AudioPlaybackException exception) {
-                        errorListener.onError("playback", exception);
+                        errorListener.onError(exception.failure());
                     }
                 }
 
-                if (paused || !engine.hasTracks()) {
+                if (paused) {
                     if (output != null && outputStarted) {
                         output.stop();
                         outputStarted = false;
                     }
                     waitForSignal(50L);
+                    continue;
+                }
+                if (!engine.hasTracks()) {
+                    if (output != null) {
+                        if (!outputStarted) {
+                            try {
+                                output.start();
+                                outputStarted = true;
+                            } catch (Exception exception) {
+                                report(AudioFailure.Kind.DEVICE, "", exception);
+                                closeOutput(output);
+                                output = null;
+                                deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
+                                continue;
+                            }
+                        }
+                        drainAndCloseOutput(output);
+                        output = null;
+                        outputStarted = false;
+                        deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
+                    }
+                    waitForSignal(50L);
+                    continue;
+                }
+
+                if (output == null && !engine.currentState().playing()) {
+                    engine.close();
                     continue;
                 }
 
@@ -134,33 +164,94 @@ public final class PcmAudioMixer implements AutoCloseable {
                         output = outputFactory.open();
                         liveOutput = output;
                     } catch (Exception exception) {
-                        errorListener.onError("device", exception);
-                        waitForSignal(1000L);
+                        report(AudioFailure.Kind.DEVICE, "", exception);
+                        waitForSignal(deviceRetryMs);
+                        deviceRetryMs = nextRetryDelay(deviceRetryMs);
                         continue;
                     }
                 }
+
                 if (!outputStarted) {
-                    output.start();
-                    outputStarted = true;
+                    try {
+                        output.start();
+                        outputStarted = true;
+                    } catch (Exception exception) {
+                        report(AudioFailure.Kind.DEVICE, "", exception);
+                        closeOutput(output);
+                        output = null;
+                        waitForSignal(deviceRetryMs);
+                        deviceRetryMs = nextRetryDelay(deviceRetryMs);
+                        continue;
+                    }
+                }
+
+                byte[] rendered;
+                try {
+                    rendered = engine.renderFrames(BLOCK_FRAMES, masterGain);
+                } catch (PcmMixerEngine.AudioPlaybackException exception) {
+                    errorListener.onError(exception.failure());
+                    continue;
+                } catch (Exception exception) {
+                    report(AudioFailure.Kind.DECODE, "", exception);
+                    continue;
                 }
 
                 try {
-                    output.write(engine.renderFrames(BLOCK_FRAMES, masterGain));
+                    output.write(rendered);
+                    deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
                 } catch (InterruptedException exception) {
                     if (running) {
-                        errorListener.onError("thread", exception);
+                        report(AudioFailure.Kind.THREAD, "", exception);
                     }
                     Thread.currentThread().interrupt();
                 } catch (Exception exception) {
-                    errorListener.onError("decode", exception);
+                    report(AudioFailure.Kind.DEVICE, "", exception);
+                    closeOutput(output);
+                    output = null;
+                    outputStarted = false;
+                    waitForSignal(deviceRetryMs);
+                    deviceRetryMs = nextRetryDelay(deviceRetryMs);
                 }
             }
+        } catch (LinkageError | RuntimeException error) {
+            report(AudioFailure.Kind.THREAD, "", error);
         } finally {
             if (output != null) {
-                output.close();
+                closeOutput(output);
             }
             liveOutput = null;
+            running = false;
         }
+    }
+
+    private void closeOutput(AudioOutput output) {
+        try {
+            output.close();
+        } catch (Exception exception) {
+            report(AudioFailure.Kind.DEVICE, "", exception);
+        } finally {
+            if (liveOutput == output) {
+                liveOutput = null;
+            }
+        }
+    }
+
+    private void drainAndCloseOutput(AudioOutput output) {
+        try {
+            output.drain();
+        } catch (Exception exception) {
+            report(AudioFailure.Kind.DEVICE, "", exception);
+        } finally {
+            closeOutput(output);
+        }
+    }
+
+    private static long nextRetryDelay(long currentDelayMs) {
+        return Math.min(MAX_DEVICE_RETRY_MS, currentDelayMs * 2L);
+    }
+
+    private void report(AudioFailure.Kind kind, String musicId, Throwable error) {
+        errorListener.onError(new AudioFailure(kind, musicId, error));
     }
 
     private PendingUpdate drainPendingUpdate() {
@@ -190,7 +281,7 @@ public final class PcmAudioMixer implements AutoCloseable {
 
     @FunctionalInterface
     public interface ErrorListener {
-        void onError(String code, Throwable error);
+        void onError(AudioFailure failure);
     }
 
     @FunctionalInterface
@@ -204,6 +295,8 @@ public final class PcmAudioMixer implements AutoCloseable {
         void stop();
 
         void write(byte[] pcm) throws InterruptedException;
+
+        void drain();
 
         @Override
         void close();
@@ -248,6 +341,13 @@ public final class PcmAudioMixer implements AutoCloseable {
                     break;
                 }
                 offset += written;
+            }
+        }
+
+        @Override
+        public void drain() {
+            if (line.isOpen()) {
+                line.drain();
             }
         }
 

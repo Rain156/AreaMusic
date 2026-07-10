@@ -18,6 +18,16 @@ java {
 
 jarJar.enable()
 
+configurations {
+    compileOnly.exclude group: 'junit', module: 'junit'
+    minecraftLibrary.exclude group: 'junit', module: 'junit'
+    jarJar.exclude group: 'junit', module: 'junit'
+}
+
+jarJar.dependencies {
+    exclude(dependency('junit:junit:3.8.2'))
+}
+
 minecraft {
     // The mappings can be changed at any time and must be in the following format.
     // Channel:   Version:
@@ -136,16 +146,32 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
 
-    runtimeOnly 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
-    runtimeOnly 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
-    runtimeOnly 'org.jflac:jflac-codec:1.5.2'
+    compileOnly 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+    compileOnly 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
+    compileOnly 'org.jflac:jflac-codec:1.5.2'
 
-    jarJar(group: 'com.googlecode.soundlibs', name: 'mp3spi', version: '[1.9.5.4,1.9.5.5)')
-    jarJar(group: 'com.googlecode.soundlibs', name: 'jlayer', version: '[1.0.1.4,1.0.1.5)')
-    jarJar(group: 'com.googlecode.soundlibs', name: 'vorbisspi', version: '[1.0.3.3,1.0.3.4)')
-    jarJar(group: 'com.googlecode.soundlibs', name: 'jorbis', version: '[0.0.17.4,0.0.17.5)')
-    jarJar(group: 'com.googlecode.soundlibs', name: 'tritonus-share', version: '[0.3.7.4,0.3.7.5)')
-    jarJar(group: 'org.jflac', name: 'jflac-codec', version: '[1.5.2,1.5.3)')
+    minecraftLibrary 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+    minecraftLibrary 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
+    minecraftLibrary 'org.jflac:jflac-codec:1.5.2'
+
+    jarJar(group: 'com.googlecode.soundlibs', name: 'mp3spi', version: '[1.9.5.4,1.9.5.5)') {
+        transitive = false
+    }
+    jarJar(group: 'com.googlecode.soundlibs', name: 'jlayer', version: '[1.0.1.4,1.0.1.5)') {
+        transitive = false
+    }
+    jarJar(group: 'com.googlecode.soundlibs', name: 'vorbisspi', version: '[1.0.3.3,1.0.3.4)') {
+        transitive = false
+    }
+    jarJar(group: 'com.googlecode.soundlibs', name: 'jorbis', version: '[0.0.17.4,0.0.17.5)') {
+        transitive = false
+    }
+    jarJar(group: 'com.googlecode.soundlibs', name: 'tritonus-share', version: '[0.3.7.4,0.3.7.5)') {
+        transitive = false
+    }
+    jarJar(group: 'org.jflac', name: 'jflac-codec', version: '[1.5.2,1.5.3)') {
+        transitive = false
+    }
 
     // Example mod dependency with JEI - using fg.deobf() ensures the dependency is remapped to your development mappings
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
