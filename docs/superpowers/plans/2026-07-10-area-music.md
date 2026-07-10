@@ -225,7 +225,7 @@ git commit --only -m "feat: index external music files" -- src/main/java/datura/
 - Create: `src/main/java/datura/areamusic/area/AreaJsonCodec.java`
 - Create: `src/main/java/datura/areamusic/area/AreaStorage.java`
 
-- [ ] **Step 1: Write failing codec and transactional-load tests**
+- [x] **Step 1: Write failing codec and transactional-load tests**
 
 Assert the documented JSON parses, missing optional playback fields receive defaults, unknown fields and invalid values fail with a filename-aware error, output round-trips, and a load containing one malformed file throws without returning a partial snapshot.
 
@@ -236,13 +236,13 @@ assertEquals(parsed, codec.read("square", codec.write(parsed)));
 assertThrows(AreaStorage.LoadException.class, () -> storage.load(library));
 ```
 
-- [ ] **Step 2: Verify persistence tests fail**
+- [x] **Step 2: Verify persistence tests fail**
 
 Run: `.\gradlew.bat test --tests "datura.areamusic.area.AreaJsonCodecTest" --tests "datura.areamusic.area.AreaStorageTest"`
 
 Expected: compilation fails because codec and storage classes do not exist.
 
-- [ ] **Step 3: Implement the codec and storage contracts**
+- [x] **Step 3: Implement the codec and storage contracts**
 
 ```java
 public final class AreaJsonCodec {
@@ -260,7 +260,7 @@ public final class AreaStorage {
 
 Parse through `JsonObject` so required and optional fields are explicit. Reject unknown keys, require `schemaVersion == 1`, and validate referenced MusicIDs against the candidate library. Write with `CREATE_NEW` to a sibling temporary file, then move using `ATOMIC_MOVE` with a replace-free fallback; delete the temporary file on failure.
 
-- [ ] **Step 4: Run persistence tests and commit**
+- [x] **Step 4: Run persistence tests and commit**
 
 Run: `.\gradlew.bat test --tests "datura.areamusic.area.AreaJsonCodecTest" --tests "datura.areamusic.area.AreaStorageTest"`
 
