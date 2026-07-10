@@ -23,8 +23,9 @@ public final class AreaMusicCommands {
                         .then(Commands.argument("areaId", StringArgumentType.word())
                                 .then(Commands.argument("pos1", BlockPosArgument.blockPos())
                                         .then(Commands.argument("pos2", BlockPosArgument.blockPos())
-                                                .then(Commands.argument("musicId", StringArgumentType.string())
-                                                        .suggests(AreaMusicCommands::suggestMusicIds)
+                                                .then(Commands.argument("musicId", StringArgumentType.greedyString())
+                                                        .suggests((context, builder) -> suggestMusicIds(
+                                                                AreaMusicServer.musicIds(), builder))
                                                         .executes(AreaMusicCommands::createArea))))))
                 .then(Commands.literal("reload")
                         .executes(context -> AreaMusicServer.requestReload(context.getSource()))));
@@ -40,13 +41,10 @@ public final class AreaMusicCommands {
         );
     }
 
-    private static CompletableFuture<Suggestions> suggestMusicIds(
-            CommandContext<CommandSourceStack> context,
+    static CompletableFuture<Suggestions> suggestMusicIds(
+            Iterable<String> musicIds,
             SuggestionsBuilder builder
     ) {
-        return SharedSuggestionProvider.suggest(
-                AreaMusicServer.musicIds().stream().map(StringArgumentType::escapeIfRequired),
-                builder
-        );
+        return SharedSuggestionProvider.suggest(musicIds, builder);
     }
 }
