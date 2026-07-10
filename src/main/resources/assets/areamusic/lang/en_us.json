@@ -15,5 +15,6 @@
   "message.areamusic.decode_failed": "AreaMusic could not decode MusicID: %s",
   "message.areamusic.device_failed": "AreaMusic could not open the audio output device.",
   "message.areamusic.scan_failed": "AreaMusic could not reload the local music folder. The previous index is still active.",
-  "message.areamusic.thread_failed": "AreaMusic audio playback stopped because its worker thread was interrupted."
+  "message.areamusic.thread_failed": "AreaMusic audio playback stopped because its worker thread was interrupted.",
+  "options.areamusic.volume": "AreaMusic Volume"
 }

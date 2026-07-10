@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import datura.areamusic.AreaMusic;
 import datura.areamusic.client.audio.AudioFailure;
 import datura.areamusic.client.audio.PcmAudioMixer;
+import datura.areamusic.config.AreaMusicClientConfig;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.network.AreaMusicNetwork;
 import datura.areamusic.playback.PlaybackState;
@@ -107,8 +108,10 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
     private void tick() {
         Minecraft minecraft = Minecraft.getInstance();
         float master = minecraft.options.getSoundSourceVolume(SoundSource.MASTER);
-        float music = minecraft.options.getSoundSourceVolume(SoundSource.MUSIC);
-        playbackSession.setMasterGain(master * music);
+        playbackSession.setMasterGain(AreaMusicVolume.effectiveGain(
+                master,
+                AreaMusicClientConfig.INSTANCE.volume()
+        ));
         playbackSession.setPaused(minecraft.isPaused());
     }
 

@@ -15,5 +15,6 @@
   "message.areamusic.decode_failed": "无法解码 MusicID 对应的音频：%s",
   "message.areamusic.device_failed": "无法打开音频输出设备。",
   "message.areamusic.scan_failed": "无法重载本地音乐文件夹，仍使用上次成功加载的索引。",
-  "message.areamusic.thread_failed": "音频播放线程意外中断。"
+  "message.areamusic.thread_failed": "音频播放线程意外中断。",
+  "options.areamusic.volume": "AreaMusic 音量"
 }

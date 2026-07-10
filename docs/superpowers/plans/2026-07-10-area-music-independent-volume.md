@@ -16,9 +16,9 @@
 - Create: `src/test/java/datura/areamusic/client/AreaMusicVolumeTest.java`
 - Create: `src/test/java/datura/areamusic/config/AreaMusicClientConfigTest.java`
 
-- [ ] Assert the gain is `master × AreaMusic`, including zero and partial values.
-- [ ] Assert the client config defaults to `1.0`, writes updates to its attached config data, and clamps programmatic input to `[0, 1]`.
-- [ ] Run the focused tests and confirm they fail because production types do not exist.
+- [x] Assert the gain is `master × AreaMusic`, including zero and partial values.
+- [x] Assert the client config defaults to `1.0`, writes updates to its attached config data, and clamps programmatic input to `[0, 1]`.
+- [x] Run the focused tests and confirm they fail because production types do not exist.
 
 ### Task 2: Implement the config and gain core
 
@@ -28,10 +28,10 @@
 - Modify: `src/main/java/datura/areamusic/AreaMusic.java`
 - Modify: `src/main/java/datura/areamusic/client/ClientAreaMusic.java`
 
-- [ ] Define and register `config/areamusic-client.toml` as a Forge `CLIENT` config.
-- [ ] Implement bounded volume reads/writes and immediate saving.
-- [ ] Replace `master × SoundSource.MUSIC` with `master × AreaMusicClientConfig.volume()` through the tested helper.
-- [ ] Run focused tests and `compileJava` until green.
+- [x] Define and register `config/areamusic-client.toml` as a Forge `CLIENT` config.
+- [x] Implement bounded volume reads/writes and immediate saving.
+- [x] Replace `master × SoundSource.MUSIC` with `master × AreaMusicClientConfig.volume()` through the tested helper.
+- [x] Run focused tests and `compileJava` until green.
 
 ### Task 3: Add the sound-options slider
 
@@ -40,11 +40,11 @@
 - Modify: `src/main/resources/assets/areamusic/lang/en_us.json`
 - Modify: `src/main/resources/assets/areamusic/lang/zh_cn.json`
 
-- [ ] Create a vanilla-style 0–100% `OptionInstance<Double>` bound to the client config.
-- [ ] On `SoundOptionsScreen` initialization, locate its `OptionsList` through the Forge event listener list.
-- [ ] Fill the unused right-hand cell beside Voice when safe; otherwise append a new row.
-- [ ] Add English and Simplified Chinese labels.
-- [ ] Compile and rerun all unit tests.
+- [x] Create a vanilla-style 0–100% `OptionInstance<Double>` bound to the client config.
+- [x] On `SoundOptionsScreen` initialization, locate its `OptionsList` through the Forge event listener list.
+- [x] Fill the unused right-hand cell beside Voice when safe; otherwise append a new row.
+- [x] Add English and Simplified Chinese labels.
+- [x] Compile and rerun all unit tests.
 
 ### Task 4: Verify behavior and package the mod
 
