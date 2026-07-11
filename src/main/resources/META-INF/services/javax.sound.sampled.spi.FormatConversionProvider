@@ -1,0 +1,3 @@
+javazoom.spi.mpeg.sampled.convert.MpegFormatConversionProvider
+javazoom.spi.vorbis.sampled.convert.VorbisFormatConversionProvider
+org.jflac.sound.spi.FlacFormatConversionProvider
