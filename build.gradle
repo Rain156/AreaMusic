@@ -181,7 +181,7 @@ def verifyClientRuntimeAudioProviders = tasks.register('verifyClientRuntimeAudio
         File classpathFile = legacyClasspath.get().asFile
         List<File> classpathEntries = classpathFile.readLines('UTF-8')
                 .findAll { !it.isBlank() }
-                .collect { file(it) }
+                .collect { new File(it) }
         List<String> missingArtifacts = clientAudioRuntimeArtifacts.findAll { artifact ->
             classpathEntries.count { it.name == artifact } != 1
         }
@@ -194,7 +194,7 @@ def verifyClientRuntimeAudioProviders = tasks.register('verifyClientRuntimeAudio
             clientAudioProviderClasses.each { className ->
                 try {
                     Class.forName(className, true, loader).getDeclaredConstructor().newInstance()
-                } catch (Throwable throwable) {
+                } catch (Exception | LinkageError throwable) {
                     failures.add("${className}: ${throwable.class.name}: ${throwable.message}")
                 }
             }
