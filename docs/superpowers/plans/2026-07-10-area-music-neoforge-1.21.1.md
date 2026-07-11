@@ -669,7 +669,7 @@ Run:
 .\gradlew.bat test --rerun-tasks --console=plain
 ```
 
-Expected: either all 66 tests pass or failures identify concrete 1.21.1 signature changes. Preserve these behavioral expectations while applying the exact replacements below.
+Expected: the original port suite has 66 tests; after the two server reload-status tests added later, the final verified suite has 68 tests. Any failures identify concrete 1.21.1 signature changes. Preserve these behavioral expectations while applying the exact replacements below.
 
 - [x] **Step 2: Apply the bounded 1.21.1 replacements**
 
@@ -693,7 +693,7 @@ Get-ChildItem -Path src -Recurse -File -Filter '*.java' |
 .\gradlew.bat test --rerun-tasks --console=plain
 ```
 
-Expected: the search returns nothing and all 66 tests pass with zero failures or errors.
+Expected: the search returns nothing and the final 68-test suite passes with zero failures or errors (the original 66 plus two server reload-status tests added later).
 
 - [x] **Step 4: Commit the native port checkpoint**
 
@@ -722,7 +722,7 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 .\gradlew.bat clean test build jarJar runGameTestServer --console=plain
 ```
 
-Expected: 66 tests pass, the NeoForge GameTest server starts and exits successfully, and Gradle exits `0`.
+Expected: the final 68 tests pass (the original plan's 66 plus two server reload-status tests added later), the NeoForge GameTest server starts and exits successfully, and Gradle exits `0`.
 
 - [x] **Step 2: Inspect the all-in-one JAR**
 
@@ -851,10 +851,10 @@ Expected: both branches appear in `git@github.com:Rain156/AreaMusic.git`. Stop o
 Recorded on 2026-07-11:
 
 - Review fixes: client development audio providers were repaired in `b04bf2a3196602de5005da7a11b48976a117bf46`; configuration-cache-safe path handling and the narrowed `Exception | LinkageError` provider boundary were committed in `dab9813a56aa51669358c95ff72c418852cd07dd`. The verifier's actual RED failed on execution-time `file(it)`; two GREEN runs exited 0, and the second reused the configuration cache. Client classpaths contain each of the six audio artifacts once; server and GameTest classpaths contain none.
-- Forge 1.20.1: Java 17 ran `.\gradlew.bat clean test build reobfJarJar runGameTestServer --console=plain` from detached `e9058ddcfc088d7e129b837befdcbc16e6dd7f35`, exit 0. JUnit XML reports 19 suites, 66 tests, 0 failures, 0 errors, and 0 skipped. This Forge baseline registers 0 GameTests; all 0 required tests passed, it loaded 0 tracks and 0 areas in the fresh isolated run, and shut down normally.
-- Forge artifact: `F:\Dev\Minecraft Mods\AreaMusic\.worktrees\forge-final-verify\build\libs\areamusic-0.0.1-all.jar`, 557,934 bytes, SHA-256 `bf5c1865f282cf97a26d25f663c86176388ea2bd9fb133a0789245e6ecb66666`. It contains AreaMusic classes, the expected `META-INF` files, exactly six nested audio JARs with matching Jar-in-Jar metadata, and no compressed-audio test fixture.
+- Forge 1.20.1: Java 17 ran `.\gradlew.bat clean test build reobfJarJar runGameTestServer --console=plain` from detached `e9058ddcfc088d7e129b837befdcbc16e6dd7f35`, exit 0. JUnit XML reports 19 suites, 66 tests, 0 failures, 0 errors, and 0 skipped. This Forge baseline registers 0 GameTests; all 0 required tests passed, it loaded 0 tracks and 0 areas in the fresh isolated run, and shut down normally. The first isolated launch logged expected first-start `ERROR` noise and `NoSuchFileException` because `server.properties` did not yet exist; Forge then generated the file, exited 0, and shut down normally.
+- Forge artifact: `build/libs/areamusic-0.0.1-all.jar` on `forge-1.20.1`, 557,934 bytes, SHA-256 `F0B046F95526D13BD9FE87275A2335BF05BE3EFF7E2B9F4F1AF63D8B7D7C123D`. This digest corresponds to the final local clean build on 2026-07-11; an earlier clean build produced `bf5c1865f282cf97a26d25f663c86176388ea2bd9fb133a0789245e6ecb66666`, so the ForgeGradle archive hash is not stable across clean rebuilds. The JAR contains AreaMusic classes, the expected `META-INF` files, exactly six nested audio JARs with matching Jar-in-Jar metadata, and no compressed-audio test fixture.
 - NeoForge 1.21.1: Java 21 ran `.\gradlew.bat clean test build jarJar runGameTestServer --console=plain`, exit 0. JUnit XML reports 20 suites, 68 tests, 0 failures, 0 errors, and 0 skipped. GameTest passed 1/1, logged `Loaded 7 AreaMusic tracks and 2 areas`, saved all dimensions, and shut down normally.
-- NeoForge artifact: `F:\Dev\Minecraft Mods\AreaMusic\.worktrees\forge-1.20.1\build\libs\areamusic-neoforge-1.21.1-0.0.1-all.jar`, 563,832 bytes, SHA-256 `66d461b1f7ba4484a9b5679799e6b3c19f1e2fafb6328ba2416290424ba3d5a2`. It is the only `*-all.jar`, contains 55 AreaMusic classes plus the expected `META-INF` files, exactly six nested audio JARs and six matching metadata entries, and no compressed-audio test fixture.
+- NeoForge artifact: `build/libs/areamusic-neoforge-1.21.1-0.0.1-all.jar` on `neoforge-1.21.1`, 563,832 bytes, SHA-256 `66d461b1f7ba4484a9b5679799e6b3c19f1e2fafb6328ba2416290424ba3d5a2`. It is the only `*-all.jar`, contains 55 AreaMusic classes plus the expected `META-INF` files, exactly six nested audio JARs and six matching metadata entries, and no compressed-audio test fixture.
 - Server/data isolation: both server runs used linked-worktree-local `run` directories. The seven source Forge audio files and five area JSON files match the isolated NeoForge copies byte-for-byte, the 98-byte source client TOML matches the retained isolated backup, and all 13 source hashes remained unchanged across final verification. Only the isolated save was allowed to change.
 - Remote pre-publication check: `origin` is `git@github.com:Rain156/AreaMusic.git`; `git ls-remote origin` and `git fetch origin --prune` both exited 0. The remote currently contains only `main` at `ad2e248fddb211a7885e2c5184cb6e12df00eb36`; neither verified branch was pushed during this task.
 - Remaining manual acceptance: Task 8 client Steps 1 and 2 stay unchecked. Human GUI and listening confirmation is still required; the retained logs, screenshot, and thread dump are not represented as audible proof.
