@@ -15,7 +15,7 @@
 **Files:**
 - Verify: repository state only; no source changes
 
-- [ ] **Step 1: Verify the local baseline is clean**
+- [x] **Step 1: Verify the local baseline is clean**
 
 Run:
 
@@ -26,7 +26,7 @@ git log -5 --oneline --decorate
 
 Expected: the working tree has no changes and `HEAD` contains the approved design and this plan. No branch, commit, tag, file, or artifact name may have an automated-tool prefix.
 
-- [ ] **Step 2: Re-run the verified Forge baseline**
+- [x] **Step 2: Re-run the verified Forge baseline**
 
 Run:
 
@@ -38,7 +38,7 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 
 Expected: 64 tests pass, the all-in-one Forge JAR builds, and the Forge GameTest server exits successfully.
 
-- [ ] **Step 3: Inspect and configure the GitHub remote without overwriting it**
+- [x] **Step 3: Inspect and configure the GitHub remote without overwriting it**
 
 Run:
 
@@ -56,7 +56,7 @@ git branch -r
 
 Expected: `origin` uses the supplied SSH URL. If `ls-remote` or `git fetch` reports missing credentials, stop before any push and report the SSH blocker. If existing remote branches have unrelated history, inspect them and stop instead of force-pushing or replacing them.
 
-- [ ] **Step 4: Rename the maintained Forge branch**
+- [x] **Step 4: Rename the maintained Forge branch**
 
 Run:
 
@@ -73,7 +73,7 @@ Expected: the current branch is exactly `forge-1.20.1` and the working tree rema
 - Create: `src/test/java/datura/areamusic/server/AreaMusicCommandsTest.java`
 - Modify: `src/main/java/datura/areamusic/server/AreaMusicCommands.java`
 
-- [ ] **Step 1: Write failing command structure and suggestion tests**
+- [x] **Step 1: Write failing command structure and suggestion tests**
 
 Create `AreaMusicCommandsTest.java`:
 
@@ -133,7 +133,7 @@ class AreaMusicCommandsTest {
 }
 ```
 
-- [ ] **Step 2: Run the test and confirm RED**
+- [x] **Step 2: Run the test and confirm RED**
 
 Run:
 
@@ -143,7 +143,7 @@ Run:
 
 Expected: test compilation fails because the iterable `suggestMusicIds` overload does not exist, and the old command uses `QUOTABLE_PHRASE` rather than `GREEDY_PHRASE`.
 
-- [ ] **Step 3: Implement greedy raw completion**
+- [x] **Step 3: Implement greedy raw completion**
 
 In `AreaMusicCommands.java`, replace the final command node and suggestion helpers with:
 
@@ -164,7 +164,7 @@ static CompletableFuture<Suggestions> suggestMusicIds(
 
 Delete the old stream mapping through `StringArgumentType.escapeIfRequired`. Keep `StringArgumentType.getString(context, "musicId")`; a greedy string returns the entire unquoted remainder, including spaces and forward slashes.
 
-- [ ] **Step 4: Verify GREEN and all Forge behavior**
+- [x] **Step 4: Verify GREEN and all Forge behavior**
 
 Run:
 
@@ -175,7 +175,7 @@ Run:
 
 Expected: both new tests pass, the full suite increases from 64 to 66 passing tests, and the Forge production pipeline succeeds.
 
-- [ ] **Step 5: Commit the cross-version command behavior**
+- [x] **Step 5: Commit the cross-version command behavior**
 
 Run:
 
@@ -195,7 +195,7 @@ git commit -m "feat: add unquoted music path completion"
 - Create: `src/main/templates/META-INF/neoforge.mods.toml`
 - Modify: `src/main/resources/pack.mcmeta`
 
-- [ ] **Step 1: Create the version branch from the verified Forge head**
+- [x] **Step 1: Create the version branch from the verified Forge head**
 
 Run:
 
@@ -207,7 +207,7 @@ git status --short --branch
 
 Expected: the branch is exactly `neoforge-1.21.1`, contains the command commit, and is clean.
 
-- [ ] **Step 2: Select Java 21**
+- [x] **Step 2: Select Java 21**
 
 Run:
 
@@ -219,7 +219,7 @@ java -version
 
 Expected: Java 21.0.9 is active.
 
-- [ ] **Step 3: Replace settings and version properties**
+- [x] **Step 3: Replace settings and version properties**
 
 Replace `settings.gradle` with:
 
@@ -261,7 +261,7 @@ mod_authors=Datura
 mod_description=Play local music automatically inside server-defined areas.
 ```
 
-- [ ] **Step 4: Replace ForgeGradle with ModDevGradle**
+- [x] **Step 4: Replace ForgeGradle with ModDevGradle**
 
 Use this structure in `build.gradle`:
 
@@ -376,7 +376,7 @@ tasks.named('jarJar').configure { archiveClassifier = 'all' }
 tasks.named('build').configure { dependsOn tasks.named('jarJar') }
 ```
 
-- [ ] **Step 5: Replace loader metadata and resource pack metadata**
+- [x] **Step 5: Replace loader metadata and resource pack metadata**
 
 Delete `src/main/resources/META-INF/mods.toml`. Create `src/main/templates/META-INF/neoforge.mods.toml`:
 
@@ -409,7 +409,7 @@ side="BOTH"
 
 Set `pack_format` to `34` in `src/main/resources/pack.mcmeta`.
 
-- [ ] **Step 6: Upgrade the wrapper and confirm the intentional RED build**
+- [x] **Step 6: Upgrade the wrapper and confirm the intentional RED build**
 
 Set `distributionUrl` in `gradle/wrapper/gradle-wrapper.properties` to:
 
@@ -437,7 +437,7 @@ Expected: Gradle and NeoForge resolve successfully; Java compilation fails only 
 - Modify: `src/main/java/datura/areamusic/client/AreaMusicSoundOptions.java`
 - Modify: `src/test/java/datura/areamusic/config/AreaMusicClientConfigTest.java`
 
-- [ ] **Step 1: Port the entry point and config registration**
+- [x] **Step 1: Port the entry point and config registration**
 
 Replace `AreaMusic` with the NeoForge constructor shape:
 
@@ -459,7 +459,7 @@ public final class AreaMusic {
 
 Use imports from `net.neoforged.bus.api`, `net.neoforged.fml`, and `net.neoforged.fml.common`.
 
-- [ ] **Step 2: Port `ForgeConfigSpec` without changing its file format**
+- [x] **Step 2: Port `ForgeConfigSpec` without changing its file format**
 
 In `AreaMusicClientConfig` and its test, replace `net.minecraftforge.common.ForgeConfigSpec` with `net.neoforged.neoforge.common.ModConfigSpec`, and rename the declared types accordingly:
 
@@ -470,7 +470,7 @@ private final ModConfigSpec.DoubleValue volume;
 
 Keep the path `volume`, default `1.0`, range `[0.0, 1.0]`, explicit file name `areamusic-client.toml`, clamp, and immediate `save()` behavior unchanged.
 
-- [ ] **Step 3: Port server events**
+- [x] **Step 3: Port server events**
 
 Use `net.neoforged.fml.common.EventBusSubscriber`, `net.neoforged.bus.api.SubscribeEvent`, NeoForge server events, and `net.neoforged.neoforge.event.tick.PlayerTickEvent`.
 
@@ -487,7 +487,7 @@ public static void onPlayerTick(PlayerTickEvent.Post event) {
 
 Use `@EventBusSubscriber(modid = AreaMusic.MOD_ID)` on `AreaMusicServer`. Preserve command registration, login, logout, respawn, dimension change, server start/stop, atomic reload, and storage paths. Replace direct `player.server` comparisons with `player.getServer()` if required by 1.21.1 mappings.
 
-- [ ] **Step 4: Port client event classes and paths**
+- [x] **Step 4: Port client event classes and paths**
 
 Use these NeoForge types:
 
@@ -516,7 +516,7 @@ public static void onClientTick(ClientTickEvent.Post event) {
 
 Annotate client subscriber classes with `@EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT)`. Rename the nested `ForgeEvents` class to `GameEvents`. Keep initialization, connect/disconnect, shutdown, UI list identification, and independent volume behavior unchanged.
 
-- [ ] **Step 5: Re-run compilation and isolate network failures**
+- [x] **Step 5: Re-run compilation and isolate network failures**
 
 Run:
 
@@ -534,7 +534,7 @@ Expected: remaining failures are confined to the old Forge `SimpleChannel`, `Net
 - Modify: `src/main/java/datura/areamusic/network/ClientboundReloadMusic.java`
 - Modify: `src/test/java/datura/areamusic/playback/PlaybackStateTest.java`
 
-- [ ] **Step 1: Change codec tests to the desired payload API and verify RED**
+- [x] **Step 1: Change codec tests to the desired payload API and verify RED**
 
 Replace direct static codec calls in `PlaybackStateTest` with:
 
@@ -558,7 +558,7 @@ Run:
 
 Expected: compilation fails because the payload records do not yet expose `STREAM_CODEC` or implement the 1.21.1 payload contract.
 
-- [ ] **Step 2: Implement `ClientboundReloadMusic` as a payload**
+- [x] **Step 2: Implement `ClientboundReloadMusic` as a payload**
 
 Use this structure:
 
@@ -591,7 +591,7 @@ public record ClientboundReloadMusic(long revision) implements CustomPacketPaylo
 }
 ```
 
-- [ ] **Step 3: Implement the playback-state payload**
+- [x] **Step 3: Implement the playback-state payload**
 
 Make `ClientboundPlaybackState` implement `CustomPacketPayload`, add type `areamusic:playback_state`, and expose an anonymous `StreamCodec<FriendlyByteBuf, ClientboundPlaybackState>`. Its `encode` and `decode` bodies must preserve the existing field order and limits:
 
@@ -608,7 +608,7 @@ fadeOutMs VarInt when playing
 
 Keep constructor validation and `PlaybackState.stopped()` handling unchanged.
 
-- [ ] **Step 4: Register and send payloads natively**
+- [x] **Step 4: Register and send payloads natively**
 
 Replace channel state in `AreaMusicNetwork` with:
 
@@ -637,7 +637,7 @@ PacketDistributor.sendToPlayer(player, new ClientboundReloadMusic(revision));
 
 Remove `SimpleChannel`, `NetworkRegistry`, `NetworkDirection`, numeric message IDs, `requireChannel`, and both old `NetworkEvent.Context` handlers. Payload handlers run on the main thread by default in NeoForge 21.1.235.
 
-- [ ] **Step 5: Verify codecs and full compilation**
+- [x] **Step 5: Verify codecs and full compilation**
 
 Run:
 
@@ -661,7 +661,7 @@ Expected: all codec tests pass and no `net.minecraftforge` imports remain.
   - `src/main/java/datura/areamusic/server/AreaMusicServer.java`
 - Modify corresponding tests only for API type/package changes, never expected behavior
 
-- [ ] **Step 1: Run all tests to obtain the exact compatibility list**
+- [x] **Step 1: Run all tests to obtain the exact compatibility list**
 
 Run:
 
@@ -671,7 +671,7 @@ Run:
 
 Expected: either all 66 tests pass or failures identify concrete 1.21.1 signature changes. Preserve these behavioral expectations while applying the exact replacements below.
 
-- [ ] **Step 2: Apply the bounded 1.21.1 replacements**
+- [x] **Step 2: Apply the bounded 1.21.1 replacements**
 
 Use `ResourceLocation.fromNamespaceAndPath` for AreaMusic-owned identifiers and keep `ResourceLocation.tryParse` for user/JSON input. Use `ServerPlayer#getServer`, `Player#level`, and `Level#dimension` accessors rather than removed fields. Keep `BlockPosArgument.blockPos`, `BlockPosArgument.getBlockPos`, `Commands.literal`, and the approved greedy final `StringArgumentType`.
 
@@ -683,7 +683,7 @@ candidate.findOption(masterVolume) != null && candidate.findOption(voiceVolume) 
 
 and only replace the one-widget Voice row before moving the new last row into its position.
 
-- [ ] **Step 3: Verify no loader leakage and all tests GREEN**
+- [x] **Step 3: Verify no loader leakage and all tests GREEN**
 
 Run:
 
@@ -695,7 +695,7 @@ Get-ChildItem -Path src -Recurse -File -Filter '*.java' |
 
 Expected: the search returns nothing and all 66 tests pass with zero failures or errors.
 
-- [ ] **Step 4: Commit the native port checkpoint**
+- [x] **Step 4: Commit the native port checkpoint**
 
 Run:
 
@@ -712,7 +712,7 @@ git commit -m "feat: port AreaMusic to NeoForge 1.21.1"
 - Verify: existing JSON and config fixtures under `src/test`
 - Produce: `build/libs/areamusic-neoforge-1.21.1-0.0.1-all.jar`
 
-- [ ] **Step 1: Run the clean NeoForge production pipeline**
+- [x] **Step 1: Run the clean NeoForge production pipeline**
 
 Run:
 
@@ -724,7 +724,7 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 
 Expected: 66 tests pass, the NeoForge GameTest server starts and exits successfully, and Gradle exits `0`.
 
-- [ ] **Step 2: Inspect the all-in-one JAR**
+- [x] **Step 2: Inspect the all-in-one JAR**
 
 Run:
 
@@ -738,11 +738,11 @@ Get-Item -LiteralPath $jar | Select-Object FullName,Length,LastWriteTime
 
 Expected: AreaMusic classes and six decoder/runtime JARs are present under `META-INF/jarjar`; `test-48000.mp3.b64` and `JCODEC-LICENSE.txt` are absent because they are test resources.
 
-- [ ] **Step 3: Verify existing Forge data without modifying it**
+- [x] **Step 3: Verify existing Forge data without modifying it**
 
 Launch against the existing `run` directory and confirm that `AreaMusic`, `config/areamusic-client.toml`, and `config/areamusic/<SaveID>/*.json` load without migration or rewritten keys. Run `/areamusic reload` and confirm the logged track/area counts match the Forge build.
 
-- [ ] **Step 4: Commit any packaging correction before acceptance testing**
+- [x] **Step 4: Commit any packaging correction before acceptance testing**
 
 Run `git status --short`. If Task 7 required a change to `build.gradle`, metadata, or notices, stage only those files, run `git diff --cached --check`, and commit them with:
 
@@ -779,7 +779,7 @@ Completion must insert both Music IDs without quotes. Creating the areas must wr
 
 Confirm the AreaMusic slider is present, persists after restart, ignores vanilla Music volume, obeys Master volume, crossfades between adjacent regions, fades out on exit, pauses with the game, and plays both existing 48 kHz MP3 files at the original duration/speed.
 
-- [ ] **Step 3: Verify dedicated-server safety**
+- [x] **Step 3: Verify dedicated-server safety**
 
 Run:
 
@@ -789,17 +789,19 @@ Run:
 
 Expected: the server constructs AreaMusic without loading `net.minecraft.client` classes, reports the existing music/area counts, completes GameTest, and shuts down normally.
 
+Verification status (2026-07-11): automated and runtime-objective checks passed, while the two client steps above remain open for human confirmation. The retained RED log records `ClassNotFoundException: javazoom.spi.mpeg.sampled.convert.MpegFormatConversionProvider`; the GREEN client logs record Java 21.0.9, 7 local tracks, 7 server tracks and 2 areas, with no AreaMusic `ERROR` or `ClassNotFoundException`. The F3 screenshot at block `(-10, -58, -7)` is inside area 1's bounds, and the thread dump reaches the Java Sound `DirectDL.write` implementation and `PcmAudioMixer$JavaSoundOutput.write`. This is objective playback-path evidence only: slider/completion GUI behavior and audible volume, crossfade, fade-out, pause, and original-speed behavior still require human observation/listening and are not claimed as heard.
+
 ### Task 9: Final review, documentation, and GitHub publication
 
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-10-area-music-neoforge-1.21.1.md` (mark completed verification steps and record evidence)
 - Verify: complete committed diff on both branches
 
-- [ ] **Step 1: Request and act on a focused code review**
+- [x] **Step 1: Request and act on a focused code review**
 
 Review the NeoForge branch against the approved design, with emphasis on payload bounds, client-only class loading, config compatibility, command completion, stream closure, and Jar-in-Jar metadata. Resolve every Critical or Important finding and rerun the affected test before continuing.
 
-- [ ] **Step 2: Run final fresh verification after the last source change**
+- [x] **Step 2: Run final fresh verification after the last source change**
 
 Run:
 
@@ -811,7 +813,7 @@ git status --short --branch
 
 Expected: all tasks succeed and only the plan evidence update is uncommitted.
 
-- [ ] **Step 3: Record the artifact evidence and commit**
+- [x] **Step 3: Record the artifact evidence and commit**
 
 Write the final unit-test count, client/server checks, artifact path, byte size, and SHA-256 into this plan. Then run:
 
@@ -821,7 +823,7 @@ git commit -m "docs: record NeoForge 1.21.1 verification"
 git status --short --branch
 ```
 
-- [ ] **Step 4: Reverify the Forge branch pointer before publication**
+- [x] **Step 4: Reverify the Forge branch pointer before publication**
 
 Run:
 
@@ -843,3 +845,16 @@ git push -u origin neoforge-1.21.1
 ```
 
 Expected: both branches appear in `git@github.com:Rain156/AreaMusic.git`. Stop on any non-fast-forward rejection; never use `--force` or overwrite an existing remote branch.
+
+#### Final verification evidence
+
+Recorded on 2026-07-11:
+
+- Review fixes: client development audio providers were repaired in `b04bf2a3196602de5005da7a11b48976a117bf46`; configuration-cache-safe path handling and the narrowed `Exception | LinkageError` provider boundary were committed in `dab9813a56aa51669358c95ff72c418852cd07dd`. The verifier's actual RED failed on execution-time `file(it)`; two GREEN runs exited 0, and the second reused the configuration cache. Client classpaths contain each of the six audio artifacts once; server and GameTest classpaths contain none.
+- Forge 1.20.1: Java 17 ran `.\gradlew.bat clean test build reobfJarJar runGameTestServer --console=plain` from detached `e9058ddcfc088d7e129b837befdcbc16e6dd7f35`, exit 0. JUnit XML reports 19 suites, 66 tests, 0 failures, 0 errors, and 0 skipped. This Forge baseline registers 0 GameTests; all 0 required tests passed, it loaded 0 tracks and 0 areas in the fresh isolated run, and shut down normally.
+- Forge artifact: `F:\Dev\Minecraft Mods\AreaMusic\.worktrees\forge-final-verify\build\libs\areamusic-0.0.1-all.jar`, 557,934 bytes, SHA-256 `bf5c1865f282cf97a26d25f663c86176388ea2bd9fb133a0789245e6ecb66666`. It contains AreaMusic classes, the expected `META-INF` files, exactly six nested audio JARs with matching Jar-in-Jar metadata, and no compressed-audio test fixture.
+- NeoForge 1.21.1: Java 21 ran `.\gradlew.bat clean test build jarJar runGameTestServer --console=plain`, exit 0. JUnit XML reports 20 suites, 68 tests, 0 failures, 0 errors, and 0 skipped. GameTest passed 1/1, logged `Loaded 7 AreaMusic tracks and 2 areas`, saved all dimensions, and shut down normally.
+- NeoForge artifact: `F:\Dev\Minecraft Mods\AreaMusic\.worktrees\forge-1.20.1\build\libs\areamusic-neoforge-1.21.1-0.0.1-all.jar`, 563,832 bytes, SHA-256 `66d461b1f7ba4484a9b5679799e6b3c19f1e2fafb6328ba2416290424ba3d5a2`. It is the only `*-all.jar`, contains 55 AreaMusic classes plus the expected `META-INF` files, exactly six nested audio JARs and six matching metadata entries, and no compressed-audio test fixture.
+- Server/data isolation: both server runs used linked-worktree-local `run` directories. The seven source Forge audio files and five area JSON files match the isolated NeoForge copies byte-for-byte, the 98-byte source client TOML matches the retained isolated backup, and all 13 source hashes remained unchanged across final verification. Only the isolated save was allowed to change.
+- Remote pre-publication check: `origin` is `git@github.com:Rain156/AreaMusic.git`; `git ls-remote origin` and `git fetch origin --prune` both exited 0. The remote currently contains only `main` at `ad2e248fddb211a7885e2c5184cb6e12df00eb36`; neither verified branch was pushed during this task.
+- Remaining manual acceptance: Task 8 client Steps 1 and 2 stay unchecked. Human GUI and listening confirmation is still required; the retained logs, screenshot, and thread dump are not represented as audible proof.
