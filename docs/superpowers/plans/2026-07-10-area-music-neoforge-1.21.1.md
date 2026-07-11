@@ -835,7 +835,7 @@ git merge-base --is-ancestor forge-1.20.1 neoforge-1.21.1
 
 Expected: `forge-1.20.1` ends at the tested greedy-completion commit and is an ancestor of the NeoForge branch.
 
-- [ ] **Step 5: Push both verified branches without force**
+- [x] **Step 5: Push both verified branches without force**
 
 Run:
 
@@ -856,5 +856,5 @@ Recorded on 2026-07-11:
 - NeoForge 1.21.1: Java 21 ran `.\gradlew.bat clean test build jarJar runGameTestServer --console=plain`, exit 0. JUnit XML reports 20 suites, 68 tests, 0 failures, 0 errors, and 0 skipped. GameTest passed 1/1, logged `Loaded 7 AreaMusic tracks and 2 areas`, saved all dimensions, and shut down normally.
 - NeoForge artifact: `build/libs/areamusic-neoforge-1.21.1-0.0.1-all.jar` on `neoforge-1.21.1`, 563,832 bytes, SHA-256 `66d461b1f7ba4484a9b5679799e6b3c19f1e2fafb6328ba2416290424ba3d5a2`. It is the only `*-all.jar`, contains 55 AreaMusic classes plus the expected `META-INF` files, exactly six nested audio JARs and six matching metadata entries, and no compressed-audio test fixture.
 - Server/data isolation: both server runs used linked-worktree-local `run` directories. The seven source Forge audio files and five area JSON files match the isolated NeoForge copies byte-for-byte, the 98-byte source client TOML matches the retained isolated backup, and all 13 source hashes remained unchanged across final verification. Only the isolated save was allowed to change.
-- Remote pre-publication check: `origin` is `git@github.com:Rain156/AreaMusic.git`; `git ls-remote origin` and `git fetch origin --prune` both exited 0. The remote currently contains only `main` at `ad2e248fddb211a7885e2c5184cb6e12df00eb36`; neither verified branch was pushed during this task.
+- Remote publication: on 2026-07-11 both verified branches were published without force to `git@github.com:Rain156/AreaMusic.git`: `origin/forge-1.20.1` is `e9058ddcfc088d7e129b837befdcbc16e6dd7f35`, and `origin/neoforge-1.21.1` is `accc88af89f659e8f9d0d3bbac5827e1a7b52f60`.
 - Remaining manual acceptance: Task 8 client Steps 1 and 2 stay unchecked. Human GUI and listening confirmation is still required; the retained logs, screenshot, and thread dump are not represented as audible proof.
