@@ -37,7 +37,8 @@ neoForge {
 
         gameTestServer {
             type = 'gameTestServer'
-            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
+            programArguments.addAll '--world', '新的世界'
+            systemProperty 'neoforge.enabledGameTestNamespaces', "${mod_id},minecraft"
         }
 
         data {
