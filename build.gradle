@@ -70,6 +70,7 @@ sourceSets.main.resources {
 }
 
 configurations {
+    clientAdditionalRuntimeClasspath.extendsFrom implementation
     runtimeClasspath.extendsFrom localRuntime
 }
 
@@ -152,6 +153,67 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+}
+
+def clientAudioRuntimeArtifacts = [
+        'mp3spi-1.9.5.4.jar',
+        'jlayer-1.0.1.4.jar',
+        'vorbisspi-1.0.3.3.jar',
+        'jorbis-0.0.17.4.jar',
+        'tritonus-share-0.3.7.4.jar',
+        'jflac-codec-1.5.2.jar'
+]
+def clientAudioProviderClasses = [
+        'javazoom.spi.mpeg.sampled.file.MpegAudioFileReader',
+        'javazoom.spi.mpeg.sampled.convert.MpegFormatConversionProvider',
+        'javazoom.spi.vorbis.sampled.file.VorbisAudioFileReader',
+        'javazoom.spi.vorbis.sampled.convert.VorbisFormatConversionProvider',
+        'org.jflac.sound.spi.FlacAudioFileReader',
+        'org.jflac.sound.spi.FlacFormatConversionProvider'
+]
+
+def verifyClientRuntimeAudioProviders = tasks.register('verifyClientRuntimeAudioProviders') {
+    dependsOn tasks.named('writeClientLegacyClasspath')
+    def legacyClasspath = layout.buildDirectory.file('moddev/clientLegacyClasspath.txt')
+    inputs.file(legacyClasspath)
+
+    doLast {
+        File classpathFile = legacyClasspath.get().asFile
+        List<File> classpathEntries = classpathFile.readLines('UTF-8')
+                .findAll { !it.isBlank() }
+                .collect { file(it) }
+        List<String> missingArtifacts = clientAudioRuntimeArtifacts.findAll { artifact ->
+            classpathEntries.count { it.name == artifact } != 1
+        }
+        List<String> failures = []
+        URLClassLoader loader = new URLClassLoader(
+                classpathEntries.collect { it.toURI().toURL() } as URL[],
+                ClassLoader.getPlatformClassLoader()
+        )
+        try {
+            clientAudioProviderClasses.each { className ->
+                try {
+                    Class.forName(className, true, loader).getDeclaredConstructor().newInstance()
+                } catch (Throwable throwable) {
+                    failures.add("${className}: ${throwable.class.name}: ${throwable.message}")
+                }
+            }
+        } finally {
+            loader.close()
+        }
+
+        if (!missingArtifacts.isEmpty() || !failures.isEmpty()) {
+            throw new GradleException(
+                    "Client audio runtime verification failed for ${classpathFile}. " +
+                            "Missing or duplicate artifacts: ${missingArtifacts}; " +
+                            "provider failures: ${failures}"
+            )
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn verifyClientRuntimeAudioProviders
 }
 
 tasks.named('jar', Jar).configure {
