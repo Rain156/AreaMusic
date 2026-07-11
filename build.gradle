@@ -37,6 +37,7 @@ neoForge {
 
         gameTestServer {
             type = 'gameTestServer'
+            // Reuse the Forge acceptance save ID world-723bd584.
             programArguments.addAll '--world', '新的世界'
             systemProperty 'neoforge.enabledGameTestNamespaces', "${mod_id},minecraft"
         }

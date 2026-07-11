@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -44,6 +45,7 @@ public final class AreaMusicServer {
     private static volatile MusicLibrary musicLibrary = MusicLibrary.empty(FMLPaths.GAMEDIR.get().resolve("AreaMusic"));
     private static volatile List<AreaDefinition> areas = List.of();
     private static volatile long revision;
+    private static volatile ReloadStatus reloadStatus = ReloadStatus.notReady();
     private static Path musicRoot;
     private static AreaStorage storage;
     private static boolean reloadInFlight;
@@ -105,6 +107,10 @@ public final class AreaMusicServer {
         return musicLibrary.ids();
     }
 
+    public static ReloadStatus reloadStatus() {
+        return reloadStatus;
+    }
+
     public static int requestReload(CommandSourceStack source) {
         MinecraftServer currentServer = server;
         AreaStorage currentStorage = storage;
@@ -123,6 +129,7 @@ public final class AreaMusicServer {
         }
 
         reloadInFlight = true;
+        reloadStatus = ReloadStatus.loading();
         if (source != null) {
             source.sendSuccess(() -> Component.translatable("commands.areamusic.reload.started"), false);
         }
@@ -195,6 +202,7 @@ public final class AreaMusicServer {
     }
 
     private static void start(MinecraftServer startedServer) {
+        reloadStatus = ReloadStatus.notReady();
         server = startedServer;
         musicRoot = FMLPaths.GAMEDIR.get().resolve("AreaMusic").toAbsolutePath().normalize();
         Path worldRoot = startedServer.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
@@ -221,6 +229,7 @@ public final class AreaMusicServer {
         PLAYER_TRACKERS.clear();
         CREATE_IN_FLIGHT.clear();
         reloadInFlight = false;
+        reloadStatus = ReloadStatus.notReady();
     }
 
     private static ReloadCandidate loadCandidate(Path root, AreaStorage areaStorage) {
@@ -245,6 +254,7 @@ public final class AreaMusicServer {
         reloadInFlight = false;
         if (throwable != null) {
             Throwable cause = rootCause(throwable);
+            reloadStatus = ReloadStatus.failed(message(cause));
             LOGGER.error("Failed to reload AreaMusic", cause);
             if (source != null) {
                 source.sendFailure(Component.translatable("commands.areamusic.reload.failed", message(cause)));
@@ -260,6 +270,7 @@ public final class AreaMusicServer {
             AreaMusicNetwork.sendReload(player, revision);
             syncPlayer(player);
         }
+        reloadStatus = ReloadStatus.succeeded(musicLibrary.ids().size(), areas.size());
         LOGGER.info("Loaded {} AreaMusic tracks and {} areas", musicLibrary.ids().size(), areas.size());
         if (source != null) {
             source.sendSuccess(
@@ -350,6 +361,59 @@ public final class AreaMusicServer {
     private record ReloadCandidate(MusicLibrary musicLibrary, List<AreaDefinition> areas) {
         private ReloadCandidate {
             areas = List.copyOf(areas);
+        }
+    }
+
+    public enum ReloadPhase {
+        NOT_READY,
+        LOADING,
+        SUCCEEDED,
+        FAILED
+    }
+
+    public record ReloadStatus(ReloadPhase phase, int trackCount, int areaCount, String failureMessage) {
+        public ReloadStatus {
+            Objects.requireNonNull(phase, "phase");
+            if (trackCount < 0 || areaCount < 0) {
+                throw new IllegalArgumentException("Reload counts must not be negative");
+            }
+            failureMessage = failureMessage == null ? "" : failureMessage;
+            switch (phase) {
+                case NOT_READY, LOADING -> {
+                    if (trackCount != 0 || areaCount != 0 || !failureMessage.isEmpty()) {
+                        throw new IllegalArgumentException(phase + " must not contain a reload result");
+                    }
+                }
+                case SUCCEEDED -> {
+                    if (!failureMessage.isEmpty()) {
+                        throw new IllegalArgumentException("A successful reload must not contain a failure message");
+                    }
+                }
+                case FAILED -> {
+                    if (trackCount != 0 || areaCount != 0) {
+                        throw new IllegalArgumentException("A failed reload must not contain loaded counts");
+                    }
+                    if (failureMessage.isBlank()) {
+                        failureMessage = "Unknown reload failure";
+                    }
+                }
+            }
+        }
+
+        public static ReloadStatus notReady() {
+            return new ReloadStatus(ReloadPhase.NOT_READY, 0, 0, "");
+        }
+
+        public static ReloadStatus loading() {
+            return new ReloadStatus(ReloadPhase.LOADING, 0, 0, "");
+        }
+
+        public static ReloadStatus succeeded(int trackCount, int areaCount) {
+            return new ReloadStatus(ReloadPhase.SUCCEEDED, trackCount, areaCount, "");
+        }
+
+        public static ReloadStatus failed(String failureMessage) {
+            return new ReloadStatus(ReloadPhase.FAILED, 0, 0, failureMessage);
         }
     }
 
