@@ -15,6 +15,7 @@ public final class PcmMixerEngine implements AutoCloseable {
     private static final int CHANNELS = AudioStreamFactory.MIX_FORMAT.getChannels();
     private static final int FRAME_SIZE = AudioStreamFactory.MIX_FORMAT.getFrameSize();
     private static final int MAX_TRACKS = 4;
+    private static final int MAX_CONSECUTIVE_ZERO_READS = 64;
     private static final int OVERFLOW_FADE_MS = 20;
 
     private final AudioStreamFactory streamFactory;
@@ -290,22 +291,32 @@ public final class PcmMixerEngine implements AutoCloseable {
         private int readFrames(byte[] destination, int requestedFrames) throws Exception {
             int requestedBytes = requestedFrames * FRAME_SIZE;
             int totalBytes = 0;
+            int consecutiveZeroReads = 0;
             boolean reopenedWithoutData = false;
             while (totalBytes < requestedBytes) {
                 int read = stream.read(destination, totalBytes, requestedBytes - totalBytes);
                 if (read > 0) {
                     totalBytes += read;
+                    consecutiveZeroReads = 0;
                     reopenedWithoutData = false;
                     continue;
                 }
                 if (read == 0) {
-                    break;
+                    consecutiveZeroReads++;
+                    if (consecutiveZeroReads > MAX_CONSECUTIVE_ZERO_READS) {
+                        throw new IOException(
+                                "Decoder for " + musicId + " returned zero bytes "
+                                        + consecutiveZeroReads + " consecutive times"
+                        );
+                    }
+                    continue;
                 }
                 if (!loop || reopenedWithoutData) {
                     exhausted = true;
                     break;
                 }
                 reopen();
+                consecutiveZeroReads = 0;
                 reopenedWithoutData = true;
             }
             return totalBytes / FRAME_SIZE;
