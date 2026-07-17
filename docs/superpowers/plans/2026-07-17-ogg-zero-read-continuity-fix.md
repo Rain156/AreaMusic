@@ -455,27 +455,44 @@ Expected: the mixer classes are present, no nested JAR or bundled JOrbis class i
 - Verify: NeoForge and Forge source/test files listed above
 - Verify: both local distributable JARs
 
-- [ ] **Step 1: Confirm the behavioral sources match across branches**
+- [ ] **Step 1: Confirm the committed behavioral changes match across branches**
 
-From either worktree, run:
+From either worktree, compare the loader-neutral committed blobs and the stable patch IDs for both focused changes:
 
 ```powershell
 $neo='F:\Dev\Minecraft Mods\AreaMusic\.worktrees\forge-1.20.1'
 $forge='F:\Dev\Minecraft Mods\AreaMusic\.worktrees\forge-final-verify'
 $paths=@(
-  'src\main\java\datura\areamusic\client\audio\PcmMixerEngine.java',
-  'src\test\java\datura\areamusic\client\audio\PcmMixerEngineTest.java',
-  'src\test\java\datura\areamusic\client\audio\CompressedAudioFormatsTest.java',
-  'src\test\java\datura\areamusic\client\audio\AudioStreamFactoryTest.java'
+  'src/main/java/datura/areamusic/client/audio/PcmMixerEngine.java',
+  'src/test/java/datura/areamusic/client/audio/PcmMixerEngineTest.java',
+  'src/test/java/datura/areamusic/client/audio/AudioStreamFactoryTest.java'
 )
 foreach ($path in $paths) {
-  $neoHash=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $neo $path)).Hash
-  $forgeHash=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $forge $path)).Hash
-  if ($neoHash -ne $forgeHash) { throw "Cross-version mismatch: $path" }
+  $neoBlob=git -C $neo rev-parse "HEAD:$path"
+  if ($LASTEXITCODE -ne 0) { throw "Could not resolve NeoForge blob: $path" }
+  $forgeBlob=git -C $forge rev-parse "HEAD:$path"
+  if ($LASTEXITCODE -ne 0) { throw "Could not resolve Forge blob: $path" }
+  if ($neoBlob -ne $forgeBlob) { throw "Cross-version committed blob mismatch: $path" }
+}
+
+function Get-StablePatchId([string]$repo, [string]$commit) {
+  $result=git -C $repo show --pretty=format: --no-ext-diff $commit | git patch-id --stable
+  if ($LASTEXITCODE -ne 0 -or -not $result) { throw "Could not calculate stable patch ID for $commit" }
+  return ($result -split '\s+')[0]
+}
+
+$patchPairs=@(
+  @{ Label='OGG zero-read fix'; Neo='594ca967'; Forge='68dcc6e' },
+  @{ Label='non-MP3 continuity audit'; Neo='6c1e5c0'; Forge='6bf641e' }
+)
+foreach ($pair in $patchPairs) {
+  $neoPatchId=Get-StablePatchId $neo $pair.Neo
+  $forgePatchId=Get-StablePatchId $forge $pair.Forge
+  if ($neoPatchId -ne $forgePatchId) { throw "Cross-version patch mismatch: $($pair.Label)" }
 }
 ```
 
-Expected: exit code 0 with no mismatch.
+Expected: the loader-neutral implementation/test blobs match, and the NeoForge and Forge versions of both focused patches are equivalent. The pre-existing `CompressedAudioFormatsTest` fixture-loading difference remains intentionally untouched to avoid MP3 test scope creep.
 
 - [ ] **Step 2: Run final Git checks**
 
