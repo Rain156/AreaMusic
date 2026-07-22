@@ -16,16 +16,18 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(17)
 }
 
-jarJar.enable()
-
 configurations {
+    embeddedCodecs {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    compileOnly.extendsFrom embeddedCodecs
     compileOnly.exclude group: 'junit', module: 'junit'
     minecraftLibrary.exclude group: 'junit', module: 'junit'
-    jarJar.exclude group: 'junit', module: 'junit'
-}
-
-jarJar.dependencies {
-    exclude(dependency('junit:junit:3.8.2'))
+    // Minecraft already provides org.jcraft:jorbis as the automatic module "jorbis".
+    // The embedded codec set must use that copy instead of the soundlibs repack.
+    minecraftLibrary.exclude group: 'com.googlecode.soundlibs', module: 'jorbis'
 }
 
 minecraft {
@@ -145,33 +147,14 @@ dependencies {
 
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    // Unit tests run without Minecraft's runtime libraries, so mirror its JOrbis version here.
+    testRuntimeOnly 'org.jcraft:jorbis:0.0.17'
 
-    compileOnly 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
-    compileOnly 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
-    compileOnly 'org.jflac:jflac-codec:1.5.2'
-
-    minecraftLibrary 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
-    minecraftLibrary 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
-    minecraftLibrary 'org.jflac:jflac-codec:1.5.2'
-
-    jarJar(group: 'com.googlecode.soundlibs', name: 'mp3spi', version: '[1.9.5.4,1.9.5.5)') {
-        transitive = false
-    }
-    jarJar(group: 'com.googlecode.soundlibs', name: 'jlayer', version: '[1.0.1.4,1.0.1.5)') {
-        transitive = false
-    }
-    jarJar(group: 'com.googlecode.soundlibs', name: 'vorbisspi', version: '[1.0.3.3,1.0.3.4)') {
-        transitive = false
-    }
-    jarJar(group: 'com.googlecode.soundlibs', name: 'jorbis', version: '[0.0.17.4,0.0.17.5)') {
-        transitive = false
-    }
-    jarJar(group: 'com.googlecode.soundlibs', name: 'tritonus-share', version: '[0.3.7.4,0.3.7.5)') {
-        transitive = false
-    }
-    jarJar(group: 'org.jflac', name: 'jflac-codec', version: '[1.5.2,1.5.3)') {
-        transitive = false
-    }
+    embeddedCodecs 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+    embeddedCodecs 'com.googlecode.soundlibs:jlayer:1.0.1.4'
+    embeddedCodecs 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
+    embeddedCodecs 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
+    embeddedCodecs 'org.jflac:jflac-codec:1.5.2'
 
     // Example mod dependency with JEI - using fg.deobf() ensures the dependency is remapped to your development mappings
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
@@ -189,6 +172,25 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 
 }
+
+def embeddedCodecsDir = layout.buildDirectory.dir('generated/embeddedCodecs')
+def syncEmbeddedCodecs = tasks.register('syncEmbeddedCodecs', Sync) {
+    into embeddedCodecsDir
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from({
+        configurations.embeddedCodecs.collect { zipTree(it) }
+    }) {
+        exclude 'META-INF/MANIFEST.MF'
+        exclude 'META-INF/*.SF'
+        exclude 'META-INF/*.RSA'
+        exclude 'META-INF/*.DSA'
+        exclude 'META-INF/services/**'
+        exclude 'module-info.class'
+        exclude 'META-INF/versions/**/module-info.class'
+    }
+}
+
+sourceSets.main.output.dir([builtBy: syncEmbeddedCodecs], embeddedCodecsDir)
 
 // This block of code expands all declared replace properties in the specified resource targets.
 // A missing property will result in an error. Properties are expanded using ${} Groovy notation.
@@ -230,4 +232,38 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+}
+
+def bundledAudioProviderEntries = [
+        'javazoom/spi/mpeg/sampled/file/MpegAudioFileReader.class',
+        'javazoom/spi/mpeg/sampled/convert/MpegFormatConversionProvider.class',
+        'javazoom/spi/vorbis/sampled/file/VorbisAudioFileReader.class',
+        'javazoom/spi/vorbis/sampled/convert/VorbisFormatConversionProvider.class',
+        'org/jflac/sound/spi/FlacAudioFileReader.class',
+        'org/jflac/sound/spi/FlacFormatConversionProvider.class'
+]
+
+def verifyBundledAudioCodecs = tasks.register('verifyBundledAudioCodecs') {
+    dependsOn syncEmbeddedCodecs
+    inputs.dir embeddedCodecsDir
+
+    doLast {
+        File codecRoot = embeddedCodecsDir.get().asFile
+        List<String> missingEntries = bundledAudioProviderEntries.findAll {
+            !new File(codecRoot, it).isFile()
+        }
+        boolean bundlesJorbis = new File(codecRoot, 'com/jcraft/jorbis').exists()
+        Set<File> nestedJars = fileTree(codecRoot) { include '**/*.jar' }.files
+        if (!missingEntries.isEmpty() || bundlesJorbis || !nestedJars.isEmpty()) {
+            throw new GradleException(
+                    "Bundled audio codec verification failed for ${codecRoot}. " +
+                            "Missing provider classes: ${missingEntries}; " +
+                            "bundles JOrbis: ${bundlesJorbis}; nested JARs: ${nestedJars}"
+            )
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn verifyBundledAudioCodecs
 }

@@ -1,11 +1,15 @@
-AreaMusic embeds the following Java Sound decoder libraries through Forge Jar-in-Jar:
+AreaMusic embeds the following Java Sound decoder libraries directly in its distributable mod JAR:
 
-- MP3SPI 1.9.5.4 and JLayer 1.0.1.4
+- MP3SPI 1.9.5.4, JLayer 1.0.1.4, and Tritonus Share 0.3.7.4
   https://github.com/pdudits/soundlibs
-- VorbisSPI 1.0.3.3 and JOrbis 0.0.17.4
+- VorbisSPI 1.0.3.3
   https://github.com/pdudits/soundlibs
 - jFLAC Codec 1.5.2
   https://github.com/nguillaumin/jflac
 
+Minecraft already supplies JOrbis 0.0.17. AreaMusic intentionally does not embed
+the soundlibs JOrbis repack, because both JARs resolve to the automatic module
+name "jorbis" and cannot coexist in the loader module layer.
+
 These libraries are distributed under the GNU Lesser General Public License.
-Their nested JAR files retain the upstream metadata and license materials.
+The corresponding upstream projects and license sources are listed above.

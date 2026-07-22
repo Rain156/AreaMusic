@@ -29,7 +29,15 @@ class AudioStreamFactoryTest {
 
         try (AudioInputStream decoded = new AudioStreamFactory().open(wav)) {
             assertEquals(AudioStreamFactory.MIX_FORMAT, decoded.getFormat());
-            assertTrue(decoded.readNBytes(AudioStreamFactory.MIX_FORMAT.getFrameSize()).length > 0);
+            long totalBytes = 0;
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = decoded.read(buffer)) != -1) {
+                assertTrue(read > 0);
+                assertEquals(0, read % decoded.getFormat().getFrameSize());
+                totalBytes += read;
+            }
+            assertTrue(totalBytes > 0);
         }
     }
 }

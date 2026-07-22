@@ -48,6 +48,29 @@ class CompressedAudioFormatsTest {
     }
 
     @Test
+    void decodesEntireFlacStreamInFrameAlignedChunks() throws Exception {
+        URL resource = getClass().getResource("/datura/areamusic/audio/test.flac");
+        assertNotNull(resource);
+        Path source = tempDir.resolve("test.flac");
+        try (InputStream input = resource.openStream()) {
+            Files.copy(input, source);
+        }
+
+        long totalBytes = 0;
+        try (AudioInputStream decoded = new AudioStreamFactory().open(source)) {
+            assertEquals(AudioStreamFactory.MIX_FORMAT, decoded.getFormat());
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = decoded.read(buffer)) != -1) {
+                assertTrue(read > 0);
+                assertEquals(0, read % decoded.getFormat().getFrameSize());
+                totalBytes += read;
+            }
+        }
+        assertTrue(totalBytes > 0);
+    }
+
+    @Test
     void preservesDurationWhenCompressedSourceUsesDifferentSampleRate() throws Exception {
         URL resource = getClass().getResource("/datura/areamusic/audio/test-48000.mp3.b64");
         assertNotNull(resource);
