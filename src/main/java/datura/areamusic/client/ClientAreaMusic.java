@@ -5,6 +5,7 @@ import datura.areamusic.AreaMusic;
 import datura.areamusic.client.audio.AudioFailure;
 import datura.areamusic.client.audio.PcmAudioMixer;
 import datura.areamusic.config.AreaMusicClientConfig;
+import datura.areamusic.music.MusicDirectory;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.network.AreaMusicNetwork;
 import datura.areamusic.playback.PlaybackState;
@@ -21,7 +22,6 @@ import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 import net.minecraftforge.fml.loading.FMLPaths;
 import org.slf4j.Logger;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -32,13 +32,13 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static ClientAreaMusic instance;
 
-    private final Path musicRoot;
+    private final Path gameDirectory;
     private final ClientPlaybackSession playbackSession;
     private final Set<String> reportedErrors = ConcurrentHashMap.newKeySet();
     private final AtomicLong scanGeneration = new AtomicLong();
 
-    private ClientAreaMusic(Path musicRoot, MusicLibrary initialLibrary) {
-        this.musicRoot = musicRoot;
+    private ClientAreaMusic(Path gameDirectory, MusicLibrary initialLibrary) {
+        this.gameDirectory = gameDirectory;
         playbackSession = new ClientPlaybackSession(
                 initialLibrary,
                 library -> new PcmAudioMixer(library, this::onAudioError)
@@ -49,14 +49,11 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
         if (instance != null) {
             return;
         }
-        Path root = FMLPaths.GAMEDIR.get().resolve("AreaMusic").toAbsolutePath().normalize();
-        try {
-            Files.createDirectories(root);
-        } catch (Exception exception) {
-            LOGGER.error("Could not create the client AreaMusic directory during startup", exception);
-        }
-
-        ClientAreaMusic created = new ClientAreaMusic(root, MusicLibrary.empty(root));
+        Path gameDirectory = FMLPaths.GAMEDIR.get().toAbsolutePath().normalize();
+        ClientAreaMusic created = new ClientAreaMusic(
+                gameDirectory,
+                MusicLibrary.empty(MusicDirectory.canonicalPath(gameDirectory))
+        );
         instance = created;
         AreaMusicNetwork.setClientHandler(created);
         created.reloadLocalLibrary();
@@ -77,7 +74,7 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
     private void reloadLocalLibrary() {
         long generation = scanGeneration.incrementAndGet();
         CompletableFuture
-                .supplyAsync(() -> scan(musicRoot))
+                .supplyAsync(() -> scan(gameDirectory))
                 .whenComplete((library, throwable) -> Minecraft.getInstance().execute(
                         () -> finishLocalReload(generation, library, throwable)
                 ));
@@ -97,8 +94,9 @@ public final class ClientAreaMusic implements AreaMusicNetwork.ClientHandler {
         LOGGER.info("Loaded {} local AreaMusic tracks", library.ids().size());
     }
 
-    private static MusicLibrary scan(Path root) {
+    static MusicLibrary scan(Path gameDirectory) {
         try {
+            Path root = MusicDirectory.prepare(gameDirectory);
             return MusicLibrary.scan(root);
         } catch (Exception exception) {
             throw new LocalScanFailure(exception);

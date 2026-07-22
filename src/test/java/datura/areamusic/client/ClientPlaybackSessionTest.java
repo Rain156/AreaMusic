@@ -64,6 +64,25 @@ class ClientPlaybackSessionTest {
         session.close();
     }
 
+    @Test
+    void failedReloadKeepsTheCurrentLibraryForTheNextConnection() {
+        MusicLibrary currentLibrary = MusicLibrary.empty(tempDir.resolve("current"));
+        List<MusicLibrary> connectedLibraries = new ArrayList<>();
+        ClientPlaybackSession session = new ClientPlaybackSession(currentLibrary, library -> {
+            connectedLibraries.add(library);
+            return new FakeMixer();
+        });
+        session.connect();
+
+        assertTrue(session.beginReload(7));
+        session.failReload();
+        session.disconnect();
+        session.connect();
+
+        assertEquals(List.of(currentLibrary, currentLibrary), connectedLibraries);
+        session.close();
+    }
+
     private static PlaybackState playing(
             String areaId,
             String musicId,

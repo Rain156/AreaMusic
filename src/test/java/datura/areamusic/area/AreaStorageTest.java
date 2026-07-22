@@ -36,7 +36,7 @@ class AreaStorageTest {
     @Test
     void rejectsTheWholeLoadWhenAnyFileIsInvalid() throws Exception {
         Path areaDirectory = tempDir.resolve("config/areamusic/save-id");
-        Path musicRoot = tempDir.resolve("AreaMusic");
+        Path musicRoot = tempDir.resolve("areamusic");
         Files.createDirectories(musicRoot);
         Files.writeString(musicRoot.resolve("track.ogg"), "fixture");
         MusicLibrary library = MusicLibrary.scan(musicRoot);

@@ -22,7 +22,7 @@ class MusicLibraryTest {
 
     @Test
     void createsMissingRootAndReturnsAnEmptySnapshot() throws Exception {
-        Path root = tempDir.resolve("AreaMusic");
+        Path root = tempDir.resolve("areamusic");
 
         MusicLibrary library = MusicLibrary.scan(root);
 
@@ -33,7 +33,7 @@ class MusicLibraryTest {
 
     @Test
     void recursivelyIndexesSupportedFormatsAndIgnoresOtherFiles() throws Exception {
-        Path root = tempDir.resolve("AreaMusic");
+        Path root = tempDir.resolve("areamusic");
         write(root.resolve("village/day.mp3"));
         write(root.resolve("ambient/Cave.OGG"));
         write(root.resolve("rain.wav"));
@@ -54,7 +54,7 @@ class MusicLibraryTest {
         Path zip = tempDir.resolve("case-conflict.zip");
         URI uri = URI.create("jar:" + zip.toUri());
         try (FileSystem fileSystem = FileSystems.newFileSystem(uri, Map.of("create", "true"))) {
-            Path root = fileSystem.getPath("/AreaMusic");
+            Path root = fileSystem.getPath("/areamusic");
             write(root.resolve("Theme.ogg"));
             write(root.resolve("theme.ogg"));
 
