@@ -89,6 +89,30 @@ class AreaStorageTest {
     }
 
     @Test
+    void preservesIndexedKnownTrackFieldErrorsFromTheCodec() throws Exception {
+        Path areaDirectory = tempDir.resolve("areas");
+        Path musicRoot = tempDir.resolve("music");
+        Files.createDirectories(areaDirectory);
+        Files.createDirectories(musicRoot);
+        Files.writeString(musicRoot.resolve("first.ogg"), "fixture");
+        Files.writeString(musicRoot.resolve("second.ogg"), "fixture");
+        Files.writeString(areaDirectory.resolve("invalid.json"), v2Json("""
+                [
+                    { "musicId": "first.ogg" },
+                    { "musicId": "second.ogg", "volume": "loud" }
+                  ]
+                """));
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+
+        AreaStorage.LoadException error = assertThrows(AreaStorage.LoadException.class,
+                () -> storage.load(MusicLibrary.scan(musicRoot)));
+
+        assertTrue(error.getMessage().contains("invalid.json"));
+        assertTrue(error.getMessage().contains("tracks[1]"));
+        assertTrue(error.getMessage().contains("volume"));
+    }
+
+    @Test
     void createsAFormattedV2FileAndRefusesToOverwriteIt() throws Exception {
         Path areaDirectory = tempDir.resolve("areas");
         AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());

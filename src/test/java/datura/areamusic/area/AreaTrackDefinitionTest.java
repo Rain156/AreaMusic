@@ -56,6 +56,15 @@ class AreaTrackDefinitionTest {
     }
 
     @Test
+    void canonicalizesNegativeZeroVolume() {
+        AreaTrackDefinition track = new AreaTrackDefinition(
+                "track.ogg", 0, -0.0f, true, 2000, 2000);
+
+        assertEquals(Float.floatToRawIntBits(0.0f), Float.floatToRawIntBits(track.volume()));
+        assertEquals(new AreaTrackDefinition("track.ogg", 0, 0.0f, true, 2000, 2000), track);
+    }
+
+    @Test
     void rejectsFadesOutsideInclusiveBounds() {
         assertThrows(IllegalArgumentException.class,
                 () -> new AreaTrackDefinition("track.ogg", 0, 1.0f, true, -1, 2000));

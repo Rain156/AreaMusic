@@ -129,6 +129,23 @@ class AreaJsonCodecTest {
         assertEquals(original, decoded);
     }
 
+    @Test
+    void v2RoundTripsProgrammaticNegativeZeroVolume() {
+        AreaDefinition original = AreaDefinition.create(
+                "zero", ResourceLocation.tryParse("minecraft:overworld"),
+                BlockPos.ZERO, BlockPos.ZERO,
+                List.of(new AreaTrackDefinition("track.ogg", 0, -0.0f, true, 2000, 2000)),
+                false,
+                0
+        );
+
+        AreaDefinition decoded = codec.read("zero", new StringReader(codec.write(original)));
+
+        assertEquals(original, decoded);
+        assertEquals(Float.floatToRawIntBits(0.0f),
+                Float.floatToRawIntBits(decoded.tracks().get(0).volume()));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"musicId", "volume", "loop", "fadeInMs", "fadeOutMs"})
     void rejectsLegacyPlaybackFieldsAtV2Root(String field) {
@@ -174,6 +191,26 @@ class AreaJsonCodecTest {
         String json = v2Json("[{ \"musicId\": \"track.ogg\", \"volum\": 1 }]", "");
 
         assertThrows(JsonParseException.class, () -> codec.read("square", new StringReader(json)));
+    }
+
+    @Test
+    void reportsIndexedPathsForKnownSecondTrackFieldFailures() {
+        assertSecondTrackFailureContains(
+                "{ \"musicId\": \"second.ogg\", \"volume\": 1.01 }",
+                "volume"
+        );
+        assertSecondTrackFailureContains(
+                "{ \"volume\": 1 }",
+                "musicId"
+        );
+        assertSecondTrackFailureContains(
+                "{ \"musicId\": \"second.ogg\", \"volume\": \"loud\" }",
+                "volume"
+        );
+        assertSecondTrackFailureContains(
+                "{ \"musicId\": \"second.ogg\", \"fadeOutMs\": 60001 }",
+                "fadeOutMs"
+        );
     }
 
     @Test
@@ -234,6 +271,16 @@ class AreaJsonCodecTest {
                 resumeOnReenter,
                 12
         );
+    }
+
+    private void assertSecondTrackFailureContains(String secondTrack, String field) {
+        String tracks = "[{ \"musicId\": \"first.ogg\" }, " + secondTrack + "]";
+
+        JsonParseException error = assertThrows(JsonParseException.class,
+                () -> codec.read("square", new StringReader(v2Json(tracks, ""))));
+
+        assertTrue(error.getMessage().contains("tracks[1]"));
+        assertTrue(error.getMessage().contains(field));
     }
 
     private static String v1Json(String extraFields) {

@@ -118,16 +118,26 @@ public final class AreaJsonCodec {
             String location = "tracks[" + index + "]";
             JsonObject track = requireObject(array.get(index), location);
             rejectUnknownFields(track, TRACK_FIELDS, location);
-            tracks.add(new AreaTrackDefinition(
+            tracks.add(requireTrack(track, location));
+        }
+        return List.copyOf(tracks);
+    }
+
+    private static AreaTrackDefinition requireTrack(JsonObject track, String location) {
+        try {
+            return new AreaTrackDefinition(
                     requireString(track, "musicId"),
                     optionalInt(track, "delaySeconds", 0),
                     optionalVolume(track, "volume", 1.0f),
                     optionalBoolean(track, "loop", true),
                     optionalInt(track, "fadeInMs", 2000),
                     optionalInt(track, "fadeOutMs", 2000)
-            ));
+            );
+        } catch (JsonParseException exception) {
+            throw new JsonParseException(location + ": " + exception.getMessage(), exception);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(location + ": " + exception.getMessage(), exception);
         }
-        return List.copyOf(tracks);
     }
 
     private static JsonObject position(BlockPos position) {
@@ -206,7 +216,7 @@ public final class AreaJsonCodec {
         try {
             BigDecimal decimal = new BigDecimal(value.getAsString());
             if (decimal.compareTo(BigDecimal.ZERO) < 0 || decimal.compareTo(BigDecimal.ONE) > 0) {
-                throw new IllegalArgumentException("Volume must be between 0 and 1");
+                throw new IllegalArgumentException("volume must be between 0 and 1");
             }
             return decimal.floatValue();
         } catch (NumberFormatException exception) {

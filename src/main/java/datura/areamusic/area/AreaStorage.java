@@ -161,8 +161,19 @@ public final class AreaStorage {
 
     private static String rootMessage(Throwable throwable) {
         Throwable current = throwable;
-        while (current.getCause() != null) {
+        String contextualMessage = null;
+        while (true) {
+            String message = current.getMessage();
+            if (contextualMessage == null && message != null && message.contains("tracks[")) {
+                contextualMessage = message;
+            }
+            if (current.getCause() == null) {
+                break;
+            }
             current = current.getCause();
+        }
+        if (contextualMessage != null) {
+            return contextualMessage;
         }
         String message = current.getMessage();
         return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;

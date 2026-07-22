@@ -15,13 +15,16 @@ public record AreaTrackDefinition(
     public AreaTrackDefinition {
         Objects.requireNonNull(musicId, "musicId");
         if (musicId.isBlank()) {
-            throw new IllegalArgumentException("MusicID must not be blank");
+            throw new IllegalArgumentException("musicId must not be blank");
         }
         if (delaySeconds < 0) {
             throw new IllegalArgumentException("delaySeconds must not be negative");
         }
         if (!Float.isFinite(volume) || volume < 0.0f || volume > 1.0f) {
-            throw new IllegalArgumentException("Volume must be finite and between 0 and 1");
+            throw new IllegalArgumentException("volume must be finite and between 0 and 1");
+        }
+        if (volume == 0.0f) {
+            volume = 0.0f;
         }
         validateFade("fadeInMs", fadeInMs);
         validateFade("fadeOutMs", fadeOutMs);
