@@ -1,5 +1,6 @@
 package datura.areamusic.client.audio;
 
+import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.playback.PlaybackState;
 
@@ -39,31 +40,33 @@ public final class PcmMixerEngine implements AutoCloseable {
         if (!state.playing()) {
             completedTrack = null;
             pendingStart = null;
-            int fadeOutMs = currentState.playing() ? currentState.fadeOutMs() : 0;
+            int fadeOutMs = currentState.playing() ? primaryTrack(currentState).fadeOutMs() : 0;
             fadeAllToSilence(fadeOutMs);
             currentState = state;
             return;
         }
-        if (completedTrack != null && completedTrack.matches(state) && !state.loop()) {
+        AreaTrackDefinition primaryTrack = primaryTrack(state);
+        if (completedTrack != null && completedTrack.matches(state) && !primaryTrack.loop()) {
             pendingStart = null;
             currentState = state;
             return;
         }
         completedTrack = null;
 
-        Track continuing = currentState.playing() && currentState.musicId().equals(state.musicId())
-                ? findContinuingTrack(state.musicId())
+        Track continuing = currentState.playing()
+                && primaryTrack(currentState).musicId().equals(primaryTrack.musicId())
+                ? findContinuingTrack(primaryTrack.musicId())
                 : null;
         if (continuing != null) {
             pendingStart = null;
             continuing.areaId = state.areaId();
-            continuing.loop = state.loop();
-            continuing.gain.fadeTo(state.volume(), state.fadeInMs(), AudioStreamFactory.SAMPLE_RATE);
+            continuing.loop = primaryTrack.loop();
+            continuing.gain.fadeTo(primaryTrack.volume(), primaryTrack.fadeInMs(), AudioStreamFactory.SAMPLE_RATE);
             currentState = state;
             return;
         }
 
-        int oldFadeOutMs = currentState.playing() ? currentState.fadeOutMs() : 0;
+        int oldFadeOutMs = currentState.playing() ? primaryTrack(currentState).fadeOutMs() : 0;
         fadeAllToSilence(oldFadeOutMs);
         currentState = state;
         pendingStart = state;
@@ -120,7 +123,7 @@ public final class PcmMixerEngine implements AutoCloseable {
                 if (track.exhausted && !track.loop
                         && currentState.playing()
                         && track.areaId.equals(currentState.areaId())
-                        && track.musicId.equals(currentState.musicId())) {
+                        && track.musicId.equals(primaryTrack(currentState).musicId())) {
                     completedTrack = new CompletedTrack(track.areaId, track.musicId);
                 }
                 track.close();
@@ -183,26 +186,29 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
 
         PlaybackState state = pendingStart;
-        Path path = musicLibrary.find(state.musicId()).orElse(null);
+        AreaTrackDefinition primaryTrack = primaryTrack(state);
+        Path path = musicLibrary.find(primaryTrack.musicId()).orElse(null);
         if (path == null) {
             pendingStart = null;
             throw new AudioPlaybackException(
                     AudioFailure.Kind.MISSING_FILE,
-                    state.musicId(),
-                    "Local MusicID is missing: " + state.musicId()
+                    primaryTrack.musicId(),
+                    "Local MusicID is missing: " + primaryTrack.musicId()
             );
         }
         try {
-            Track incoming = new Track(state.areaId(), state.musicId(), path, state.loop());
-            incoming.gain.fadeTo(state.volume(), state.fadeInMs(), AudioStreamFactory.SAMPLE_RATE);
+            Track incoming = new Track(state.areaId(), primaryTrack.musicId(), path, primaryTrack.loop());
+            incoming.gain.fadeTo(
+                    primaryTrack.volume(), primaryTrack.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
+            );
             tracks.add(incoming);
             pendingStart = null;
         } catch (Exception exception) {
             pendingStart = null;
             throw new AudioPlaybackException(
                     AudioFailure.Kind.DECODE,
-                    state.musicId(),
-                    "Could not open " + state.musicId(),
+                    primaryTrack.musicId(),
+                    "Could not open " + primaryTrack.musicId(),
                     exception
             );
         }
@@ -238,6 +244,10 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
     }
 
+    private static AreaTrackDefinition primaryTrack(PlaybackState state) {
+        return state.tracks().get(0);
+    }
+
     public static final class AudioPlaybackException extends Exception {
         private final AudioFailure.Kind kind;
         private final String musicId;
@@ -266,7 +276,7 @@ public final class PcmMixerEngine implements AutoCloseable {
 
     private record CompletedTrack(String areaId, String musicId) {
         private boolean matches(PlaybackState state) {
-            return areaId.equals(state.areaId()) && musicId.equals(state.musicId());
+            return areaId.equals(state.areaId()) && musicId.equals(primaryTrack(state).musicId());
         }
     }
 

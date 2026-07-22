@@ -11,21 +11,25 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlayerAreaTrackerTest {
     private static final ResourceLocation OVERWORLD = ResourceLocation.tryParse("minecraft:overworld");
-    private static final AreaDefinition AREA = area(1.0f);
+    private static final AreaDefinition AREA = area(0.25f, true);
 
     @Test
-    void sendsInitialStateFromFirstTrackAndSkipsIdenticalChecks() {
+    void sendsInitialCompleteImmutableStateAndSkipsIdenticalChecks() {
         PlayerAreaTracker tracker = new PlayerAreaTracker();
 
         Optional<PlaybackState> initial = tracker.update(OVERWORLD, new BlockPos(1, 65, 1), 1L, List.of(AREA));
 
         PlaybackState state = initial.orElseThrow();
-        assertEquals("track.ogg", state.musicId());
-        assertEquals(1.0f, state.volume());
+        assertEquals(PlaybackState.fromArea(AREA), state);
+        assertEquals(AREA.tracks(), state.tracks());
+        assertTrue(state.resumeOnReenter());
+        assertThrows(UnsupportedOperationException.class, () -> state.tracks().clear());
         assertTrue(tracker.update(OVERWORLD, new BlockPos(1, 65, 1), 1L, List.of(AREA)).isEmpty());
     }
 
@@ -48,24 +52,27 @@ class PlayerAreaTrackerTest {
     }
 
     @Test
-    void revisionChangeReevaluatesPlaybackParameters() {
+    void revisionChangeSendsSecondaryTrackAndResumeChanges() {
         PlayerAreaTracker tracker = new PlayerAreaTracker();
         BlockPos position = new BlockPos(1, 65, 1);
         tracker.update(OVERWORLD, position, 1L, List.of(AREA));
 
-        PlaybackState changed = tracker.update(OVERWORLD, position, 2L, List.of(area(0.5f))).orElseThrow();
+        AreaDefinition changedArea = area(0.5f, false);
+        PlaybackState changed = tracker.update(OVERWORLD, position, 2L, List.of(changedArea)).orElseThrow();
 
-        assertEquals(0.5f, changed.volume());
+        assertEquals(PlaybackState.fromArea(changedArea), changed);
+        assertEquals(changedArea.tracks(), changed.tracks());
+        assertFalse(changed.resumeOnReenter());
     }
 
-    private static AreaDefinition area(float volume) {
+    private static AreaDefinition area(float secondaryVolume, boolean resumeOnReenter) {
         return AreaDefinition.create(
                 "area", OVERWORLD, new BlockPos(0, 60, 0), new BlockPos(10, 80, 10),
                 List.of(
-                        new AreaTrackDefinition("track.ogg", 0, volume, true, 2000, 2000),
-                        new AreaTrackDefinition("second.ogg", 4, 0.25f, false, 300, 700)
+                        new AreaTrackDefinition("track.ogg", 0, 1.0f, true, 2000, 2000),
+                        new AreaTrackDefinition("second.ogg", 4, secondaryVolume, false, 300, 700)
                 ),
-                false,
+                resumeOnReenter,
                 0
         );
     }

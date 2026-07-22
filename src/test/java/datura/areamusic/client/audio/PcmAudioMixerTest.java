@@ -1,5 +1,6 @@
 package datura.areamusic.client.audio;
 
+import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.playback.PlaybackState;
 import org.junit.jupiter.api.Test;
@@ -40,7 +41,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "thread.wav", 1.0f, true, 0, 0));
+        mixer.apply(playing("area", "thread.wav", 1.0f, true, 0, 0));
 
         assertTrue(output.firstWrite.await(2, TimeUnit.SECONDS));
         assertEquals(1200, PcmMath.readLittleEndian(output.firstBlock.get(), 0));
@@ -65,7 +66,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "thread.wav", 1.0f, true, 0, 0));
+        mixer.apply(playing("area", "thread.wav", 1.0f, true, 0, 0));
 
         assertTrue(workingOutput.firstWrite.await(3, TimeUnit.SECONDS));
         assertTrue(failedOutputClosed.get());
@@ -90,7 +91,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "short.wav", 1.0f, false, 0, 0));
+        mixer.apply(playing("area", "short.wav", 1.0f, false, 0, 0));
 
         assertTrue(workingOutput.firstWrite.await(2, TimeUnit.SECONDS));
         assertEquals(2345, PcmMath.readLittleEndian(workingOutput.firstBlock.get(), 0));
@@ -115,7 +116,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "thread.wav", 1.0f, true, 0, 0));
+        mixer.apply(playing("area", "thread.wav", 1.0f, true, 0, 0));
 
         boolean retried = workingOutput.firstWrite.await(1, TimeUnit.SECONDS);
         mixer.close();
@@ -137,7 +138,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "once.wav", 1.0f, false, 0, 0));
+        mixer.apply(playing("area", "once.wav", 1.0f, false, 0, 0));
 
         assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
         boolean closedWhileIdle = output.closed.await(1, TimeUnit.SECONDS);
@@ -159,7 +160,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "once.wav", 1.0f, false, 0, 0));
+        mixer.apply(playing("area", "once.wav", 1.0f, false, 0, 0));
         assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
 
         mixer.setPaused(true);
@@ -189,7 +190,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "missing.mp3", 1.0f, true, 0, 0));
+        mixer.apply(playing("area", "missing.mp3", 1.0f, true, 0, 0));
 
         assertTrue(reported.await(1, TimeUnit.SECONDS));
         assertEquals(AudioFailure.Kind.MISSING_FILE, failure.get().kind());
@@ -222,7 +223,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "loop.wav", 1.0f, true, 0, 60_000));
+        mixer.apply(playing("area", "loop.wav", 1.0f, true, 0, 60_000));
         assertTrue(firstOpenEntered.await(1, TimeUnit.SECONDS));
 
         mixer.apply(PlaybackState.stopped());
@@ -251,12 +252,27 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(PlaybackState.playing("area", "thread.wav", 1.0f, true, 0, 0));
+        mixer.apply(playing("area", "thread.wav", 1.0f, true, 0, 0));
 
         assertTrue(reported.await(1, TimeUnit.SECONDS));
         assertEquals(AudioFailure.Kind.THREAD, failure.get().kind());
         assertTrue(failure.get().cause() instanceof NoClassDefFoundError);
         mixer.close();
+    }
+
+    private static PlaybackState playing(
+            String areaId,
+            String musicId,
+            float volume,
+            boolean loop,
+            int fadeInMs,
+            int fadeOutMs
+    ) {
+        return PlaybackState.playing(
+                areaId,
+                List.of(new AreaTrackDefinition(musicId, 0, volume, loop, fadeInMs, fadeOutMs)),
+                false
+        );
     }
 
     private static void writeConstantWav(Path path, short sample, int frames) throws Exception {

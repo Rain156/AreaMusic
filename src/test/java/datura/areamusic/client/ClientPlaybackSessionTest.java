@@ -1,5 +1,6 @@
 package datura.areamusic.client;
 
+import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.client.audio.ClientAudioMixer;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.playback.PlaybackState;
@@ -46,7 +47,7 @@ class ClientPlaybackSessionTest {
         MusicLibrary newLibrary = MusicLibrary.empty(tempDir.resolve("new"));
         FakeMixer mixer = new FakeMixer();
         ClientPlaybackSession session = new ClientPlaybackSession(oldLibrary, ignored -> mixer);
-        PlaybackState state = PlaybackState.playing("area", "new.mp3", 1.0f, true, 0, 0);
+        PlaybackState state = playing("area", "new.mp3", 1.0f, true, 0, 0);
         session.connect();
         mixer.appliedStates.clear();
 
@@ -61,6 +62,21 @@ class ClientPlaybackSessionTest {
         assertTrue(mixer.libraryUpdated);
         assertEquals(List.of(state), mixer.appliedStates);
         session.close();
+    }
+
+    private static PlaybackState playing(
+            String areaId,
+            String musicId,
+            float volume,
+            boolean loop,
+            int fadeInMs,
+            int fadeOutMs
+    ) {
+        return PlaybackState.playing(
+                areaId,
+                List.of(new AreaTrackDefinition(musicId, 0, volume, loop, fadeInMs, fadeOutMs)),
+                false
+        );
     }
 
     private static final class FakeMixer implements ClientAudioMixer {
