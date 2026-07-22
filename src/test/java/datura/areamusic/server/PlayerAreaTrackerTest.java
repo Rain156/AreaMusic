@@ -1,6 +1,7 @@
 package datura.areamusic.server;
 
 import datura.areamusic.area.AreaDefinition;
+import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.playback.PlaybackState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
@@ -17,12 +18,14 @@ class PlayerAreaTrackerTest {
     private static final AreaDefinition AREA = area(1.0f);
 
     @Test
-    void sendsInitialStateAndSkipsIdenticalChecks() {
+    void sendsInitialStateFromFirstTrackAndSkipsIdenticalChecks() {
         PlayerAreaTracker tracker = new PlayerAreaTracker();
 
         Optional<PlaybackState> initial = tracker.update(OVERWORLD, new BlockPos(1, 65, 1), 1L, List.of(AREA));
 
-        assertEquals("track.ogg", initial.orElseThrow().musicId());
+        PlaybackState state = initial.orElseThrow();
+        assertEquals("track.ogg", state.musicId());
+        assertEquals(1.0f, state.volume());
         assertTrue(tracker.update(OVERWORLD, new BlockPos(1, 65, 1), 1L, List.of(AREA)).isEmpty());
     }
 
@@ -58,7 +61,12 @@ class PlayerAreaTrackerTest {
     private static AreaDefinition area(float volume) {
         return AreaDefinition.create(
                 "area", OVERWORLD, new BlockPos(0, 60, 0), new BlockPos(10, 80, 10),
-                "track.ogg", 0, volume, true, 2000, 2000
+                List.of(
+                        new AreaTrackDefinition("track.ogg", 0, volume, true, 2000, 2000),
+                        new AreaTrackDefinition("second.ogg", 4, 0.25f, false, 300, 700)
+                ),
+                false,
+                0
         );
     }
 }

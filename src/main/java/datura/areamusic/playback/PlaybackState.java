@@ -1,6 +1,7 @@
 package datura.areamusic.playback;
 
 import datura.areamusic.area.AreaDefinition;
+import datura.areamusic.area.AreaTrackDefinition;
 
 import java.util.Objects;
 
@@ -54,14 +55,15 @@ public record PlaybackState(
     }
 
     public static PlaybackState fromArea(AreaDefinition area) {
+        AreaTrackDefinition track = area.tracks().get(0);
         return playing(
-                area.id(), area.musicId(), area.volume(), area.loop(), area.fadeInMs(), area.fadeOutMs()
+                area.id(), track.musicId(), track.volume(), track.loop(), track.fadeInMs(), track.fadeOutMs()
         );
     }
 
     private static void validateFade(String name, int value) {
-        if (value < 0 || value > AreaDefinition.MAX_FADE_MS) {
-            throw new IllegalArgumentException(name + " must be between 0 and " + AreaDefinition.MAX_FADE_MS);
+        if (value < 0 || value > AreaTrackDefinition.MAX_FADE_MS) {
+            throw new IllegalArgumentException(name + " must be between 0 and " + AreaTrackDefinition.MAX_FADE_MS);
         }
     }
 }

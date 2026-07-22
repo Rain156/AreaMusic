@@ -91,8 +91,12 @@ public final class AreaStorage {
             String areaId = fileName.substring(0, fileName.length() - ".json".length());
             try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
                 AreaDefinition area = codec.read(areaId, reader);
-                if (!musicLibrary.contains(area.musicId())) {
-                    throw new IllegalArgumentException("MusicID is not present in the server library: " + area.musicId());
+                for (AreaTrackDefinition track : area.tracks()) {
+                    if (!musicLibrary.contains(track.musicId())) {
+                        throw new IllegalArgumentException(
+                                "MusicID is not present in the server library: " + track.musicId()
+                        );
+                    }
                 }
                 loaded.add(area);
             } catch (Exception exception) {

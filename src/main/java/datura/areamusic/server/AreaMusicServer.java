@@ -5,6 +5,7 @@ import datura.areamusic.AreaMusic;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaJsonCodec;
 import datura.areamusic.area.AreaStorage;
+import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.network.AreaMusicNetwork;
 import net.minecraft.commands.CommandSourceStack;
@@ -172,12 +173,9 @@ public final class AreaMusicServer {
                     source.getLevel().dimension().location(),
                     pos1,
                     pos2,
-                    musicId,
-                    0,
-                    1.0f,
-                    true,
-                    2000,
-                    2000
+                    List.of(new AreaTrackDefinition(musicId, 0, 1.0f, true, 2000, 2000)),
+                    false,
+                    0
             );
         } catch (IllegalArgumentException exception) {
             source.sendFailure(Component.translatable("commands.areamusic.create.invalid", exception.getMessage()));

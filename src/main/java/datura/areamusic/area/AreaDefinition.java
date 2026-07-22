@@ -3,6 +3,7 @@ package datura.areamusic.area;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -11,14 +12,11 @@ public record AreaDefinition(
         ResourceLocation dimension,
         BlockPos min,
         BlockPos max,
-        String musicId,
-        int priority,
-        float volume,
-        boolean loop,
-        int fadeInMs,
-        int fadeOutMs
+        List<AreaTrackDefinition> tracks,
+        boolean resumeOnReenter,
+        int priority
 ) {
-    public static final int MAX_FADE_MS = 60_000;
+    public static final int MAX_TRACKS = 16;
     public static final Pattern ID_PATTERN = Pattern.compile("[a-z0-9][a-z0-9_-]{0,63}");
 
     public AreaDefinition {
@@ -26,19 +24,16 @@ public record AreaDefinition(
         Objects.requireNonNull(dimension, "dimension");
         Objects.requireNonNull(min, "min");
         Objects.requireNonNull(max, "max");
-        Objects.requireNonNull(musicId, "musicId");
+        Objects.requireNonNull(tracks, "tracks");
 
         if (!ID_PATTERN.matcher(id).matches()) {
             throw new IllegalArgumentException("Invalid area ID: " + id);
         }
-        if (musicId.isBlank()) {
-            throw new IllegalArgumentException("Music ID must not be blank");
+
+        tracks = List.copyOf(tracks);
+        if (tracks.isEmpty() || tracks.size() > MAX_TRACKS) {
+            throw new IllegalArgumentException("Area must contain between 1 and " + MAX_TRACKS + " tracks");
         }
-        if (!Float.isFinite(volume) || volume < 0.0f || volume > 1.0f) {
-            throw new IllegalArgumentException("Volume must be finite and between 0 and 1");
-        }
-        validateFade("fadeInMs", fadeInMs);
-        validateFade("fadeOutMs", fadeOutMs);
 
         BlockPos first = min;
         BlockPos second = max;
@@ -59,14 +54,11 @@ public record AreaDefinition(
             ResourceLocation dimension,
             BlockPos pos1,
             BlockPos pos2,
-            String musicId,
-            int priority,
-            float volume,
-            boolean loop,
-            int fadeInMs,
-            int fadeOutMs
+            List<AreaTrackDefinition> tracks,
+            boolean resumeOnReenter,
+            int priority
     ) {
-        return new AreaDefinition(id, dimension, pos1, pos2, musicId, priority, volume, loop, fadeInMs, fadeOutMs);
+        return new AreaDefinition(id, dimension, pos1, pos2, tracks, resumeOnReenter, priority);
     }
 
     public boolean contains(ResourceLocation candidateDimension, BlockPos position) {
@@ -84,12 +76,6 @@ public record AreaDefinition(
             return Math.multiplyExact(Math.multiplyExact(x, y), z);
         } catch (ArithmeticException ignored) {
             return Long.MAX_VALUE;
-        }
-    }
-
-    private static void validateFade(String name, int value) {
-        if (value < 0 || value > MAX_FADE_MS) {
-            throw new IllegalArgumentException(name + " must be between 0 and " + MAX_FADE_MS);
         }
     }
 }
