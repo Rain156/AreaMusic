@@ -631,6 +631,84 @@ class PcmMixerEngineTest {
     }
 
     @Test
+    void sameIdContinuationFadesVolumeFromZeroToOneWithoutReopening() throws Exception {
+        Path root = tempDir.resolve("music");
+        short[] frames = constantFrames(44_103, (short) 10_000);
+        frames[0] = 1000;
+        frames[44_101] = 12_000;
+        writeWav(root.resolve("ramp.wav"), frames);
+        AtomicInteger openCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                openCount.incrementAndGet();
+                return super.open(path);
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "quiet",
+                    false,
+                    track("ramp.wav", 0, 0.0f, false, 0, 0)
+            ));
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(state(
+                    "audible",
+                    false,
+                    track("ramp.wav", 0, 1.0f, false, 1000, 0)
+            ));
+
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.renderFrames(22_049, 1.0f);
+            assertEquals(5000, firstLeftSample(engine.renderFrames(1, 1.0f)), 2);
+            engine.renderFrames(22_049, 1.0f);
+            assertEquals(12_000, firstLeftSample(engine.renderFrames(1, 1.0f)), 2);
+            assertEquals(1, openCount.get());
+        }
+    }
+
+    @Test
+    void sameIdContinuationFadesVolumeFromOneToZeroWithoutImmediateSilence() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("constant.wav"), constantFrames(44_103, (short) 10_000));
+        AtomicInteger openCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                openCount.incrementAndGet();
+                return super.open(path);
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "audible",
+                    false,
+                    track("constant.wav", 0, 1.0f, false, 0, 0)
+            ));
+            assertEquals(10_000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(state(
+                    "quiet",
+                    false,
+                    track("constant.wav", 0, 0.0f, false, 1000, 0)
+            ));
+
+            assertEquals(10_000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.renderFrames(22_049, 1.0f);
+            assertEquals(5000, firstLeftSample(engine.renderFrames(1, 1.0f)), 2);
+            engine.renderFrames(22_049, 1.0f);
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertTrue(engine.hasWork());
+            assertEquals(1, openCount.get());
+        }
+    }
+
+    @Test
     void crossfadesOldAndNewTracksAtTheSameTime() throws Exception {
         Path root = tempDir.resolve("music");
         short[] positive = constantFrames(50_000, (short) 10_000);

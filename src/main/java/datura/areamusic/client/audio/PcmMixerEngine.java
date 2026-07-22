@@ -155,7 +155,7 @@ public final class PcmMixerEngine implements AutoCloseable {
             if (destination.delayFrames(AudioStreamFactory.SAMPLE_RATE) != 0L
                     || !runtime.musicId().equals(destination.musicId())
                     || runtime.exhausted
-                    || runtime.gain.target() == 0.0f) {
+                    || runtime.lifecycleGain.target() == 0.0f) {
                 continue;
             }
 
@@ -164,8 +164,11 @@ public final class PcmMixerEngine implements AutoCloseable {
             incoming.timeline.markStarted(index);
             incoming.timeline.recordFramesRead(index, position);
             runtime.attach(incoming, index, destination);
-            runtime.gain.fadeTo(
+            runtime.lifecycleGain.fadeTo(
                     1.0f, destination.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
+            );
+            runtime.volumeGain.fadeTo(
+                    destination.volume(), destination.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
             );
             incoming.tracks.add(runtime);
         }
@@ -178,7 +181,9 @@ public final class PcmMixerEngine implements AutoCloseable {
         session.outgoing = true;
         for (RuntimeTrack track : session.tracks) {
             AreaTrackDefinition definition = session.state.tracks().get(track.trackIndex);
-            track.gain.fadeTo(0.0f, definition.fadeOutMs(), AudioStreamFactory.SAMPLE_RATE);
+            track.lifecycleGain.fadeTo(
+                    0.0f, definition.fadeOutMs(), AudioStreamFactory.SAMPLE_RATE
+            );
         }
         if (session.tracks.isEmpty()) {
             session.close();
@@ -225,7 +230,7 @@ public final class PcmMixerEngine implements AutoCloseable {
         for (AreaSession session : outgoingSessions) {
             float sessionGain = 0.0f;
             for (RuntimeTrack track : session.tracks) {
-                sessionGain += track.gain.value() * track.definition.volume();
+                sessionGain += track.lifecycleGain.value() * track.volumeGain.value();
             }
             if (quietest == null || sessionGain < quietestGain) {
                 quietest = session;
@@ -237,7 +242,9 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
         quietest.expeditedRemoval = true;
         for (RuntimeTrack track : quietest.tracks) {
-            track.gain.fadeTo(0.0f, OVERFLOW_FADE_MS, AudioStreamFactory.SAMPLE_RATE);
+            track.lifecycleGain.fadeTo(
+                    0.0f, OVERFLOW_FADE_MS, AudioStreamFactory.SAMPLE_RATE
+            );
         }
     }
 
@@ -265,7 +272,7 @@ public final class PcmMixerEngine implements AutoCloseable {
             try {
                 RuntimeTrack runtime = new RuntimeTrack(session, trackIndex, definition, path);
                 session.timeline.markStarted(trackIndex);
-                runtime.gain.fadeTo(
+                runtime.lifecycleGain.fadeTo(
                         1.0f, definition.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
                 );
                 session.tracks.add(runtime);
@@ -311,7 +318,7 @@ public final class PcmMixerEngine implements AutoCloseable {
             int framesRead = readResult.framesRead();
 
             for (int frame = 0; frame < frameCount; frame++) {
-                float gain = track.gain.value() * track.definition.volume() * masterGain;
+                float gain = track.lifecycleGain.value() * track.volumeGain.value() * masterGain;
                 if (frame < framesRead) {
                     int sourceOffset = frame * FRAME_SIZE;
                     int mixedSample = (outputFrameOffset + frame) * CHANNELS;
@@ -322,7 +329,8 @@ public final class PcmMixerEngine implements AutoCloseable {
                             PcmMath.readLittleEndian(trackPcm, sourceOffset + 2), gain
                     );
                 }
-                track.gain.advance(1);
+                track.lifecycleGain.advance(1);
+                track.volumeGain.advance(1);
             }
 
             if (readResult.terminalFailure() != null) {
@@ -355,7 +363,8 @@ public final class PcmMixerEngine implements AutoCloseable {
             Iterator<RuntimeTrack> trackIterator = session.tracks.iterator();
             while (trackIterator.hasNext()) {
                 RuntimeTrack track = trackIterator.next();
-                if (track.gain.isComplete() && track.gain.target() == 0.0f) {
+                if (track.lifecycleGain.isComplete()
+                        && track.lifecycleGain.target() == 0.0f) {
                     track.close();
                     trackIterator.remove();
                 }
@@ -424,7 +433,8 @@ public final class PcmMixerEngine implements AutoCloseable {
         private int trackIndex;
         private AreaTrackDefinition definition;
         private final Path path;
-        private final FadeEnvelope gain = new FadeEnvelope(0.0f);
+        private final FadeEnvelope lifecycleGain = new FadeEnvelope(0.0f);
+        private final FadeEnvelope volumeGain;
         private AudioInputStream stream;
         private boolean exhausted;
 
@@ -438,6 +448,7 @@ public final class PcmMixerEngine implements AutoCloseable {
             this.trackIndex = trackIndex;
             this.definition = definition;
             this.path = path;
+            this.volumeGain = new FadeEnvelope(definition.volume());
             this.stream = streamFactory.open(path);
         }
 
@@ -503,7 +514,9 @@ public final class PcmMixerEngine implements AutoCloseable {
 
         private boolean shouldRemove() {
             return exhausted
-                    || session.outgoing && gain.isComplete() && gain.target() == 0.0f;
+                    || session.outgoing
+                    && lifecycleGain.isComplete()
+                    && lifecycleGain.target() == 0.0f;
         }
 
         private void reopen() throws Exception {
