@@ -6,16 +6,21 @@ import datura.areamusic.playback.PlaybackState;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.SourceDataLine;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Objects;
 
 public final class PcmAudioMixer implements ClientAudioMixer {
     private static final int BLOCK_FRAMES = 1024;
+    private static final int FRAME_SIZE = AudioStreamFactory.MIX_FORMAT.getFrameSize();
+    private static final int MAX_QUEUED_BLOCKS = 8;
     private static final long INITIAL_DEVICE_RETRY_MS = 250L;
     private static final long MAX_DEVICE_RETRY_MS = 5000L;
 
     private final Object signal = new Object();
     private final MusicLibrary initialLibrary;
     private final OutputFactory outputFactory;
+    private final EngineFactory engineFactory;
     private final ErrorListener errorListener;
 
     private volatile boolean running;
@@ -29,12 +34,22 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     private boolean statePending;
 
     public PcmAudioMixer(MusicLibrary initialLibrary, ErrorListener errorListener) {
-        this(initialLibrary, JavaSoundOutput::open, errorListener);
+        this(initialLibrary, JavaSoundOutput::open, PcmAudioMixer::createEngine, errorListener);
     }
 
     PcmAudioMixer(MusicLibrary initialLibrary, OutputFactory outputFactory, ErrorListener errorListener) {
+        this(initialLibrary, outputFactory, PcmAudioMixer::createEngine, errorListener);
+    }
+
+    PcmAudioMixer(
+            MusicLibrary initialLibrary,
+            OutputFactory outputFactory,
+            EngineFactory engineFactory,
+            ErrorListener errorListener
+    ) {
         this.initialLibrary = Objects.requireNonNull(initialLibrary, "initialLibrary");
         this.outputFactory = Objects.requireNonNull(outputFactory, "outputFactory");
+        this.engineFactory = Objects.requireNonNull(engineFactory, "engineFactory");
         this.errorListener = Objects.requireNonNull(errorListener, "errorListener");
     }
 
@@ -106,12 +121,10 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     }
 
     private void runAudioLoop() {
-        AudioOutput output = null;
-        boolean outputStarted = false;
-        byte[] pendingWrite = null;
-        int pendingWriteOffset = 0;
+        OutputState output = null;
+        PcmQueue queue = new PcmQueue();
         long deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
-        try (PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), initialLibrary)) {
+        try (AudioEngine engine = engineFactory.create(initialLibrary)) {
             while (running) {
                 PendingUpdate update = drainPendingUpdate();
                 if (update.musicLibrary() != null) {
@@ -126,30 +139,33 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                 }
 
                 if (paused) {
-                    if (output != null && outputStarted) {
-                        output.stop();
-                        outputStarted = false;
+                    if (output != null && output.started) {
+                        try {
+                            output.output.stop();
+                            output.started = false;
+                            refreshConfirmedBytes(output, queue);
+                        } catch (Exception exception) {
+                            report(AudioFailure.Kind.DEVICE, "", exception);
+                            closeOutputAfterFailure(output, queue);
+                            output = null;
+                        }
                     }
                     waitForSignal(50L);
                     continue;
                 }
-                if (!engine.hasWork() && pendingWrite == null) {
+                if (!engine.hasWork() && queue.isEmpty()) {
                     if (output != null) {
-                        if (!outputStarted) {
-                            try {
-                                output.start();
-                                outputStarted = true;
-                            } catch (Exception exception) {
-                                report(AudioFailure.Kind.DEVICE, "", exception);
-                                closeOutput(output);
-                                output = null;
-                                deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
-                                continue;
-                            }
+                        try {
+                            startOutput(output, queue);
+                            refreshConfirmedBytes(output, queue);
+                            output.output.drain();
+                            queue.confirmThrough(output.writePositionBytes);
+                        } catch (Exception exception) {
+                            report(AudioFailure.Kind.DEVICE, "", exception);
+                        } finally {
+                            closeOutput(output.output);
                         }
-                        drainAndCloseOutput(output);
                         output = null;
-                        outputStarted = false;
                         deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
                     }
                     waitForSignal(50L);
@@ -158,8 +174,9 @@ public final class PcmAudioMixer implements ClientAudioMixer {
 
                 if (output == null) {
                     try {
-                        output = outputFactory.open();
-                        liveOutput = output;
+                        AudioOutput openedOutput = outputFactory.open();
+                        output = new OutputState(openedOutput);
+                        liveOutput = openedOutput;
                     } catch (Exception exception) {
                         report(AudioFailure.Kind.DEVICE, "", exception);
                         waitForSignal(deviceRetryMs);
@@ -168,13 +185,12 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     }
                 }
 
-                if (!outputStarted) {
+                if (!output.started) {
                     try {
-                        output.start();
-                        outputStarted = true;
+                        startOutput(output, queue);
                     } catch (Exception exception) {
                         report(AudioFailure.Kind.DEVICE, "", exception);
-                        closeOutput(output);
+                        closeOutputAfterFailure(output, queue);
                         output = null;
                         waitForSignal(deviceRetryMs);
                         deviceRetryMs = nextRetryDelay(deviceRetryMs);
@@ -182,35 +198,61 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     }
                 }
 
-                if (pendingWrite == null) {
+                WriteSlice slice;
+                try {
+                    refreshConfirmedBytes(output, queue);
+                    slice = queue.sliceAt(output.writePositionBytes);
+                } catch (Exception exception) {
+                    report(AudioFailure.Kind.DEVICE, "", exception);
+                    closeOutputAfterFailure(output, queue);
+                    output = null;
+                    waitForSignal(deviceRetryMs);
+                    deviceRetryMs = nextRetryDelay(deviceRetryMs);
+                    continue;
+                }
+
+                if (slice == null && engine.hasWork() && !queue.hasCapacity()) {
+                    waitForSignal(10L);
+                    continue;
+                }
+                if (slice == null && engine.hasWork()) {
                     try {
-                        pendingWrite = engine.renderFrames(BLOCK_FRAMES, masterGain);
-                        pendingWriteOffset = 0;
-                    } catch (Exception exception) {
-                        report(AudioFailure.Kind.DECODE, "", exception);
-                        continue;
+                        queue.append(engine.renderFrames(BLOCK_FRAMES, masterGain));
                     } finally {
                         reportEngineFailures(engine);
                     }
+                    slice = queue.sliceAt(output.writePositionBytes);
                 }
 
                 try {
-                    int remaining = pendingWrite.length - pendingWriteOffset;
-                    int written = output.write(pendingWrite, pendingWriteOffset, remaining);
+                    if (slice == null) {
+                        output.output.drain();
+                        queue.confirmThrough(output.writePositionBytes);
+                        closeOutput(output.output);
+                        output = null;
+                        deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
+                        continue;
+                    }
+
+                    int written = output.output.write(slice.pcm(), slice.offset(), slice.length());
+                    int remaining = slice.length();
                     if (written < 0 || written > remaining) {
                         throw new IllegalStateException(
                                 "Audio output returned invalid byte count " + written
                                         + " for remaining length " + remaining
                         );
                     }
+                    if (written % FRAME_SIZE != 0) {
+                        throw new IllegalStateException(
+                                "Audio output returned non-frame-aligned byte count " + written
+                                        + " for frame size " + FRAME_SIZE
+                        );
+                    }
+                    output.writePositionBytes = Math.addExact(output.writePositionBytes, written);
+                    refreshConfirmedBytes(output, queue);
                     if (written == 0) {
                         waitForSignal(10L);
                         continue;
-                    }
-                    pendingWriteOffset += written;
-                    if (pendingWriteOffset == pendingWrite.length) {
-                        pendingWrite = null;
-                        pendingWriteOffset = 0;
                     }
                     deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
                 } catch (InterruptedException exception) {
@@ -220,9 +262,8 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     Thread.currentThread().interrupt();
                 } catch (Exception exception) {
                     report(AudioFailure.Kind.DEVICE, "", exception);
-                    closeOutput(output);
+                    closeOutputAfterFailure(output, queue);
                     output = null;
-                    outputStarted = false;
                     waitForSignal(deviceRetryMs);
                     deviceRetryMs = nextRetryDelay(deviceRetryMs);
                 }
@@ -231,11 +272,70 @@ public final class PcmAudioMixer implements ClientAudioMixer {
             report(AudioFailure.Kind.THREAD, "", error);
         } finally {
             if (output != null) {
-                closeOutput(output);
+                closeOutput(output.output);
             }
             liveOutput = null;
             running = false;
         }
+    }
+
+    private static void startOutput(OutputState output, PcmQueue queue) {
+        output.output.start();
+        output.started = true;
+        if (output.positionInitialized) {
+            return;
+        }
+
+        long playedFrames = output.output.playedFrames();
+        if (playedFrames < 0L) {
+            throw new IllegalStateException("Audio output returned negative frame position " + playedFrames);
+        }
+        output.sequenceBaseBytes = queue.confirmedBytes;
+        output.writePositionBytes = queue.confirmedBytes;
+        output.playedBaselineFrames = playedFrames;
+        output.lastPlayedRawFrames = playedFrames;
+        output.positionInitialized = true;
+    }
+
+    private static void refreshConfirmedBytes(OutputState output, PcmQueue queue) {
+        if (!output.positionInitialized) {
+            return;
+        }
+
+        long playedFrames = output.output.playedFrames();
+        if (playedFrames < output.lastPlayedRawFrames) {
+            throw new IllegalStateException(
+                    "Audio output frame position moved backwards from "
+                            + output.lastPlayedRawFrames + " to " + playedFrames
+            );
+        }
+        long elapsedFrames = Math.subtractExact(playedFrames, output.playedBaselineFrames);
+        long elapsedBytes = Math.multiplyExact(
+                elapsedFrames,
+                (long) FRAME_SIZE
+        );
+        long confirmedThrough = Math.addExact(output.sequenceBaseBytes, elapsedBytes);
+        if (confirmedThrough > output.writePositionBytes) {
+            throw new IllegalStateException(
+                    "Audio output played through byte " + confirmedThrough
+                            + " beyond accepted byte " + output.writePositionBytes
+            );
+        }
+        queue.confirmThrough(confirmedThrough);
+        output.lastPlayedRawFrames = playedFrames;
+    }
+
+    private void closeOutputAfterFailure(OutputState output, PcmQueue queue) {
+        try {
+            output.output.stop();
+            output.started = false;
+        } catch (Exception ignored) {
+        }
+        try {
+            refreshConfirmedBytes(output, queue);
+        } catch (Exception ignored) {
+        }
+        closeOutput(output.output);
     }
 
     private void closeOutput(AudioOutput output) {
@@ -250,16 +350,6 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         }
     }
 
-    private void drainAndCloseOutput(AudioOutput output) {
-        try {
-            output.drain();
-        } catch (Exception exception) {
-            report(AudioFailure.Kind.DEVICE, "", exception);
-        } finally {
-            closeOutput(output);
-        }
-    }
-
     private static long nextRetryDelay(long currentDelayMs) {
         return Math.min(MAX_DEVICE_RETRY_MS, currentDelayMs * 2L);
     }
@@ -268,7 +358,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         errorListener.onError(new AudioFailure(kind, musicId, error));
     }
 
-    private void reportEngineFailures(PcmMixerEngine engine) {
+    private void reportEngineFailures(AudioEngine engine) {
         for (AudioFailure failure : engine.drainFailures()) {
             errorListener.onError(failure);
         }
@@ -309,12 +399,36 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         AudioOutput open() throws Exception;
     }
 
+    @FunctionalInterface
+    interface EngineFactory {
+        AudioEngine create(MusicLibrary musicLibrary);
+    }
+
+    interface AudioEngine extends AutoCloseable {
+        void setMusicLibrary(MusicLibrary musicLibrary);
+
+        void apply(PlaybackState state);
+
+        byte[] renderFrames(int frameCount, float masterGain);
+
+        java.util.List<AudioFailure> drainFailures();
+
+        boolean hasWork();
+
+        @Override
+        void close();
+    }
+
     interface AudioOutput extends AutoCloseable {
         void start();
 
         void stop();
 
         int write(byte[] pcm, int offset, int length) throws InterruptedException;
+
+        default long playedFrames() {
+            return 0L;
+        }
 
         void drain();
 
@@ -323,6 +437,125 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     }
 
     private record PendingUpdate(MusicLibrary musicLibrary, PlaybackState playbackState) {
+    }
+
+    private record PcmBlock(long startBytes, byte[] pcm) {
+        private long endBytes() {
+            return Math.addExact(startBytes, pcm.length);
+        }
+    }
+
+    private record WriteSlice(byte[] pcm, int offset, int length) {
+    }
+
+    private static final class PcmQueue {
+        private final Deque<PcmBlock> blocks = new ArrayDeque<>();
+        private long confirmedBytes;
+        private long renderedBytes;
+
+        private boolean isEmpty() {
+            return blocks.isEmpty();
+        }
+
+        private boolean hasCapacity() {
+            return blocks.size() < MAX_QUEUED_BLOCKS;
+        }
+
+        private void append(byte[] pcm) {
+            Objects.requireNonNull(pcm, "pcm");
+            if (!hasCapacity()) {
+                throw new IllegalStateException("PCM confirmation queue is full");
+            }
+            if (pcm.length % FRAME_SIZE != 0) {
+                throw new IllegalStateException(
+                        "Rendered PCM byte count " + pcm.length
+                                + " is not aligned to frame size " + FRAME_SIZE
+                );
+            }
+            blocks.addLast(new PcmBlock(renderedBytes, pcm));
+            renderedBytes = Math.addExact(renderedBytes, pcm.length);
+        }
+
+        private WriteSlice sliceAt(long positionBytes) {
+            if (positionBytes == renderedBytes) {
+                return null;
+            }
+            for (PcmBlock block : blocks) {
+                if (positionBytes < block.startBytes() || positionBytes >= block.endBytes()) {
+                    continue;
+                }
+                int offset = Math.toIntExact(positionBytes - block.startBytes());
+                return new WriteSlice(block.pcm(), offset, block.pcm().length - offset);
+            }
+            throw new IllegalStateException("No queued PCM at byte " + positionBytes);
+        }
+
+        private void confirmThrough(long positionBytes) {
+            if (positionBytes < confirmedBytes || positionBytes > renderedBytes) {
+                throw new IllegalStateException(
+                        "Invalid confirmed PCM position " + positionBytes
+                                + " for range " + confirmedBytes + ".." + renderedBytes
+                );
+            }
+            confirmedBytes = positionBytes;
+            while (!blocks.isEmpty() && blocks.getFirst().endBytes() <= confirmedBytes) {
+                blocks.removeFirst();
+            }
+        }
+    }
+
+    private static final class OutputState {
+        private final AudioOutput output;
+        private boolean started;
+        private boolean positionInitialized;
+        private long sequenceBaseBytes;
+        private long writePositionBytes;
+        private long playedBaselineFrames;
+        private long lastPlayedRawFrames;
+
+        private OutputState(AudioOutput output) {
+            this.output = Objects.requireNonNull(output, "output");
+        }
+    }
+
+    private static AudioEngine createEngine(MusicLibrary musicLibrary) {
+        return new PcmAudioEngine(new PcmMixerEngine(new AudioStreamFactory(), musicLibrary));
+    }
+
+    private record PcmAudioEngine(PcmMixerEngine delegate) implements AudioEngine {
+        private PcmAudioEngine {
+            Objects.requireNonNull(delegate, "delegate");
+        }
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+            delegate.setMusicLibrary(musicLibrary);
+        }
+
+        @Override
+        public void apply(PlaybackState state) {
+            delegate.apply(state);
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            return delegate.renderFrames(frameCount, masterGain);
+        }
+
+        @Override
+        public java.util.List<AudioFailure> drainFailures() {
+            return delegate.drainFailures();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return delegate.hasWork();
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
     }
 
     private static final class JavaSoundOutput implements AudioOutput {
@@ -355,6 +588,11 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         @Override
         public int write(byte[] pcm, int offset, int length) {
             return line.write(pcm, offset, length);
+        }
+
+        @Override
+        public long playedFrames() {
+            return line.getLongFramePosition();
         }
 
         @Override

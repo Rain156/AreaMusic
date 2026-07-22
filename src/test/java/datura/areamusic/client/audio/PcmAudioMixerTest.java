@@ -20,6 +20,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -303,7 +304,7 @@ class PcmAudioMixerTest {
     void combinesMultiplePartialWritesIntoExactlyOneRenderedBlock() throws Exception {
         Path root = tempDir.resolve("music");
         writeConstantWav(root.resolve("partial.wav"), (short) 1200, BLOCK_FRAMES * 2);
-        ChunkedOutput output = new ChunkedOutput(257, 1021, 3, 2048, 767);
+        ChunkedOutput output = new ChunkedOutput(256, 1024, 4, 2048, 764);
         PcmAudioMixer mixer = new PcmAudioMixer(
                 MusicLibrary.scan(root), () -> output, failure -> {
                 }
@@ -315,7 +316,7 @@ class PcmAudioMixerTest {
 
             assertTrue(output.complete.await(2, TimeUnit.SECONDS));
             assertArrayEquals(constantPcmBlock((short) 1200), output.completedBlock.get());
-            assertEquals(List.of(0, 257, 1278, 1281, 3329), output.offsets);
+            assertEquals(List.of(0, 256, 1280, 1284, 3332), output.offsets);
         } finally {
             mixer.close();
         }
@@ -353,8 +354,8 @@ class PcmAudioMixerTest {
     void writeExceptionAfterPartialProgressRetriesOnlyTheRemainingSuffix() throws Exception {
         Path root = tempDir.resolve("music");
         writeConstantWav(root.resolve("suffix.wav"), (short) 1400, BLOCK_FRAMES * 2);
-        PrefixThenFailingOutput failedOutput = new PrefixThenFailingOutput(777);
-        SuffixCapturingOutput workingOutput = new SuffixCapturingOutput(777);
+        PrefixThenFailingOutput failedOutput = new PrefixThenFailingOutput(776);
+        SuffixCapturingOutput workingOutput = new SuffixCapturingOutput(776);
         AtomicInteger openAttempts = new AtomicInteger();
         List<AudioFailure> failures = new CopyOnWriteArrayList<>();
         PcmAudioMixer mixer = new PcmAudioMixer(
@@ -374,8 +375,8 @@ class PcmAudioMixerTest {
             System.arraycopy(workingOutput.suffix.toByteArray(), 0, combined,
                     failedOutput.prefix.size(), workingOutput.suffix.size());
             assertArrayEquals(constantPcmBlock((short) 1400), combined);
-            assertEquals(777, failedOutput.failureOffset.get());
-            assertEquals(777, workingOutput.firstOffset.get());
+            assertEquals(776, failedOutput.failureOffset.get());
+            assertEquals(776, workingOutput.firstOffset.get());
             assertEquals(1, failures.size());
             assertEquals(AudioFailure.Kind.DEVICE, failures.get(0).kind());
         } finally {
@@ -440,6 +441,71 @@ class PcmAudioMixerTest {
             assertEquals(1600, PcmMath.readLittleEndian(workingOutput.firstBlock.get(), 0));
             assertEquals(1, failures.size());
             assertEquals(AudioFailure.Kind.DEVICE, failures.get(0).kind());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void nonFrameAlignedWriteCountReportsOnceWithoutAdvancingTheRetryOffset() throws Exception {
+        SequencedEngine engine = new SequencedEngine(1);
+        NonAlignedCountOutput failedOutput = new NonAlignedCountOutput();
+        ReplayCapturingOutput replacement = new ReplayCapturingOutput();
+        AtomicInteger openAttempts = new AtomicInteger();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> openAttempts.getAndIncrement() == 0 ? failedOutput : replacement,
+                library -> engine,
+                failures::add
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+
+            assertTrue(replacement.firstWrite.await(2, TimeUnit.SECONDS));
+            assertEquals(1, failedOutput.writeCalls.get());
+            assertEquals(-1, failedOutput.secondOffset.get());
+            assertEquals(0, replacement.firstOffset.get());
+            assertEquals(BLOCK_FRAMES * AudioStreamFactory.MIX_FORMAT.getFrameSize(),
+                    replacement.firstLength.get());
+            assertEquals(1000, PcmMath.readLittleEndian(replacement.firstBytes.get(), 0));
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.DEVICE, failures.get(0).kind());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void nonFrameAlignedRenderedLengthStopsBeforeWritingToTheDevice() throws Exception {
+        UnalignedRenderEngine engine = new UnalignedRenderEngine();
+        ThreadFailureOutput output = new ThreadFailureOutput();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        CountDownLatch reported = new CountDownLatch(1);
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> output,
+                library -> engine,
+                failure -> {
+                    failures.add(failure);
+                    reported.countDown();
+                }
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+
+            assertTrue(reported.await(1, TimeUnit.SECONDS));
+            assertEquals(AudioFailure.Kind.THREAD, failures.get(0).kind());
+            assertTrue(engine.closed.await(1, TimeUnit.SECONDS));
+            assertTrue(output.closed.await(1, TimeUnit.SECONDS));
+            Thread.sleep(50L);
+            assertEquals(1, failures.size());
+            assertEquals(1, engine.renderCalls.get());
+            assertEquals(0, output.writeCalls.get());
         } finally {
             mixer.close();
         }
@@ -624,6 +690,197 @@ class PcmAudioMixerTest {
         mixer.close();
     }
 
+    @Test
+    void unexpectedRenderExceptionReportsOneThreadFailureAndStopsWorker() throws Exception {
+        ThrowingRenderEngine engine = new ThrowingRenderEngine();
+        ThreadFailureOutput output = new ThreadFailureOutput();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        CountDownLatch reported = new CountDownLatch(1);
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> output,
+                library -> engine,
+                failure -> {
+                    failures.add(failure);
+                    reported.countDown();
+                }
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+
+            assertTrue(reported.await(1, TimeUnit.SECONDS));
+            assertEquals(AudioFailure.Kind.THREAD, failures.get(0).kind());
+            assertTrue(engine.closed.await(1, TimeUnit.SECONDS));
+            assertTrue(output.closed.await(1, TimeUnit.SECONDS));
+            Thread.sleep(50L);
+            assertEquals(1, failures.size());
+            assertEquals(1, engine.renderCalls.get());
+            assertEquals(0, output.writeCalls.get());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void unconfirmedAcceptedBlockIsReplayedFromItsStartAfterDeviceFailure() throws Exception {
+        SequencedEngine engine = new SequencedEngine(2);
+        AcceptThenFailOutput failedOutput = new AcceptThenFailOutput(0L);
+        ReplayCapturingOutput replacement = new ReplayCapturingOutput();
+        AtomicInteger openAttempts = new AtomicInteger();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> openAttempts.getAndIncrement() == 0 ? failedOutput : replacement,
+                library -> engine,
+                failures::add
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+
+            assertTrue(replacement.firstWrite.await(2, TimeUnit.SECONDS));
+            assertEquals(1000, PcmMath.readLittleEndian(replacement.firstBytes.get(), 0));
+            assertEquals(0, replacement.firstOffset.get());
+            assertEquals(BLOCK_FRAMES * AudioStreamFactory.MIX_FORMAT.getFrameSize(),
+                    replacement.firstLength.get());
+            assertEquals(2, engine.renderCalls.get());
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.DEVICE, failures.get(0).kind());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void partiallyConfirmedBlockReplaysOnlyItsExactUnplayedSuffix() throws Exception {
+        int confirmedFrames = 256;
+        int confirmedBytes = confirmedFrames * AudioStreamFactory.MIX_FORMAT.getFrameSize();
+        SequencedEngine engine = new SequencedEngine(2);
+        AcceptThenFailOutput failedOutput = new AcceptThenFailOutput(confirmedFrames);
+        ReplayCapturingOutput replacement = new ReplayCapturingOutput();
+        AtomicInteger openAttempts = new AtomicInteger();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> openAttempts.getAndIncrement() == 0 ? failedOutput : replacement,
+                library -> engine,
+                failure -> {
+                }
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+
+            assertTrue(replacement.firstWrite.await(2, TimeUnit.SECONDS));
+            byte[] original = constantPcmBlock((short) 1000);
+            assertEquals(confirmedBytes, replacement.firstOffset.get());
+            assertEquals(original.length - confirmedBytes, replacement.firstLength.get());
+            byte[] combined = new byte[original.length];
+            System.arraycopy(failedOutput.accepted.toByteArray(), 0, combined, 0, confirmedBytes);
+            System.arraycopy(replacement.firstBytes.get(), 0, combined, confirmedBytes,
+                    replacement.firstBytes.get().length);
+
+            assertArrayEquals(original, combined);
+            assertEquals(2, engine.renderCalls.get());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void unconfirmedQueueStopsAtEightBlocksAndResumesAfterOneBlockPlays() throws Exception {
+        SequencedEngine engine = new SequencedEngine(20);
+        StalledPositionOutput output = new StalledPositionOutput();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> output,
+                library -> engine,
+                failure -> {
+                }
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+
+            assertTrue(output.eightWrites.await(1, TimeUnit.SECONDS));
+            assertFalse(output.ninthWrite.await(200, TimeUnit.MILLISECONDS));
+            assertEquals(8, output.writeCalls.get());
+            assertEquals(8, engine.renderCalls.get());
+
+            mixer.apply(PlaybackState.stopped());
+            assertTrue(engine.secondApply.await(1, TimeUnit.SECONDS));
+            mixer.setPaused(true);
+            assertTrue(output.stopped.await(1, TimeUnit.SECONDS));
+
+            output.playedFrames.set(BLOCK_FRAMES);
+            mixer.setPaused(false);
+
+            assertTrue(output.ninthWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(9, output.writeCalls.get());
+            assertEquals(9, engine.renderCalls.get());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void backwardPlayedPositionReportsOnceAndReplaysFromLastConfirmation() throws Exception {
+        assertInvalidPlayedPositionRecovery(256L, 128L, false, 1024);
+    }
+
+    @Test
+    void playedPositionBeyondAcceptedReportsOnceAndReplaysFromLastConfirmation() throws Exception {
+        assertInvalidPlayedPositionRecovery(512L, 512L, true, 0);
+    }
+
+    private void assertInvalidPlayedPositionRecovery(
+            long firstPlayedFrames,
+            long laterPlayedFrames,
+            boolean failSecondWrite,
+            int expectedReplayOffset
+    ) throws Exception {
+        SequencedEngine engine = new SequencedEngine(1);
+        InvalidPositionOutput failedOutput = new InvalidPositionOutput(
+                firstPlayedFrames,
+                laterPlayedFrames,
+                failSecondWrite
+        );
+        ReplayCapturingOutput replacement = new ReplayCapturingOutput();
+        AtomicInteger openAttempts = new AtomicInteger();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> openAttempts.getAndIncrement() == 0 ? failedOutput : replacement,
+                library -> engine,
+                failures::add
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+
+            assertTrue(replacement.firstWrite.await(2, TimeUnit.SECONDS));
+            assertEquals(expectedReplayOffset, replacement.firstOffset.get());
+            assertEquals(
+                    BLOCK_FRAMES * AudioStreamFactory.MIX_FORMAT.getFrameSize()
+                            - expectedReplayOffset,
+                    replacement.firstLength.get()
+            );
+            assertEquals(1000, PcmMath.readLittleEndian(replacement.firstBytes.get(), 0));
+            assertTrue(failedOutput.closed.await(1, TimeUnit.SECONDS));
+            Thread.sleep(50L);
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.DEVICE, failures.get(0).kind());
+            assertEquals(1, engine.renderCalls.get());
+        } finally {
+            mixer.close();
+        }
+    }
+
     private static PlaybackState playing(
             String areaId,
             String musicId,
@@ -720,6 +977,7 @@ class PcmAudioMixerTest {
         private final AtomicReference<byte[]> firstBlock = new AtomicReference<>();
         private final AtomicInteger blocksWritten = new AtomicInteger();
         private final AtomicInteger firstNonSilentFrame = new AtomicInteger(-1);
+        private final AtomicLong playedFrames = new AtomicLong();
 
         @Override
         public void start() {
@@ -746,7 +1004,13 @@ class PcmAudioMixerTest {
                 }
                 break;
             }
+            playedFrames.addAndGet(length / frameSize);
             return length;
+        }
+
+        @Override
+        public long playedFrames() {
+            return playedFrames.get();
         }
 
         @Override
@@ -768,6 +1032,7 @@ class PcmAudioMixerTest {
         private final CountDownLatch firstNonSilent = new CountDownLatch(1);
         private final AtomicInteger blocksWritten = new AtomicInteger();
         private final AtomicInteger firstNonSilentFrame = new AtomicInteger(-1);
+        private final AtomicLong playedFrames = new AtomicLong();
 
         @Override
         public void start() {
@@ -799,7 +1064,13 @@ class PcmAudioMixerTest {
                 }
                 break;
             }
+            playedFrames.addAndGet(length / frameSize);
             return length;
+        }
+
+        @Override
+        public long playedFrames() {
+            return playedFrames.get();
         }
 
         @Override
@@ -1088,6 +1359,11 @@ class PcmAudioMixerTest {
         }
 
         @Override
+        public long playedFrames() {
+            return prefix.size() / AudioStreamFactory.MIX_FORMAT.getFrameSize();
+        }
+
+        @Override
         public void drain() {
         }
 
@@ -1207,6 +1483,36 @@ class PcmAudioMixerTest {
         }
     }
 
+    private static final class NonAlignedCountOutput implements PcmAudioMixer.AudioOutput {
+        private final AtomicInteger writeCalls = new AtomicInteger();
+        private final AtomicInteger secondOffset = new AtomicInteger(-1);
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            if (writeCalls.incrementAndGet() == 1) {
+                return AudioStreamFactory.MIX_FORMAT.getFrameSize() + 1;
+            }
+            secondOffset.set(offset);
+            throw new IllegalStateException("unaligned write position was reused");
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
     private static final class SignallingWriteFailingOutput implements PcmAudioMixer.AudioOutput {
         private final CountDownLatch writeFailed = new CountDownLatch(1);
         private final AtomicReference<byte[]> attemptedBlock = new AtomicReference<>();
@@ -1263,6 +1569,328 @@ class PcmAudioMixerTest {
         @Override
         public void close() {
             closed.countDown();
+        }
+    }
+
+    private static final class ThrowingRenderEngine implements PcmAudioMixer.AudioEngine {
+        private final AtomicBoolean work = new AtomicBoolean();
+        private final AtomicInteger renderCalls = new AtomicInteger();
+        private final CountDownLatch closed = new CountDownLatch(1);
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+        }
+
+        @Override
+        public void apply(PlaybackState state) {
+            work.set(true);
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            renderCalls.incrementAndGet();
+            work.set(false);
+            throw new IllegalStateException("unexpected render failure");
+        }
+
+        @Override
+        public List<AudioFailure> drainFailures() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return work.get();
+        }
+
+        @Override
+        public void close() {
+            closed.countDown();
+        }
+    }
+
+    private static final class UnalignedRenderEngine implements PcmAudioMixer.AudioEngine {
+        private final AtomicBoolean work = new AtomicBoolean();
+        private final AtomicInteger renderCalls = new AtomicInteger();
+        private final CountDownLatch closed = new CountDownLatch(1);
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+        }
+
+        @Override
+        public void apply(PlaybackState state) {
+            work.set(true);
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            renderCalls.incrementAndGet();
+            work.set(false);
+            return new byte[AudioStreamFactory.MIX_FORMAT.getFrameSize() + 1];
+        }
+
+        @Override
+        public List<AudioFailure> drainFailures() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return work.get();
+        }
+
+        @Override
+        public void close() {
+            closed.countDown();
+        }
+    }
+
+    private static final class ThreadFailureOutput implements PcmAudioMixer.AudioOutput {
+        private final AtomicInteger writeCalls = new AtomicInteger();
+        private final CountDownLatch closed = new CountDownLatch(1);
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            writeCalls.incrementAndGet();
+            return length;
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+            closed.countDown();
+        }
+    }
+
+    private static final class SequencedEngine implements PcmAudioMixer.AudioEngine {
+        private final int blockCount;
+        private final AtomicBoolean applied = new AtomicBoolean();
+        private final AtomicInteger applyCalls = new AtomicInteger();
+        private final AtomicInteger renderCalls = new AtomicInteger();
+        private final CountDownLatch secondApply = new CountDownLatch(1);
+
+        private SequencedEngine(int blockCount) {
+            this.blockCount = blockCount;
+        }
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+        }
+
+        @Override
+        public void apply(PlaybackState state) {
+            applied.set(true);
+            if (applyCalls.incrementAndGet() == 2) {
+                secondApply.countDown();
+            }
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            int block = renderCalls.getAndIncrement();
+            return constantPcmBlock((short) ((block + 1) * 1000));
+        }
+
+        @Override
+        public List<AudioFailure> drainFailures() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return applied.get() && renderCalls.get() < blockCount;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class StalledPositionOutput implements PcmAudioMixer.AudioOutput {
+        private final AtomicInteger writeCalls = new AtomicInteger();
+        private final AtomicLong playedFrames = new AtomicLong();
+        private final CountDownLatch eightWrites = new CountDownLatch(8);
+        private final CountDownLatch ninthWrite = new CountDownLatch(1);
+        private final CountDownLatch stopped = new CountDownLatch(1);
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+            stopped.countDown();
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            int call = writeCalls.incrementAndGet();
+            eightWrites.countDown();
+            if (call == 9) {
+                ninthWrite.countDown();
+            }
+            return length;
+        }
+
+        @Override
+        public long playedFrames() {
+            return playedFrames.get();
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class InvalidPositionOutput implements PcmAudioMixer.AudioOutput {
+        private static final int ACCEPTED_FRAMES_PER_WRITE = 256;
+
+        private final long firstPlayedFrames;
+        private final long laterPlayedFrames;
+        private final boolean failSecondWrite;
+        private final AtomicInteger writeCalls = new AtomicInteger();
+        private final CountDownLatch closed = new CountDownLatch(1);
+
+        private InvalidPositionOutput(
+                long firstPlayedFrames,
+                long laterPlayedFrames,
+                boolean failSecondWrite
+        ) {
+            this.firstPlayedFrames = firstPlayedFrames;
+            this.laterPlayedFrames = laterPlayedFrames;
+            this.failSecondWrite = failSecondWrite;
+        }
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            int call = writeCalls.incrementAndGet();
+            if (call == 2 && failSecondWrite) {
+                throw new IllegalStateException("device failed after invalid position");
+            }
+            return ACCEPTED_FRAMES_PER_WRITE * AudioStreamFactory.MIX_FORMAT.getFrameSize();
+        }
+
+        @Override
+        public long playedFrames() {
+            int calls = writeCalls.get();
+            if (calls == 0) {
+                return 0L;
+            }
+            return calls == 1 ? firstPlayedFrames : laterPlayedFrames;
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+            closed.countDown();
+        }
+    }
+
+    private static final class AcceptThenFailOutput implements PcmAudioMixer.AudioOutput {
+        private final long confirmedFrames;
+        private final ByteArrayOutputStream accepted = new ByteArrayOutputStream();
+        private int writeCalls;
+
+        private AcceptThenFailOutput(long confirmedFrames) {
+            this.confirmedFrames = confirmedFrames;
+        }
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            if (writeCalls++ == 0) {
+                accepted.write(pcm, offset, length);
+                return length;
+            }
+            throw new IllegalStateException("device failed after accepting a block");
+        }
+
+        @Override
+        public long playedFrames() {
+            return writeCalls == 0 ? 0L : confirmedFrames;
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class ReplayCapturingOutput implements PcmAudioMixer.AudioOutput {
+        private final CountDownLatch firstWrite = new CountDownLatch(1);
+        private final AtomicReference<byte[]> firstBytes = new AtomicReference<>();
+        private final AtomicInteger firstOffset = new AtomicInteger(-1);
+        private final AtomicInteger firstLength = new AtomicInteger(-1);
+        private final AtomicLong acceptedFrames = new AtomicLong();
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            if (firstBytes.compareAndSet(null, java.util.Arrays.copyOfRange(
+                    pcm, offset, offset + length))) {
+                firstOffset.set(offset);
+                firstLength.set(length);
+                firstWrite.countDown();
+            }
+            acceptedFrames.addAndGet(length / AudioStreamFactory.MIX_FORMAT.getFrameSize());
+            return length;
+        }
+
+        @Override
+        public long playedFrames() {
+            return acceptedFrames.get();
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
         }
     }
 }

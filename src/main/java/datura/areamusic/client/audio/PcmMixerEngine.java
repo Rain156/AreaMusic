@@ -74,8 +74,10 @@ public final class PcmMixerEngine implements AutoCloseable {
             throw new IllegalArgumentException("Master gain must be finite and between 0 and 1");
         }
 
-        byte[] output = new byte[frameCount * FRAME_SIZE];
-        int[] mixed = new int[frameCount * CHANNELS];
+        int outputByteCount = Math.multiplyExact(frameCount, FRAME_SIZE);
+        int mixedSampleCount = Math.multiplyExact(frameCount, CHANNELS);
+        byte[] output = new byte[outputByteCount];
+        int[] mixed = new int[mixedSampleCount];
         int renderedFrames = 0;
         while (renderedFrames < frameCount) {
             removeSilentOutgoingSessions();

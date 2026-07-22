@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -52,6 +53,17 @@ class PcmMixerEngineTest {
                         .getMethod("renderFrames", int.class, float.class)
                         .getExceptionTypes().length
         );
+    }
+
+    @Test
+    void renderFrameBufferSizeOverflowThrowsArithmeticException() {
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.empty(tempDir.resolve("music")))) {
+            assertThrows(
+                    ArithmeticException.class,
+                    () -> engine.renderFrames(Integer.MAX_VALUE, 1.0f)
+            );
+        }
     }
 
     @Test
