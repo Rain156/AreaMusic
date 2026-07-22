@@ -12,6 +12,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -52,12 +53,37 @@ class PlayerAreaTrackerTest {
     }
 
     @Test
-    void revisionChangeSendsSecondaryTrackAndResumeChanges() {
+    void revisionChangeSendsSecondaryTrackChanges() {
         PlayerAreaTracker tracker = new PlayerAreaTracker();
         BlockPos position = new BlockPos(1, 65, 1);
         tracker.update(OVERWORLD, position, 1L, List.of(AREA));
 
-        AreaDefinition changedArea = area(0.5f, false);
+        AreaDefinition changedArea = area(0.5f, true);
+
+        assertEquals(AREA.id(), changedArea.id());
+        assertEquals(AREA.tracks().get(0), changedArea.tracks().get(0));
+        assertEquals(AREA.resumeOnReenter(), changedArea.resumeOnReenter());
+        assertNotEquals(AREA.tracks().get(1), changedArea.tracks().get(1));
+
+        PlaybackState changed = tracker.update(OVERWORLD, position, 2L, List.of(changedArea)).orElseThrow();
+
+        assertEquals(PlaybackState.fromArea(changedArea), changed);
+        assertEquals(changedArea.tracks(), changed.tracks());
+        assertTrue(changed.resumeOnReenter());
+    }
+
+    @Test
+    void revisionChangeSendsResumeOnReenterChanges() {
+        PlayerAreaTracker tracker = new PlayerAreaTracker();
+        BlockPos position = new BlockPos(1, 65, 1);
+        tracker.update(OVERWORLD, position, 1L, List.of(AREA));
+
+        AreaDefinition changedArea = area(0.25f, false);
+
+        assertEquals(AREA.id(), changedArea.id());
+        assertEquals(AREA.tracks(), changedArea.tracks());
+        assertNotEquals(AREA.resumeOnReenter(), changedArea.resumeOnReenter());
+
         PlaybackState changed = tracker.update(OVERWORLD, position, 2L, List.of(changedArea)).orElseThrow();
 
         assertEquals(PlaybackState.fromArea(changedArea), changed);
