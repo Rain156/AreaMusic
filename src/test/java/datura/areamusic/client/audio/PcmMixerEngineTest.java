@@ -18,7 +18,11 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,11 +39,9 @@ class PcmMixerEngineTest {
 
     @Test
     void publicApplyAndRenderApisDoNotDeclarePerTrackFailures() throws Exception {
-        assertEquals(
-                0,
-                PcmMixerEngine.class
-                        .getMethod("apply", PlaybackState.class)
-                        .getExceptionTypes().length
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> PcmMixerEngine.class.getMethod("apply", PlaybackState.class)
         );
         assertEquals(
                 0,
@@ -96,7 +98,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("first.wav", 0, false, 0, 0),
@@ -115,7 +117,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("first.wav", 0, 0.5f, false, 0, 0),
@@ -142,7 +144,7 @@ class PcmMixerEngineTest {
         };
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "quiet",
                     false,
                     track("ramp.wav", 0, 0.0f, true, 0, 20)
@@ -151,7 +153,7 @@ class PcmMixerEngineTest {
             assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
             assertTrue(engine.hasWork());
 
-            engine.apply(state(
+            engine.apply(1L, state(
                     "audible",
                     false,
                     track("ramp.wav", 0, 1.0f, true, 0, 20)
@@ -173,14 +175,14 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new FixedAudioStreamFactory(stream), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "quiet",
                     false,
                     track("quiet.wav", 0, 0.0f, true, 0, 20)
             ));
             engine.renderFrames(1, 1.0f);
 
-            engine.apply(PlaybackState.stopped());
+            engine.apply(1L, PlaybackState.stopped());
 
             assertTrue(engine.hasWork());
             assertEquals(0, closeCount.get());
@@ -208,7 +210,7 @@ class PcmMixerEngineTest {
         };
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("same.wav", 0, false, 0, 0),
@@ -229,7 +231,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("short-loop.wav", 0, true, 0, 0),
@@ -252,7 +254,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("once.wav", 0, false, 0, 0),
@@ -276,7 +278,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "positive",
                     false,
                     track("positive.wav", 0, false, 0, 0),
@@ -284,7 +286,7 @@ class PcmMixerEngineTest {
             ));
             assertEquals(Short.MAX_VALUE, firstLeftSample(engine.renderFrames(1, 1.0f)));
 
-            engine.apply(state(
+            engine.apply(1L, state(
                     "negative",
                     false,
                     track("negative.wav", 0, false, 0, 0),
@@ -303,7 +305,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("first.wav", 0, true, 0, 0),
@@ -338,13 +340,13 @@ class PcmMixerEngineTest {
             }
         };
         PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root));
-        engine.apply(state(
+        engine.apply(1L, state(
                 "area",
                 false,
                 track("first.wav", 0, true, 0, 0),
                 track("second.wav", 0, true, 0, 0)
         ));
-        engine.apply(PlaybackState.stopped());
+        engine.apply(1L, PlaybackState.stopped());
 
         assertEquals(1, firstCloseCount.get());
         assertEquals(1, secondCloseCount.get());
@@ -363,7 +365,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("missing.wav", 0, false, 0, 0),
@@ -386,13 +388,13 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area", false, track("delayed.wav", 1, false, 0, 0)
             ));
 
             assertTrue(engine.hasWork());
 
-            engine.apply(PlaybackState.stopped());
+            engine.apply(1L, PlaybackState.stopped());
 
             assertFalse(engine.hasWork());
         }
@@ -415,7 +417,7 @@ class PcmMixerEngineTest {
         };
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("bad.wav", 0, false, 0, 0),
@@ -443,7 +445,7 @@ class PcmMixerEngineTest {
         AudioStreamFactory factory = streamFactoryWithBadStream(badStream);
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("bad.wav", 0, false, 0, 0),
@@ -468,7 +470,7 @@ class PcmMixerEngineTest {
         AudioStreamFactory factory = streamFactoryWithBadStream(badStream);
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("bad.wav", 0, false, 0, 0),
@@ -494,7 +496,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 streamFactoryWithBadStream(badStream), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("bad.wav", 0, false, 0, 0),
@@ -538,7 +540,7 @@ class PcmMixerEngineTest {
         };
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("bad.wav", 0, true, 0, 0),
@@ -568,7 +570,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 streamFactoryWithBadStream(badStream), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("bad.wav", 0, false, 0, 0),
@@ -612,7 +614,7 @@ class PcmMixerEngineTest {
         };
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("bad.wav", 0, true, 0, 0),
@@ -633,10 +635,10 @@ class PcmMixerEngineTest {
         writeWav(root.resolve("track.wav"), new short[]{1000, 2000, 3000});
         PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), MusicLibrary.scan(root));
 
-        engine.apply(playing("first", "track.wav", 1.0f, false, 0, 0));
+        engine.apply(1L, playing("first", "track.wav", 1.0f, false, 0, 0));
         assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
 
-        engine.apply(playing("second", "track.wav", 0.5f, false, 0, 0));
+        engine.apply(1L, playing("second", "track.wav", 0.5f, false, 0, 0));
         assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
 
         engine.close();
@@ -660,14 +662,14 @@ class PcmMixerEngineTest {
         };
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "quiet",
                     false,
                     track("ramp.wav", 0, 0.0f, false, 0, 0)
             ));
             assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
 
-            engine.apply(state(
+            engine.apply(1L, state(
                     "audible",
                     false,
                     track("ramp.wav", 0, 1.0f, false, 1000, 0)
@@ -697,14 +699,14 @@ class PcmMixerEngineTest {
         };
 
         try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "audible",
                     false,
                     track("constant.wav", 0, 1.0f, false, 0, 0)
             ));
             assertEquals(10_000, firstLeftSample(engine.renderFrames(1, 1.0f)));
 
-            engine.apply(state(
+            engine.apply(1L, state(
                     "quiet",
                     false,
                     track("constant.wav", 0, 0.0f, false, 1000, 0)
@@ -731,20 +733,20 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new FixedAudioStreamFactory(stream), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "quiet",
                     false,
                     track("constant.wav", 0, 0.0f, true, 0, 1000)
             ));
             engine.renderFrames(1, 1.0f);
-            engine.apply(state(
+            engine.apply(1L, state(
                     "audible",
                     false,
                     track("constant.wav", 0, 1.0f, true, 1000, 1000)
             ));
             engine.renderFrames(22_050, 1.0f);
 
-            engine.apply(PlaybackState.stopped());
+            engine.apply(1L, PlaybackState.stopped());
 
             int firstOutgoing = firstLeftSample(engine.renderFrames(1, 1.0f));
             engine.renderFrames(11_024, 1.0f);
@@ -771,9 +773,9 @@ class PcmMixerEngineTest {
         writeWav(root.resolve("new.wav"), negative);
         PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), MusicLibrary.scan(root));
 
-        engine.apply(playing("old", "old.wav", 1.0f, false, 0, 1000));
+        engine.apply(1L, playing("old", "old.wav", 1.0f, false, 0, 1000));
         engine.renderFrames(1, 1.0f);
-        engine.apply(playing("new", "new.wav", 1.0f, false, 1000, 1000));
+        engine.apply(1L, playing("new", "new.wav", 1.0f, false, 1000, 1000));
 
         engine.renderFrames(22_050, 1.0f);
         int halfWaySample = firstLeftSample(engine.renderFrames(1, 1.0f));
@@ -790,7 +792,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area",
                     false,
                     track("immediate.wav", 0, true, 0, 0),
@@ -812,7 +814,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "old",
                     false,
                     track("immediate.wav", 0, true, 0, 0),
@@ -820,7 +822,7 @@ class PcmMixerEngineTest {
             ));
             assertEquals(20_000, firstLeftSample(engine.renderFrames(1, 1.0f)));
 
-            engine.apply(state(
+            engine.apply(1L, state(
                     "new", false, track("silent.wav", 0, true, 0, 0)
             ));
 
@@ -835,7 +837,7 @@ class PcmMixerEngineTest {
         Path root = tempDir.resolve("music");
         writeWav(root.resolve("loop.wav"), new short[]{1000, 2000});
         PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), MusicLibrary.scan(root));
-        engine.apply(playing("loop", "loop.wav", 1.0f, true, 0, 0));
+        engine.apply(1L, playing("loop", "loop.wav", 1.0f, true, 0, 0));
 
         byte[] rendered = engine.renderFrames(3, 1.0f);
 
@@ -853,11 +855,11 @@ class PcmMixerEngineTest {
         PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), library);
         PlaybackState state = playing("once", "once.wav", 1.0f, false, 0, 0);
 
-        engine.apply(state);
+        engine.apply(1L, state);
         assertEquals(4321, firstLeftSample(engine.renderFrames(2, 1.0f)));
 
         engine.setMusicLibrary(library);
-        engine.apply(state);
+        engine.apply(1L, state);
 
         assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
         engine.close();
@@ -869,10 +871,10 @@ class PcmMixerEngineTest {
         writeWav(root.resolve("once.wav"), new short[]{4321});
         PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), MusicLibrary.scan(root));
 
-        engine.apply(playing("once", "once.wav", 1.0f, false, 0, 0));
+        engine.apply(1L, playing("once", "once.wav", 1.0f, false, 0, 0));
         assertEquals(4321, firstLeftSample(engine.renderFrames(2, 1.0f)));
 
-        engine.apply(playing("once", "once.wav", 1.0f, true, 0, 0));
+        engine.apply(1L, playing("once", "once.wav", 1.0f, true, 0, 0));
 
         assertEquals(4321, firstLeftSample(engine.renderFrames(1, 1.0f)));
         engine.close();
@@ -888,13 +890,13 @@ class PcmMixerEngineTest {
         PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), MusicLibrary.scan(root));
 
         for (int index = 0; index < 4; index++) {
-            engine.apply(playing(
+            engine.apply(1L, playing(
                     "area" + index, "track" + index + ".wav", 1.0f, true, 0, 10_000
             ));
             engine.renderFrames(1, 1.0f);
         }
 
-        engine.apply(playing("area4", "track4.wav", 1.0f, true, 0, 10_000));
+        engine.apply(1L, playing("area4", "track4.wav", 1.0f, true, 0, 10_000));
 
         assertTrue(firstLeftSample(engine.renderFrames(1, 1.0f)) > 9_000);
         engine.close();
@@ -910,13 +912,13 @@ class PcmMixerEngineTest {
         PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), MusicLibrary.scan(root));
 
         for (int index = 0; index < 4; index++) {
-            engine.apply(playing(
+            engine.apply(1L, playing(
                     "area" + index, "track" + index + ".wav", 1.0f, true, 0, 60_000
             ));
             engine.renderFrames(1, 1.0f);
         }
 
-        engine.apply(playing("area4", "track4.wav", 1.0f, true, 0, 60_000));
+        engine.apply(1L, playing("area4", "track4.wav", 1.0f, true, 0, 60_000));
         engine.renderFrames(1024, 1.0f);
 
         assertEquals(5000, firstLeftSample(engine.renderFrames(1, 1.0f)));
@@ -934,16 +936,16 @@ class PcmMixerEngineTest {
                 new AudioStreamFactory(), MusicLibrary.scan(root)
         );
 
-        engine.apply(state(
+        engine.apply(1L, state(
                 "area0", false, track("audible.wav", 0, 1.0f, true, 0, 60_000)
         ));
         engine.renderFrames(1, 1.0f);
-        engine.apply(state(
+        engine.apply(1L, state(
                 "area1", false, track("silent1.wav", 0, 0.0f, true, 0, 60_000)
         ));
         engine.renderFrames(1, 1.0f);
         for (int index = 2; index < 4; index++) {
-            engine.apply(state(
+            engine.apply(1L, state(
                     "area" + index,
                     false,
                     track("silent" + index + ".wav", 0, 1.0f, true, 0, 60_000)
@@ -951,7 +953,7 @@ class PcmMixerEngineTest {
             engine.renderFrames(1, 1.0f);
         }
 
-        engine.apply(state(
+        engine.apply(1L, state(
                 "area4", false, track("silent4.wav", 0, 1.0f, true, 0, 60_000)
         ));
         engine.renderFrames(882, 1.0f);
@@ -974,7 +976,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new FixedAudioStreamFactory(stream), MusicLibrary.scan(root))) {
-            engine.apply(playing("scripted", "scripted.wav", 1.0f, false, 0, 0));
+            engine.apply(1L, playing("scripted", "scripted.wav", 1.0f, false, 0, 0));
 
             assertArrayEquals(expected, engine.renderFrames(2, 1.0f));
         }
@@ -989,7 +991,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new FixedAudioStreamFactory(stream), MusicLibrary.scan(root))) {
-            engine.apply(playing("stalled", "stalled.wav", 1.0f, false, 0, 0));
+            engine.apply(1L, playing("stalled", "stalled.wav", 1.0f, false, 0, 0));
 
             assertTimeoutPreemptively(
                     Duration.ofSeconds(2), () -> engine.renderFrames(2, 1.0f)
@@ -1029,7 +1031,7 @@ class PcmMixerEngineTest {
 
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
-            engine.apply(playing("ogg", "test.ogg", 1.0f, false, 0, 0));
+            engine.apply(1L, playing("ogg", "test.ogg", 1.0f, false, 0, 0));
             while (engine.hasWork() && renderedBlocks < renderGuard) {
                 engine.renderFrames(1024, 1.0f);
                 renderedBlocks++;
@@ -1038,6 +1040,531 @@ class PcmMixerEngineTest {
         }
 
         assertEquals(expectedBlocks, renderedBlocks);
+    }
+
+    @Test
+    void resumeDisabledRestartsTheTrackFromItsFirstFrame() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("ramp.wav"), new short[]{1000, 2000, 3000});
+        PlaybackState state = state(
+                "area", false, track("ramp.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertEquals(1000, firstNonSilentSample(engine));
+        }
+    }
+
+    @Test
+    void resumeEnabledContinuesAtTheNextFrameAfterPreparation() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("ramp.wav"), new short[]{1000, 2000, 3000});
+        PlaybackState state = state(
+                "area", true, track("ramp.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertEquals(2000, firstNonSilentSample(engine));
+        }
+    }
+
+    @Test
+    void resumeKeepsTheRemainingPendingDelayFrozenWhileOutsideTheArea() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("delayed.wav"), new short[]{1234});
+        PlaybackState state = state(
+                "area", true, track("delayed.wav", 2, false, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            assertAllSilent(engine.renderFrames(44_100, 1.0f));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.renderFrames(20_000, 1.0f);
+            engine.apply(7L, state);
+            assertAllSilent(engine.renderFrames(44_099, 1.0f));
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1234, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        }
+    }
+
+    @Test
+    void resumeKeepsACompletedNonLoopTrackSilentWithoutReopeningIt() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("once.wav"), new short[]{1000});
+        AtomicInteger openCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                openCount.incrementAndGet();
+                return super.open(path);
+            }
+        };
+        PlaybackState state = state(
+                "area", true, track("once.wav", 0, false, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            byte[] completed = engine.renderFrames(2, 1.0f);
+            assertEquals(1000, leftSample(completed, 0));
+            assertEquals(0, leftSample(completed, 1));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertAllSilent(engine.renderFrames(4, 1.0f));
+            assertEquals(1, openCount.get());
+        }
+    }
+
+    @Test
+    void resumeKeepsALoopAtItsCursorWithinTheCurrentPass() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        PlaybackState state = state(
+                "area", true, track("loop.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertEquals(2000, firstNonSilentSample(engine));
+        }
+    }
+
+    @Test
+    void resumePreservesAFailedTrackWhileRestoringAnotherTrack() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{500});
+        writeWav(root.resolve("good.wav"), new short[]{1000, 2000, 3000});
+        AtomicInteger badOpenCount = new AtomicInteger();
+        AtomicInteger goodOpenCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.getFileName().toString().equals("bad.wav")) {
+                    badOpenCount.incrementAndGet();
+                    throw new IOException("decode failed");
+                }
+                goodOpenCount.incrementAndGet();
+                return super.open(path);
+            }
+        };
+        PlaybackState state = state(
+                "area", true,
+                track("bad.wav", 0, true, 0, 0),
+                track("good.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertSingleDecodeFailure(engine, "bad.wav");
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertEquals(2000, firstNonSilentSample(engine));
+            assertTrue(engine.drainFailures().isEmpty());
+            assertEquals(1, badOpenCount.get());
+            assertEquals(2, goodOpenCount.get());
+        }
+    }
+
+    @Test
+    void successfulLibraryUpdateAndNewRevisionDiscardOldResumeSnapshots() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        MusicLibrary library = MusicLibrary.scan(root);
+        PlaybackState state = state(
+                "area", true, track("loop.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), library)) {
+            engine.apply(7L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.setMusicLibrary(library);
+            engine.apply(7L, state);
+            assertEquals(1000, firstNonSilentSample(engine));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(8L, state);
+            assertEquals(1000, firstNonSilentSample(engine));
+        }
+    }
+
+    @Test
+    void successfulLibraryUpdateInvalidatesTheStillActiveSessionBeforeItCanSnapshot() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        MusicLibrary library = MusicLibrary.scan(root);
+        PlaybackState state = state(
+                "area", true, track("loop.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), library)) {
+            engine.apply(7L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.setMusicLibrary(library);
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+
+            assertEquals(1000, firstNonSilentSample(engine));
+        }
+    }
+
+    @Test
+    void failedReloadPathWithoutLibraryUpdateKeepsTheResumeSnapshot() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        PlaybackState state = state(
+                "area", true, track("loop.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(9L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(9L, PlaybackState.stopped());
+            engine.apply(9L, state);
+            assertEquals(2000, firstNonSilentSample(engine));
+        }
+    }
+
+    @Test
+    void outgoingTracksStopAdvancingAtTheirIndividualFadeEndpoints() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("short.wav"), increasingFrames(1000, 256));
+        writeWav(root.resolve("long.wav"), increasingFrames(2000, 256));
+        AtomicInteger openCount = new AtomicInteger();
+        List<Thread> restoreWorkers = new CopyOnWriteArrayList<>();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (openCount.incrementAndGet() > 2) {
+                    restoreWorkers.add(Thread.currentThread());
+                }
+                return delegate.open(path);
+            }
+        };
+        PlaybackState state = state(
+                "area", true,
+                track("short.wav", 0, true, 0, 1),
+                track("long.wav", 0, true, 0, 2)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            assertEquals(3000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.renderFrames(200, 1.0f);
+            engine.apply(7L, state);
+            assertTrue(awaitCondition(
+                    () -> openCount.get() == 4
+                            && restoreWorkers.size() == 2
+                            && restoreWorkers.stream().allMatch(
+                            worker -> worker.getState() == Thread.State.WAITING
+                    ),
+                    Duration.ofSeconds(2)
+            ));
+            engine.renderFrames(0, 1.0f);
+            assertEquals(3134, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        }
+    }
+
+    @Test
+    void resumeSnapshotRequiresTheCompletePlaybackStateToMatch() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        PlaybackState original = state(
+                "area", true, track("loop.wav", 0, 1.0f, true, 0, 0)
+        );
+        PlaybackState changedDefinition = state(
+                "area", true, track("loop.wav", 0, 0.5f, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(7L, original);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, changedDefinition);
+            assertEquals(500, firstNonSilentSample(engine));
+        }
+    }
+
+    @Test
+    void resumeSnapshotsAreScopedIndependentlyByAreaId() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        PlaybackState firstArea = state(
+                "first", true, track("loop.wav", 0, true, 0, 0)
+        );
+        PlaybackState secondArea = state(
+                "second", true, track("loop.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(7L, firstArea);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+
+            engine.apply(7L, secondArea);
+            assertEquals(1000, firstNonSilentSample(engine));
+            engine.apply(7L, PlaybackState.stopped());
+
+            engine.apply(7L, firstArea);
+            assertEquals(2000, firstNonSilentSample(engine));
+        }
+    }
+
+    @Test
+    void restoredCursorDoesNotAdvanceWhileAsynchronousPreparationIsBlocked() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        CountDownLatch restoreOpenEntered = new CountDownLatch(1);
+        CountDownLatch releaseRestoreOpen = new CountDownLatch(1);
+        AtomicInteger openCount = new AtomicInteger();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (openCount.incrementAndGet() == 2) {
+                    restoreOpenEntered.countDown();
+                    awaitLatch(releaseRestoreOpen);
+                }
+                return delegate.open(path);
+            }
+        };
+        PlaybackState state = state("area", true, track("loop.wav", 0, true, 0, 0));
+
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(factory, 1);
+             PcmMixerEngine engine = new PcmMixerEngine(
+                     factory, MusicLibrary.scan(root), preparer
+             )) {
+            engine.apply(7L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertTrue(restoreOpenEntered.await(1, TimeUnit.SECONDS));
+            assertTrue(engine.hasWork());
+            assertAllSilent(engine.renderFrames(100, 1.0f));
+            releaseRestoreOpen.countDown();
+            assertEquals(2000, firstNonSilentSample(engine));
+        } finally {
+            releaseRestoreOpen.countDown();
+        }
+    }
+
+    @Test
+    void leavingBeforeACompletedRestoreAttachesClosesItsStreamExactlyOnce() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        AtomicInteger openCount = new AtomicInteger();
+        AtomicInteger restoredCloseCount = new AtomicInteger();
+        AtomicReference<Thread> preparationWorker = new AtomicReference<>();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (openCount.incrementAndGet() == 1) {
+                    return delegate.open(path);
+                }
+                preparationWorker.set(Thread.currentThread());
+                return new CloseCountingAudioInputStream(
+                        pcmFrames((short) 1000, (short) 2000, (short) 3000),
+                        restoredCloseCount
+                );
+            }
+        };
+        PlaybackState state = state("area", true, track("loop.wav", 0, true, 0, 0));
+
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(factory, 1);
+             PcmMixerEngine engine = new PcmMixerEngine(
+                     factory, MusicLibrary.scan(root), preparer
+             )) {
+            engine.apply(7L, state);
+            engine.renderFrames(1, 1.0f);
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertTrue(awaitCondition(
+                    () -> preparationWorker.get() != null
+                            && preparationWorker.get().getState() == Thread.State.WAITING,
+                    Duration.ofSeconds(2)
+            ));
+            engine.apply(7L, PlaybackState.stopped());
+            assertEquals(1, restoredCloseCount.get());
+        }
+    }
+
+    @Test
+    void engineClosesOnlyThePreparerItOwns() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        MusicLibrary library = MusicLibrary.scan(root);
+        AtomicInteger externalOpenCount = new AtomicInteger();
+        AudioStreamFactory externalFactory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path) {
+                externalOpenCount.incrementAndGet();
+                return new CloseCountingAudioInputStream(
+                        pcmFrames((short) 1000), new AtomicInteger()
+                );
+            }
+        };
+        AudioStreamPreparer external = new AudioStreamPreparer(externalFactory, 1);
+        PcmMixerEngine injectedEngine = new PcmMixerEngine(externalFactory, library, external);
+
+        injectedEngine.close();
+        try (AudioInputStream ignored = external.prepare(
+                root.resolve("loop.wav"), 0
+        ).get(1, TimeUnit.SECONDS)) {
+            assertEquals(1, externalOpenCount.get());
+        } finally {
+            external.close();
+        }
+
+        CountDownLatch ownedRestoreOpen = new CountDownLatch(1);
+        CountDownLatch releaseOwnedRestore = new CountDownLatch(1);
+        CountDownLatch lateStreamClosed = new CountDownLatch(1);
+        AtomicInteger ownedOpenCount = new AtomicInteger();
+        AtomicInteger lateCloseCount = new AtomicInteger();
+        AtomicReference<Thread> ownedWorker = new AtomicReference<>();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory ownedFactory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (ownedOpenCount.incrementAndGet() == 1) {
+                    return delegate.open(path);
+                }
+                ownedWorker.set(Thread.currentThread());
+                ownedRestoreOpen.countDown();
+                awaitLatchIgnoringInterrupt(releaseOwnedRestore);
+                return new CloseSignallingAudioInputStream(
+                        pcmFrames((short) 1000, (short) 2000),
+                        lateCloseCount,
+                        lateStreamClosed
+                );
+            }
+        };
+        PcmMixerEngine ownedEngine = new PcmMixerEngine(ownedFactory, library);
+        PlaybackState state = state("area", true, track("loop.wav", 0, true, 0, 0));
+
+        try {
+            ownedEngine.apply(7L, state);
+            ownedEngine.renderFrames(1, 1.0f);
+            ownedEngine.apply(7L, PlaybackState.stopped());
+            ownedEngine.apply(7L, state);
+            assertTrue(ownedRestoreOpen.await(1, TimeUnit.SECONDS));
+            ownedEngine.close();
+            releaseOwnedRestore.countDown();
+            assertTrue(lateStreamClosed.await(1, TimeUnit.SECONDS));
+            assertEquals(1, lateCloseCount.get());
+            assertTrue(awaitCondition(
+                    () -> !ownedWorker.get().isAlive(), Duration.ofSeconds(2)
+            ));
+        } finally {
+            releaseOwnedRestore.countDown();
+            ownedEngine.close();
+        }
+    }
+
+    @Test
+    void restoredPreparationFailureIsRememberedWhileAnotherTrackKeepsResuming()
+            throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{500, 600, 700});
+        writeWav(root.resolve("good.wav"), new short[]{1000, 2000, 3000});
+        AtomicInteger badOpenCount = new AtomicInteger();
+        AtomicInteger goodOpenCount = new AtomicInteger();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.getFileName().toString().equals("bad.wav")) {
+                    if (badOpenCount.incrementAndGet() > 1) {
+                        throw new IOException("restore failed");
+                    }
+                } else {
+                    goodOpenCount.incrementAndGet();
+                }
+                return delegate.open(path);
+            }
+        };
+        PlaybackState state = state(
+                "area", true,
+                track("bad.wav", 0, true, 0, 0),
+                track("good.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            assertEquals(1500, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertEquals(2000, firstNonSilentSample(engine));
+            assertSingleDecodeFailure(engine, "bad.wav");
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+            assertEquals(3000, firstNonSilentSample(engine));
+            assertTrue(engine.drainFailures().isEmpty());
+            assertEquals(2, badOpenCount.get());
+            assertEquals(3, goodOpenCount.get());
+        }
+    }
+
+    @Test
+    void decodeFailureDuringOutgoingFadeIsStoredAsFailedAndNotRetried() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{500});
+        AtomicInteger openCount = new AtomicInteger();
+        AtomicInteger closeCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path) {
+                openCount.incrementAndGet();
+                return new ThrowingReadAudioInputStream(
+                        pcmFrames((short) 500), 1, closeCount
+                );
+            }
+        };
+        PlaybackState state = state(
+                "area", true, track("bad.wav", 0, true, 0, 10)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            assertEquals(500, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, PlaybackState.stopped());
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertSingleDecodeFailure(engine, "bad.wav");
+            engine.apply(7L, state);
+            assertAllSilent(engine.renderFrames(4, 1.0f));
+            assertTrue(engine.drainFailures().isEmpty());
+            assertEquals(1, openCount.get());
+            assertEquals(1, closeCount.get());
+        }
     }
 
     private static PlaybackState playing(
@@ -1084,6 +1611,74 @@ class PcmMixerEngineTest {
         short[] frames = new short[count];
         java.util.Arrays.fill(frames, sample);
         return frames;
+    }
+
+    private static short[] increasingFrames(int firstSample, int count) {
+        short[] frames = new short[count];
+        for (int index = 0; index < count; index++) {
+            frames[index] = (short) (firstSample + index);
+        }
+        return frames;
+    }
+
+    private static int firstNonSilentSample(PcmMixerEngine engine) {
+        long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+        while (System.nanoTime() < deadline) {
+            int sample = firstLeftSample(engine.renderFrames(1, 1.0f));
+            if (sample != 0) {
+                return sample;
+            }
+            Thread.yield();
+        }
+        throw new AssertionError("Timed out waiting for a non-silent rendered frame");
+    }
+
+    private static boolean awaitCondition(Check condition, Duration timeout) {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (condition.value()) {
+                return true;
+            }
+            Thread.yield();
+        }
+        return condition.value();
+    }
+
+    private static void awaitLatch(CountDownLatch latch) throws IOException {
+        try {
+            latch.await();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted", exception);
+        }
+    }
+
+    private static void awaitLatchIgnoringInterrupt(CountDownLatch latch) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                latch.await();
+                break;
+            } catch (InterruptedException exception) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void assertAllSilent(byte[] pcm) {
+        int frameSize = AudioStreamFactory.MIX_FORMAT.getFrameSize();
+        for (int offset = 0; offset < pcm.length; offset += frameSize) {
+            assertEquals(0, PcmMath.readLittleEndian(pcm, offset));
+            assertEquals(0, PcmMath.readLittleEndian(pcm, offset + 2));
+        }
+    }
+
+    @FunctionalInterface
+    private interface Check {
+        boolean value();
     }
 
     private static void writeWav(Path path, short[] monoSamples) throws Exception {
@@ -1244,7 +1839,7 @@ class PcmMixerEngineTest {
         }
     }
 
-    private static final class CloseCountingAudioInputStream extends AudioInputStream {
+    private static class CloseCountingAudioInputStream extends AudioInputStream {
         private final AtomicInteger closeCount;
 
         private CloseCountingAudioInputStream(byte[] pcm, AtomicInteger closeCount) {
@@ -1260,6 +1855,29 @@ class PcmMixerEngineTest {
         public void close() throws IOException {
             closeCount.incrementAndGet();
             super.close();
+        }
+    }
+
+    private static final class CloseSignallingAudioInputStream
+            extends CloseCountingAudioInputStream {
+        private final CountDownLatch closed;
+
+        private CloseSignallingAudioInputStream(
+                byte[] pcm,
+                AtomicInteger closeCount,
+                CountDownLatch closed
+        ) {
+            super(pcm, closeCount);
+            this.closed = closed;
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                super.close();
+            } finally {
+                closed.countDown();
+            }
         }
     }
 

@@ -47,4 +47,19 @@ class FadeEnvelopeTest {
         assertThrows(IllegalArgumentException.class, () -> fade.fadeTo(1.0f, -1, 44_100));
         assertThrows(IllegalArgumentException.class, () -> fade.fadeTo(1.0f, 100, 0));
     }
+
+    @Test
+    void reportsTheExactFramesRemainingUntilCompletion() {
+        FadeEnvelope fade = new FadeEnvelope(1.0f);
+        assertEquals(0L, fade.framesUntilComplete());
+
+        fade.fadeTo(0.0f, 1000, 1000);
+        assertEquals(1000L, fade.framesUntilComplete());
+
+        fade.advance(375);
+        assertEquals(625L, fade.framesUntilComplete());
+
+        fade.advance(10_000);
+        assertEquals(0L, fade.framesUntilComplete());
+    }
 }

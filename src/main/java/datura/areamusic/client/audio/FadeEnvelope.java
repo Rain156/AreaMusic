@@ -62,6 +62,10 @@ public final class FadeEnvelope {
         return totalFrames == 0L;
     }
 
+    public long framesUntilComplete() {
+        return totalFrames == 0L ? 0L : totalFrames - elapsedFrames;
+    }
+
     private static void validateGain(float gain) {
         if (!Float.isFinite(gain) || gain < 0.0f || gain > 1.0f) {
             throw new IllegalArgumentException("Gain must be finite and between 0 and 1");

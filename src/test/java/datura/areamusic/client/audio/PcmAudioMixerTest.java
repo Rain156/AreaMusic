@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PcmAudioMixerTest {
@@ -50,7 +51,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.playing(
+            mixer.apply(1L, PlaybackState.playing(
                     "area",
                     List.of(new AreaTrackDefinition("delayed.wav", 1, 1.0f, false, 0, 0)),
                     false
@@ -84,7 +85,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.playing(
+            mixer.apply(1L, PlaybackState.playing(
                     "area",
                     List.of(
                             new AreaTrackDefinition("missing.wav", 0, 1.0f, false, 0, 0),
@@ -116,7 +117,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.playing(
+            mixer.apply(1L, PlaybackState.playing(
                     "area",
                     List.of(new AreaTrackDefinition("delayed.wav", 1, 1.0f, false, 0, 0)),
                     false
@@ -159,7 +160,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.playing(
+            mixer.apply(1L, PlaybackState.playing(
                     "area",
                     List.of(new AreaTrackDefinition("delayed.wav", 1, 1.0f, false, 0, 0)),
                     false
@@ -188,11 +189,56 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(playing("area", "thread.wav", 1.0f, true, 0, 0));
+        mixer.apply(1L, playing("area", "thread.wav", 1.0f, true, 0, 0));
 
         assertTrue(output.firstWrite.await(2, TimeUnit.SECONDS));
         assertEquals(1200, PcmMath.readLittleEndian(output.firstBlock.get(), 0));
         assertTrue(errors.isEmpty());
+        mixer.close();
+    }
+
+    @Test
+    void forwardsTheRevisionWithTheLatestPendingPlaybackState() throws Exception {
+        RevisionRecordingEngine engine = new RevisionRecordingEngine();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                NonBlockingOutput::new,
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState older = playing("older", "older.wav", 1.0f, true, 0, 0);
+        PlaybackState latest = playing("latest", "latest.wav", 1.0f, true, 0, 0);
+
+        mixer.apply(4L, older);
+        mixer.apply(5L, latest);
+        mixer.start();
+
+        assertTrue(engine.applied.await(1, TimeUnit.SECONDS));
+        assertEquals(5L, engine.revision.get());
+        assertEquals(latest, engine.state.get());
+        mixer.close();
+    }
+
+    @Test
+    void rejectedNullStateDoesNotCorruptThePendingRevisionStatePair() throws Exception {
+        RevisionRecordingEngine engine = new RevisionRecordingEngine();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                NonBlockingOutput::new,
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState valid = playing("valid", "valid.wav", 1.0f, true, 0, 0);
+
+        mixer.apply(5L, valid);
+        assertThrows(NullPointerException.class, () -> mixer.apply(6L, null));
+        mixer.start();
+
+        assertTrue(engine.applied.await(1, TimeUnit.SECONDS));
+        assertEquals(5L, engine.revision.get());
+        assertEquals(valid, engine.state.get());
         mixer.close();
     }
 
@@ -213,7 +259,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(playing("area", "thread.wav", 1.0f, true, 0, 0));
+        mixer.apply(1L, playing("area", "thread.wav", 1.0f, true, 0, 0));
 
         assertTrue(workingOutput.firstWrite.await(3, TimeUnit.SECONDS));
         assertTrue(failedOutputClosed.get());
@@ -238,7 +284,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(playing("area", "short.wav", 1.0f, false, 0, 0));
+        mixer.apply(1L, playing("area", "short.wav", 1.0f, false, 0, 0));
 
         assertTrue(workingOutput.firstWrite.await(2, TimeUnit.SECONDS));
         assertEquals(2345, PcmMath.readLittleEndian(workingOutput.firstBlock.get(), 0));
@@ -263,7 +309,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(playing("area", "thread.wav", 1.0f, true, 0, 0));
+        mixer.apply(1L, playing("area", "thread.wav", 1.0f, true, 0, 0));
 
         boolean retried = workingOutput.firstWrite.await(1, TimeUnit.SECONDS);
         mixer.close();
@@ -291,7 +337,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(playing("area", "sequence.wav", 1.0f, false, 0, 0));
+            mixer.apply(1L, playing("area", "sequence.wav", 1.0f, false, 0, 0));
 
             assertTrue(workingOutput.firstWrite.await(2, TimeUnit.SECONDS));
             assertNotNull(failedBlock.get());
@@ -315,7 +361,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(playing("area", "partial.wav", 1.0f, true, 0, 0));
+            mixer.apply(1L, playing("area", "partial.wav", 1.0f, true, 0, 0));
 
             assertTrue(output.complete.await(2, TimeUnit.SECONDS));
             assertArrayEquals(constantPcmBlock((short) 1200), output.completedBlock.get());
@@ -337,7 +383,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(playing("area", "zero.wav", 1.0f, true, 0, 0));
+            mixer.apply(1L, playing("area", "zero.wav", 1.0f, true, 0, 0));
 
             assertTrue(output.complete.await(2, TimeUnit.SECONDS));
             assertTrue(output.sameBuffer.get());
@@ -369,7 +415,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(playing("area", "suffix.wav", 1.0f, true, 0, 0));
+            mixer.apply(1L, playing("area", "suffix.wav", 1.0f, true, 0, 0));
 
             assertTrue(workingOutput.complete.await(3, TimeUnit.SECONDS));
             byte[] combined = new byte[failedOutput.prefix.size() + workingOutput.suffix.size()];
@@ -400,11 +446,11 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(playing("old", "old.wav", 1.0f, true, 0, 0));
+            mixer.apply(1L, playing("old", "old.wav", 1.0f, true, 0, 0));
             assertTrue(output.firstWriteEntered.await(1, TimeUnit.SECONDS));
 
             mixer.setPaused(true);
-            mixer.apply(playing("new", "new.wav", 1.0f, true, 0, 0));
+            mixer.apply(1L, playing("new", "new.wav", 1.0f, true, 0, 0));
             output.returnZero.countDown();
 
             assertTrue(output.stopped.await(1, TimeUnit.SECONDS));
@@ -438,7 +484,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(playing("area", "invalid.wav", 1.0f, true, 0, 0));
+            mixer.apply(1L, playing("area", "invalid.wav", 1.0f, true, 0, 0));
 
             assertTrue(workingOutput.firstWrite.await(2, TimeUnit.SECONDS));
             assertEquals(1600, PcmMath.readLittleEndian(workingOutput.firstBlock.get(), 0));
@@ -465,7 +511,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(replacement.firstWrite.await(2, TimeUnit.SECONDS));
             assertEquals(1, failedOutput.writeCalls.get());
@@ -499,7 +545,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(reported.await(1, TimeUnit.SECONDS));
             assertEquals(AudioFailure.Kind.THREAD, failures.get(0).kind());
@@ -545,7 +591,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
             assertTrue(output.writeEntered.await(1, TimeUnit.SECONDS));
 
             closeThread.start();
@@ -600,7 +646,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(reported.await(1, TimeUnit.SECONDS));
             assertTrue(engine.closed.await(1, TimeUnit.SECONDS));
@@ -643,10 +689,10 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(playing("area", "pending.wav", 1.0f, true, 0, 0));
+            mixer.apply(1L, playing("area", "pending.wav", 1.0f, true, 0, 0));
             assertTrue(failedOutput.writeFailed.await(1, TimeUnit.SECONDS));
 
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(workingOutput.firstWrite.await(2, TimeUnit.SECONDS));
             assertArrayEquals(failedOutput.attemptedBlock.get(), workingOutput.firstBlock.get());
@@ -673,7 +719,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(playing("area", "once.wav", 1.0f, false, 0, 0));
+        mixer.apply(1L, playing("area", "once.wav", 1.0f, false, 0, 0));
 
         assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
         boolean closedWhileIdle = output.closed.await(1, TimeUnit.SECONDS);
@@ -695,7 +741,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(playing("area", "once.wav", 1.0f, false, 0, 0));
+        mixer.apply(1L, playing("area", "once.wav", 1.0f, false, 0, 0));
         assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
 
         mixer.setPaused(true);
@@ -725,7 +771,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(playing("area", "missing.mp3", 1.0f, true, 0, 0));
+        mixer.apply(1L, playing("area", "missing.mp3", 1.0f, true, 0, 0));
 
         assertTrue(reported.await(1, TimeUnit.SECONDS));
         assertEquals(AudioFailure.Kind.MISSING_FILE, failure.get().kind());
@@ -758,10 +804,10 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(playing("area", "loop.wav", 1.0f, true, 0, 20));
+            mixer.apply(1L, playing("area", "loop.wav", 1.0f, true, 0, 20));
             assertTrue(firstOpenEntered.await(1, TimeUnit.SECONDS));
 
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
             releaseFirstOpen.countDown();
 
             assertTrue(workingOutput.firstWrite.await(2, TimeUnit.SECONDS));
@@ -798,7 +844,7 @@ class PcmAudioMixerTest {
         );
 
         mixer.start();
-        mixer.apply(playing("area", "thread.wav", 1.0f, true, 0, 0));
+        mixer.apply(1L, playing("area", "thread.wav", 1.0f, true, 0, 0));
 
         assertTrue(reported.await(1, TimeUnit.SECONDS));
         assertEquals(AudioFailure.Kind.THREAD, failure.get().kind());
@@ -824,7 +870,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(reported.await(1, TimeUnit.SECONDS));
             assertEquals(AudioFailure.Kind.THREAD, failures.get(0).kind());
@@ -855,7 +901,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(replacement.firstWrite.await(2, TimeUnit.SECONDS));
             assertEquals(1000, PcmMath.readLittleEndian(replacement.firstBytes.get(), 0));
@@ -888,7 +934,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(replacement.firstWrite.await(2, TimeUnit.SECONDS));
             byte[] original = constantPcmBlock((short) 1000);
@@ -920,14 +966,14 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(output.eightWrites.await(1, TimeUnit.SECONDS));
             assertFalse(output.ninthWrite.await(200, TimeUnit.MILLISECONDS));
             assertEquals(8, output.writeCalls.get());
             assertEquals(8, engine.renderCalls.get());
 
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
             assertTrue(engine.secondApply.await(1, TimeUnit.SECONDS));
             mixer.setPaused(true);
             assertTrue(output.stopped.await(1, TimeUnit.SECONDS));
@@ -977,7 +1023,7 @@ class PcmAudioMixerTest {
 
         try {
             mixer.start();
-            mixer.apply(PlaybackState.stopped());
+            mixer.apply(1L, PlaybackState.stopped());
 
             assertTrue(replacement.firstWrite.await(2, TimeUnit.SECONDS));
             assertEquals(expectedReplayOffset, replacement.firstOffset.get());
@@ -1698,7 +1744,7 @@ class PcmAudioMixerTest {
         }
 
         @Override
-        public void apply(PlaybackState state) {
+        public void apply(long revision, PlaybackState state) {
             work.set(true);
         }
 
@@ -1725,6 +1771,42 @@ class PcmAudioMixerTest {
         }
     }
 
+    private static final class RevisionRecordingEngine implements PcmAudioMixer.AudioEngine {
+        private final AtomicLong revision = new AtomicLong(-1L);
+        private final AtomicReference<PlaybackState> state = new AtomicReference<>();
+        private final CountDownLatch applied = new CountDownLatch(1);
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+        }
+
+        @Override
+        public void apply(long revision, PlaybackState state) {
+            this.revision.set(revision);
+            this.state.set(state);
+            applied.countDown();
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            return new byte[BLOCK_BYTES];
+        }
+
+        @Override
+        public List<AudioFailure> drainFailures() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return false;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
     private static final class UnalignedRenderEngine implements PcmAudioMixer.AudioEngine {
         private final AtomicBoolean work = new AtomicBoolean();
         private final AtomicInteger renderCalls = new AtomicInteger();
@@ -1735,7 +1817,7 @@ class PcmAudioMixerTest {
         }
 
         @Override
-        public void apply(PlaybackState state) {
+        public void apply(long revision, PlaybackState state) {
             work.set(true);
         }
 
@@ -1772,7 +1854,7 @@ class PcmAudioMixerTest {
         }
 
         @Override
-        public void apply(PlaybackState state) {
+        public void apply(long revision, PlaybackState state) {
             work.set(true);
         }
 
@@ -1882,7 +1964,7 @@ class PcmAudioMixerTest {
         }
 
         @Override
-        public void apply(PlaybackState state) {
+        public void apply(long revision, PlaybackState state) {
             work.set(true);
         }
 
@@ -1953,7 +2035,7 @@ class PcmAudioMixerTest {
         }
 
         @Override
-        public void apply(PlaybackState state) {
+        public void apply(long revision, PlaybackState state) {
             applied.set(true);
             if (applyCalls.incrementAndGet() == 2) {
                 secondApply.countDown();

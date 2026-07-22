@@ -30,6 +30,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     private volatile AudioOutput liveOutput;
     private Thread audioThread;
     private MusicLibrary pendingLibrary;
+    private long pendingRevision = -1L;
     private PlaybackState pendingState;
     private boolean libraryPending;
     private boolean statePending;
@@ -64,9 +65,14 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         audioThread.start();
     }
 
-    public void apply(PlaybackState state) {
+    public void apply(long revision, PlaybackState state) {
+        if (revision < 0L) {
+            throw new IllegalArgumentException("Revision must not be negative");
+        }
+        PlaybackState checkedState = Objects.requireNonNull(state, "state");
         synchronized (signal) {
-            pendingState = Objects.requireNonNull(state, "state");
+            pendingRevision = revision;
+            pendingState = checkedState;
             statePending = true;
             signal.notifyAll();
         }
@@ -133,7 +139,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                 }
                 if (update.playbackState() != null) {
                     try {
-                        engine.apply(update.playbackState());
+                        engine.apply(update.revision(), update.playbackState());
                     } finally {
                         reportEngineFailures(engine);
                     }
@@ -422,12 +428,14 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     private PendingUpdate drainPendingUpdate() {
         synchronized (signal) {
             MusicLibrary library = libraryPending ? pendingLibrary : null;
+            long revision = statePending ? pendingRevision : -1L;
             PlaybackState state = statePending ? pendingState : null;
             pendingLibrary = null;
+            pendingRevision = -1L;
             pendingState = null;
             libraryPending = false;
             statePending = false;
-            return new PendingUpdate(library, state);
+            return new PendingUpdate(library, revision, state);
         }
     }
 
@@ -462,7 +470,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     interface AudioEngine extends AutoCloseable {
         void setMusicLibrary(MusicLibrary musicLibrary);
 
-        void apply(PlaybackState state);
+        void apply(long revision, PlaybackState state);
 
         byte[] renderFrames(int frameCount, float masterGain);
 
@@ -491,7 +499,11 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         void close();
     }
 
-    private record PendingUpdate(MusicLibrary musicLibrary, PlaybackState playbackState) {
+    private record PendingUpdate(
+            MusicLibrary musicLibrary,
+            long revision,
+            PlaybackState playbackState
+    ) {
     }
 
     private record PcmBlock(long startBytes, byte[] pcm) {
@@ -594,8 +606,8 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         }
 
         @Override
-        public void apply(PlaybackState state) {
-            delegate.apply(state);
+        public void apply(long revision, PlaybackState state) {
+            delegate.apply(revision, state);
         }
 
         @Override

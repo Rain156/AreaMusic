@@ -25,7 +25,9 @@ public final class ClientPlaybackSession implements AutoCloseable {
         }
         mixer = Objects.requireNonNull(mixerFactory.create(musicLibrary), "mixer");
         mixer.start();
-        mixer.apply(desiredState);
+        if (latestRevision >= 0L) {
+            mixer.apply(latestRevision, desiredState);
+        }
     }
 
     public boolean beginReload(long revision) {
@@ -43,10 +45,11 @@ public final class ClientPlaybackSession implements AutoCloseable {
         if (revision < latestRevision) {
             return;
         }
+        PlaybackState checkedState = Objects.requireNonNull(state, "state");
         latestRevision = revision;
-        desiredState = Objects.requireNonNull(state, "state");
+        desiredState = checkedState;
         if (mixer != null && !reloadPending) {
-            mixer.apply(state);
+            mixer.apply(revision, checkedState);
         }
     }
 
@@ -55,14 +58,16 @@ public final class ClientPlaybackSession implements AutoCloseable {
         reloadPending = false;
         if (mixer != null) {
             mixer.updateMusicLibrary(library);
-            mixer.apply(desiredState);
+            if (latestRevision >= 0L) {
+                mixer.apply(latestRevision, desiredState);
+            }
         }
     }
 
     public void failReload() {
         reloadPending = false;
-        if (mixer != null) {
-            mixer.apply(desiredState);
+        if (mixer != null && latestRevision >= 0L) {
+            mixer.apply(latestRevision, desiredState);
         }
     }
 
