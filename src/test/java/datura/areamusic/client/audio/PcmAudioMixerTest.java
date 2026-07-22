@@ -31,6 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PcmAudioMixerTest {
     private static final int BLOCK_FRAMES = 1024;
+    private static final int BLOCK_BYTES =
+            BLOCK_FRAMES * AudioStreamFactory.MIX_FORMAT.getFrameSize();
 
     @TempDir
     Path tempDir;
@@ -504,6 +506,65 @@ class PcmAudioMixerTest {
             assertTrue(output.closed.await(1, TimeUnit.SECONDS));
             Thread.sleep(50L);
             assertEquals(1, failures.size());
+            assertEquals(1, engine.renderCalls.get());
+            assertEquals(0, output.writeCalls.get());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void zeroLengthRenderedBlockReportsOneThreadFailureAndStopsWorker() throws Exception {
+        assertWrongSizedRenderedBlockStopsWorker(0);
+    }
+
+    @Test
+    void alignedShortRenderedBlockReportsOneThreadFailureAndStopsWorker() throws Exception {
+        assertWrongSizedRenderedBlockStopsWorker(AudioStreamFactory.MIX_FORMAT.getFrameSize());
+    }
+
+    @Test
+    void oversizedRenderedBlockReportsOneThreadFailureAndStopsWorker() throws Exception {
+        assertWrongSizedRenderedBlockStopsWorker(BLOCK_BYTES * 2);
+    }
+
+    private void assertWrongSizedRenderedBlockStopsWorker(int actualBytes) throws Exception {
+        WrongSizedRenderEngine engine = new WrongSizedRenderEngine(actualBytes);
+        ThreadFailureOutput output = new ThreadFailureOutput();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        CountDownLatch reported = new CountDownLatch(1);
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> output,
+                library -> engine,
+                failure -> {
+                    failures.add(failure);
+                    reported.countDown();
+                }
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+
+            assertTrue(reported.await(1, TimeUnit.SECONDS));
+            assertTrue(engine.closed.await(1, TimeUnit.SECONDS));
+            assertTrue(output.closed.await(1, TimeUnit.SECONDS));
+            Thread.sleep(50L);
+            assertEquals(1, failures.size());
+            assertEquals(1L, failures.stream()
+                    .filter(failure -> failure.kind() == AudioFailure.Kind.THREAD)
+                    .count());
+            assertEquals(0L, failures.stream()
+                    .filter(failure -> failure.kind() == AudioFailure.Kind.DEVICE)
+                    .count());
+            assertEquals(0L, failures.stream()
+                    .filter(failure -> failure.kind() == AudioFailure.Kind.DECODE)
+                    .count());
+            assertTrue(failures.get(0).cause().getMessage()
+                    .contains("expected=" + BLOCK_BYTES));
+            assertTrue(failures.get(0).cause().getMessage()
+                    .contains("actual=" + actualBytes));
             assertEquals(1, engine.renderCalls.get());
             assertEquals(0, output.writeCalls.get());
         } finally {
@@ -1628,6 +1689,48 @@ class PcmAudioMixerTest {
             renderCalls.incrementAndGet();
             work.set(false);
             return new byte[AudioStreamFactory.MIX_FORMAT.getFrameSize() + 1];
+        }
+
+        @Override
+        public List<AudioFailure> drainFailures() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return work.get();
+        }
+
+        @Override
+        public void close() {
+            closed.countDown();
+        }
+    }
+
+    private static final class WrongSizedRenderEngine implements PcmAudioMixer.AudioEngine {
+        private final int renderedBytes;
+        private final AtomicBoolean work = new AtomicBoolean();
+        private final AtomicInteger renderCalls = new AtomicInteger();
+        private final CountDownLatch closed = new CountDownLatch(1);
+
+        private WrongSizedRenderEngine(int renderedBytes) {
+            this.renderedBytes = renderedBytes;
+        }
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+        }
+
+        @Override
+        public void apply(PlaybackState state) {
+            work.set(true);
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            renderCalls.incrementAndGet();
+            work.set(false);
+            return new byte[renderedBytes];
         }
 
         @Override

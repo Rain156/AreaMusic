@@ -13,6 +13,7 @@ import java.util.Objects;
 public final class PcmAudioMixer implements ClientAudioMixer {
     private static final int BLOCK_FRAMES = 1024;
     private static final int FRAME_SIZE = AudioStreamFactory.MIX_FORMAT.getFrameSize();
+    private static final int BLOCK_BYTES = Math.multiplyExact(BLOCK_FRAMES, FRAME_SIZE);
     private static final int MAX_QUEUED_BLOCKS = 8;
     private static final long INITIAL_DEVICE_RETRY_MS = 250L;
     private static final long MAX_DEVICE_RETRY_MS = 5000L;
@@ -463,6 +464,12 @@ public final class PcmAudioMixer implements ClientAudioMixer {
 
         private void append(byte[] pcm) {
             Objects.requireNonNull(pcm, "pcm");
+            if (pcm.length != BLOCK_BYTES) {
+                throw new IllegalStateException(
+                        "Rendered PCM byte count mismatch: expected=" + BLOCK_BYTES
+                                + ", actual=" + pcm.length
+                );
+            }
             if (!hasCapacity()) {
                 throw new IllegalStateException("PCM confirmation queue is full");
             }
