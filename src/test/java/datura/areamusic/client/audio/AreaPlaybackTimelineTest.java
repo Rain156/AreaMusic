@@ -64,6 +64,48 @@ class AreaPlaybackTimelineTest {
     }
 
     @Test
+    void restoresFailedTracksWithoutMakingThemPending() {
+        List<AreaTrackDefinition> definitions = List.of(
+                track("failed-before-start", 10),
+                track("failed-after-start", 0),
+                track("pending", 12)
+        );
+        AreaPlaybackTimeline timeline = AreaPlaybackTimeline.fresh(definitions, TEN_HZ);
+
+        timeline.advancePending(30);
+        timeline.markFailed(0);
+        timeline.markStarted(1);
+        timeline.recordFramesRead(1, 37);
+        timeline.markFailed(1);
+
+        AreaPlaybackTimeline restored = AreaPlaybackTimeline.restore(
+                timeline.snapshot(),
+                definitions,
+                TEN_HZ
+        );
+
+        assertEquals(70L, restored.remainingDelayFrames(0));
+        assertEquals(0L, restored.positionInLoopFrames(0));
+        assertFalse(restored.started(0));
+        assertFalse(restored.completed(0));
+        assertTrue(restored.failed(0));
+
+        assertEquals(0L, restored.remainingDelayFrames(1));
+        assertEquals(37L, restored.positionInLoopFrames(1));
+        assertTrue(restored.started(1));
+        assertFalse(restored.completed(1));
+        assertTrue(restored.failed(1));
+
+        assertEquals(List.of(), restored.dueTrackIndices());
+        assertEquals(90L, restored.framesUntilNextStart());
+
+        restored.advancePending(90);
+        assertEquals(List.of(2), restored.dueTrackIndices());
+        assertEquals(70L, restored.remainingDelayFrames(0));
+        assertEquals(37L, restored.positionInLoopFrames(1));
+    }
+
+    @Test
     void keepsTrackLifecycleStateIndependent() {
         AreaPlaybackTimeline timeline = AreaPlaybackTimeline.fresh(
                 List.of(track("first", 0), track("second", 0)),
@@ -151,6 +193,25 @@ class AreaPlaybackTimelineTest {
         source.clear();
 
         assertEquals(List.of(0), timeline.dueTrackIndices());
+    }
+
+    @Test
+    void acceptsSixteenTracksAndKeepsDueIndicesStable() {
+        List<AreaTrackDefinition> definitions = IntStream.range(0, 16)
+                .mapToObj(index -> track("track-" + index, 0))
+                .toList();
+        List<Integer> allIndices = IntStream.range(0, 16).boxed().toList();
+        AreaPlaybackTimeline timeline = AreaPlaybackTimeline.fresh(definitions, TEN_HZ);
+
+        assertEquals(allIndices, timeline.dueTrackIndices());
+        assertEquals(allIndices, timeline.dueTrackIndices());
+
+        timeline.markStarted(0);
+        timeline.markFailed(15);
+
+        assertEquals(IntStream.range(1, 15).boxed().toList(), timeline.dueTrackIndices());
+        assertTrue(timeline.started(0));
+        assertTrue(timeline.failed(15));
     }
 
     @Test
