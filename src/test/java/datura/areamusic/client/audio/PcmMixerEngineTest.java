@@ -116,6 +116,71 @@ class PcmMixerEngineTest {
     }
 
     @Test
+    void zeroVolumeLoopKeepsReadingAndContinuesFromItsAdvancedFrame() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("ramp.wav"), new short[]{1000, 2000, 3000});
+        AtomicInteger openCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                openCount.incrementAndGet();
+                return super.open(path);
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "quiet",
+                    false,
+                    track("ramp.wav", 0, 0.0f, true, 0, 20)
+            ));
+
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertTrue(engine.hasWork());
+
+            engine.apply(state(
+                    "audible",
+                    false,
+                    track("ramp.wav", 0, 1.0f, true, 0, 20)
+            ));
+
+            assertEquals(2000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1, openCount.get());
+        }
+    }
+
+    @Test
+    void zeroVolumeLoopClosesOnlyAfterItsOutgoingFadeCompletes() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("quiet.wav"), constantFrames(2000, (short) 1234));
+        AtomicInteger closeCount = new AtomicInteger();
+        AudioInputStream stream = new CloseCountingAudioInputStream(
+                pcmFrames(constantFrames(2000, (short) 1234)), closeCount
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new FixedAudioStreamFactory(stream), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "quiet",
+                    false,
+                    track("quiet.wav", 0, 0.0f, true, 0, 20)
+            ));
+            engine.renderFrames(1, 1.0f);
+
+            engine.apply(PlaybackState.stopped());
+
+            assertTrue(engine.hasWork());
+            assertEquals(0, closeCount.get());
+
+            engine.renderFrames(882, 1.0f);
+
+            assertFalse(engine.hasWork());
+            assertEquals(1, closeCount.get());
+        }
+    }
+
+    @Test
     void opensSimultaneouslyDueDuplicateIdsInStableJsonOrder() throws Exception {
         Path root = tempDir.resolve("music");
         writeWav(root.resolve("same.wav"), new short[]{1000});
@@ -406,6 +471,112 @@ class PcmMixerEngineTest {
     }
 
     @Test
+    void decodeFailureAfterReadablePrefixStillMixesTheCompletePrefixFrames() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{100, 200});
+        writeWav(root.resolve("good.wav"), new short[]{1000, 1000, 1000});
+        AtomicInteger badCloseCount = new AtomicInteger();
+        AudioInputStream badStream = new ThrowingReadAudioInputStream(
+                pcmFrames((short) 100, (short) 200), 1, badCloseCount
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                streamFactoryWithBadStream(badStream), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("bad.wav", 0, false, 0, 0),
+                    track("good.wav", 0, true, 0, 0)
+            ));
+
+            byte[] rendered = engine.renderFrames(3, 1.0f);
+
+            assertEquals(1100, leftSample(rendered, 0));
+            assertEquals(1200, leftSample(rendered, 1));
+            assertEquals(1000, leftSample(rendered, 2));
+            assertSingleDecodeFailure(engine, "bad.wav");
+            assertEquals(1, badCloseCount.get());
+
+            engine.renderFrames(1, 1.0f);
+            assertTrue(engine.drainFailures().isEmpty());
+        }
+    }
+
+    @Test
+    void loopReopenFailureAfterReadablePrefixStillMixesThePrefixFrames() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{100, 200});
+        writeWav(root.resolve("good.wav"), new short[]{1000, 1000, 1000});
+        AtomicInteger badOpenCount = new AtomicInteger();
+        AtomicInteger badCloseCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (!path.getFileName().toString().equals("bad.wav")) {
+                    return super.open(path);
+                }
+                if (badOpenCount.getAndIncrement() > 0) {
+                    throw new IOException("reopen failed after prefix");
+                }
+                return new CloseCountingAudioInputStream(
+                        pcmFrames((short) 100, (short) 200), badCloseCount
+                );
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("bad.wav", 0, true, 0, 0),
+                    track("good.wav", 0, true, 0, 0)
+            ));
+
+            byte[] rendered = engine.renderFrames(3, 1.0f);
+
+            assertEquals(1100, leftSample(rendered, 0));
+            assertEquals(1200, leftSample(rendered, 1));
+            assertEquals(1000, leftSample(rendered, 2));
+            assertSingleDecodeFailure(engine, "bad.wav");
+            assertEquals(2, badOpenCount.get());
+            assertEquals(1, badCloseCount.get());
+        }
+    }
+
+    @Test
+    void partialPcmFrameIsRejectedWithoutMixingIllegalBytes() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{777});
+        writeWav(root.resolve("good.wav"), new short[]{1000});
+        AtomicInteger badCloseCount = new AtomicInteger();
+        AudioInputStream badStream = new PartialFrameAudioInputStream(
+                pcmFrames((short) 777), badCloseCount
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                streamFactoryWithBadStream(badStream), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("bad.wav", 0, false, 0, 0),
+                    track("good.wav", 0, true, 0, 0)
+            ));
+
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            List<AudioFailure> failures = engine.drainFailures();
+            assertEquals(1, failures.size());
+            PcmMixerEngine.AudioPlaybackException failure = assertInstanceOf(
+                    PcmMixerEngine.AudioPlaybackException.class, failures.get(0).cause()
+            );
+            assertInstanceOf(IOException.class, failure.getCause());
+            assertTrue(failure.getCause().getMessage().contains("partial PCM frame"));
+            assertTrue(engine.drainFailures().isEmpty());
+            assertEquals(1, badCloseCount.get());
+        }
+    }
+
+    @Test
     void loopReopenFailureTerminatesOnlyThatTrackWithoutDoubleClose() throws Exception {
         Path root = tempDir.resolve("music");
         writeWav(root.resolve("bad.wav"), new short[]{1111});
@@ -617,6 +788,43 @@ class PcmMixerEngineTest {
         engine.renderFrames(1024, 1.0f);
 
         assertEquals(5000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        engine.close();
+    }
+
+    @Test
+    void rapidTransitionExpeditesTheQuietestEffectiveVolumeSession() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("audible.wav"), constantFrames(4096, (short) 10_000));
+        for (int index = 1; index < 5; index++) {
+            writeWav(root.resolve("silent" + index + ".wav"), constantFrames(4096, (short) 0));
+        }
+        PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root)
+        );
+
+        engine.apply(state(
+                "area0", false, track("audible.wav", 0, 1.0f, true, 0, 60_000)
+        ));
+        engine.renderFrames(1, 1.0f);
+        engine.apply(state(
+                "area1", false, track("silent1.wav", 0, 0.0f, true, 0, 60_000)
+        ));
+        engine.renderFrames(1, 1.0f);
+        for (int index = 2; index < 4; index++) {
+            engine.apply(state(
+                    "area" + index,
+                    false,
+                    track("silent" + index + ".wav", 0, 1.0f, true, 0, 60_000)
+            ));
+            engine.renderFrames(1, 1.0f);
+        }
+
+        engine.apply(state(
+                "area4", false, track("silent4.wav", 0, 1.0f, true, 0, 60_000)
+        ));
+        engine.renderFrames(882, 1.0f);
+
+        assertTrue(firstLeftSample(engine.renderFrames(1, 1.0f)) > 9_000);
         engine.close();
     }
 
@@ -914,6 +1122,37 @@ class PcmMixerEngineTest {
                     pcm.length / AudioStreamFactory.MIX_FORMAT.getFrameSize()
             );
             this.closeCount = closeCount;
+        }
+
+        @Override
+        public void close() throws IOException {
+            closeCount.incrementAndGet();
+            super.close();
+        }
+    }
+
+    private static final class PartialFrameAudioInputStream extends AudioInputStream {
+        private final AtomicInteger closeCount;
+        private boolean partialReturned;
+
+        private PartialFrameAudioInputStream(byte[] pcm, AtomicInteger closeCount) {
+            super(
+                    new ByteArrayInputStream(pcm),
+                    AudioStreamFactory.MIX_FORMAT,
+                    pcm.length / AudioStreamFactory.MIX_FORMAT.getFrameSize()
+            );
+            this.closeCount = closeCount;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) {
+            if (partialReturned) {
+                return -1;
+            }
+            partialReturned = true;
+            buffer[offset] = 0x12;
+            buffer[offset + 1] = 0x34;
+            return 2;
         }
 
         @Override

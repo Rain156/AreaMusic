@@ -109,6 +109,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         AudioOutput output = null;
         boolean outputStarted = false;
         byte[] pendingWrite = null;
+        int pendingWriteOffset = 0;
         long deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
         try (PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), initialLibrary)) {
             while (running) {
@@ -155,12 +156,6 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     continue;
                 }
 
-                if (output == null && !engine.currentState().playing()) {
-                    pendingWrite = null;
-                    engine.close();
-                    continue;
-                }
-
                 if (output == null) {
                     try {
                         output = outputFactory.open();
@@ -190,6 +185,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                 if (pendingWrite == null) {
                     try {
                         pendingWrite = engine.renderFrames(BLOCK_FRAMES, masterGain);
+                        pendingWriteOffset = 0;
                     } catch (Exception exception) {
                         report(AudioFailure.Kind.DECODE, "", exception);
                         continue;
@@ -199,8 +195,23 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                 }
 
                 try {
-                    output.write(pendingWrite);
-                    pendingWrite = null;
+                    int remaining = pendingWrite.length - pendingWriteOffset;
+                    int written = output.write(pendingWrite, pendingWriteOffset, remaining);
+                    if (written < 0 || written > remaining) {
+                        throw new IllegalStateException(
+                                "Audio output returned invalid byte count " + written
+                                        + " for remaining length " + remaining
+                        );
+                    }
+                    if (written == 0) {
+                        waitForSignal(10L);
+                        continue;
+                    }
+                    pendingWriteOffset += written;
+                    if (pendingWriteOffset == pendingWrite.length) {
+                        pendingWrite = null;
+                        pendingWriteOffset = 0;
+                    }
                     deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
                 } catch (InterruptedException exception) {
                     if (running) {
@@ -303,7 +314,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
 
         void stop();
 
-        void write(byte[] pcm) throws InterruptedException;
+        int write(byte[] pcm, int offset, int length) throws InterruptedException;
 
         void drain();
 
@@ -342,15 +353,8 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         }
 
         @Override
-        public void write(byte[] pcm) {
-            int offset = 0;
-            while (offset < pcm.length && line.isOpen()) {
-                int written = line.write(pcm, offset, pcm.length - offset);
-                if (written <= 0) {
-                    break;
-                }
-                offset += written;
-            }
+        public int write(byte[] pcm, int offset, int length) {
+            return line.write(pcm, offset, length);
         }
 
         @Override
