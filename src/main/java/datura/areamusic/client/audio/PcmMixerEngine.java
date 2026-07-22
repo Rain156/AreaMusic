@@ -67,6 +67,7 @@ public final class PcmMixerEngine implements AutoCloseable {
     }
 
     public void setMusicLibrary(MusicLibrary musicLibrary) {
+        ensureOpen();
         this.musicLibrary = Objects.requireNonNull(musicLibrary, "musicLibrary");
         resumeSnapshots.clear();
         for (AreaSession session : outgoingSessions) {
@@ -85,6 +86,7 @@ public final class PcmMixerEngine implements AutoCloseable {
     }
 
     public void apply(long revision, PlaybackState state) {
+        ensureOpen();
         Objects.requireNonNull(state, "state");
         if (revision < 0L) {
             throw new IllegalArgumentException("Revision must not be negative");
@@ -122,6 +124,7 @@ public final class PcmMixerEngine implements AutoCloseable {
     }
 
     public byte[] renderFrames(int frameCount, float masterGain) {
+        ensureOpen();
         if (frameCount < 0) {
             throw new IllegalArgumentException("Frame count must not be negative");
         }
@@ -215,6 +218,12 @@ public final class PcmMixerEngine implements AutoCloseable {
         lastRevision = -1L;
         if (ownsStreamPreparer) {
             streamPreparer.close();
+        }
+    }
+
+    private void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("PCM mixer engine is closed");
         }
     }
 

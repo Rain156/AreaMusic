@@ -70,6 +70,117 @@ class ClientPlaybackSessionTest {
     }
 
     @Test
+    void completedReloadReappliesOnlyARevisionPairedWithItsPlaybackState() {
+        MusicLibrary oldLibrary = MusicLibrary.empty(tempDir.resolve("old"));
+        MusicLibrary newLibrary = MusicLibrary.empty(tempDir.resolve("new"));
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(oldLibrary, ignored -> mixer);
+        PlaybackState oldState = playing("old", "old.mp3", 1.0f, true, 0, 0);
+        PlaybackState newState = playing("new", "new.mp3", 1.0f, true, 0, 0);
+        session.connect();
+        session.apply(5L, oldState);
+        mixer.appliedStates.clear();
+        mixer.events.clear();
+
+        assertTrue(session.beginReload(6L));
+        session.finishReload(newLibrary);
+
+        assertTrue(mixer.libraryUpdated);
+        assertEquals(List.of(new AppliedState(5L, oldState)), mixer.appliedStates);
+        assertEquals(List.of("library", "apply:5"), mixer.events);
+
+        session.apply(6L, newState);
+
+        assertEquals(List.of(
+                new AppliedState(5L, oldState),
+                new AppliedState(6L, newState)
+        ), mixer.appliedStates);
+        session.close();
+    }
+
+    @Test
+    void failedReloadReappliesOnlyARevisionPairedWithItsPlaybackState() {
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(
+                MusicLibrary.empty(tempDir.resolve("music")), ignored -> mixer
+        );
+        PlaybackState oldState = playing("old", "old.mp3", 1.0f, true, 0, 0);
+        PlaybackState newState = playing("new", "new.mp3", 1.0f, true, 0, 0);
+        session.connect();
+        session.apply(5L, oldState);
+        mixer.appliedStates.clear();
+        mixer.events.clear();
+
+        assertTrue(session.beginReload(6L));
+        session.failReload();
+
+        assertFalse(mixer.libraryUpdated);
+        assertEquals(List.of(new AppliedState(5L, oldState)), mixer.appliedStates);
+        assertEquals(List.of("apply:5"), mixer.events);
+
+        session.apply(6L, newState);
+
+        assertEquals(List.of(
+                new AppliedState(5L, oldState),
+                new AppliedState(6L, newState)
+        ), mixer.appliedStates);
+        session.close();
+    }
+
+    @Test
+    void connectDuringReloadAppliesOnlyTheLatestCompletePlaybackUpdate() {
+        MusicLibrary newLibrary = MusicLibrary.empty(tempDir.resolve("new"));
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(
+                MusicLibrary.empty(tempDir.resolve("old")), ignored -> mixer
+        );
+        PlaybackState oldState = playing("old", "old.mp3", 1.0f, true, 0, 0);
+        PlaybackState newState = playing("new", "new.mp3", 1.0f, true, 0, 0);
+
+        session.apply(5L, oldState);
+        assertTrue(session.beginReload(6L));
+        session.connect();
+
+        assertEquals(List.of(new AppliedState(5L, oldState)), mixer.appliedStates);
+
+        session.apply(6L, newState);
+
+        assertEquals(List.of(new AppliedState(5L, oldState)), mixer.appliedStates);
+
+        session.finishReload(newLibrary);
+
+        assertEquals(List.of(
+                new AppliedState(5L, oldState),
+                new AppliedState(6L, newState)
+        ), mixer.appliedStates);
+        assertEquals(List.of("apply:5", "library", "apply:6"), mixer.events);
+        session.close();
+    }
+
+    @Test
+    void connectDuringReloadDefersThePendingRevisionUntilTheLibraryUpdate() {
+        MusicLibrary newLibrary = MusicLibrary.empty(tempDir.resolve("new"));
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(
+                MusicLibrary.empty(tempDir.resolve("old")), ignored -> mixer
+        );
+        PlaybackState newState = playing("new", "new.mp3", 1.0f, true, 0, 0);
+
+        assertTrue(session.beginReload(6L));
+        session.apply(6L, newState);
+        session.connect();
+
+        assertTrue(mixer.appliedStates.isEmpty());
+        assertTrue(mixer.events.isEmpty());
+
+        session.finishReload(newLibrary);
+
+        assertEquals(List.of(new AppliedState(6L, newState)), mixer.appliedStates);
+        assertEquals(List.of("library", "apply:6"), mixer.events);
+        session.close();
+    }
+
+    @Test
     void failedReloadKeepsTheCurrentLibraryForTheNextConnection() {
         MusicLibrary currentLibrary = MusicLibrary.empty(tempDir.resolve("current"));
         List<MusicLibrary> connectedLibraries = new ArrayList<>();

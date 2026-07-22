@@ -8,6 +8,7 @@ import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -21,10 +22,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -136,10 +140,13 @@ class AudioStreamPreparerTest {
     }
 
     @Test
-    void zeroSkipFallsBackToAlignedReadAndDiscard() throws Exception {
+    void preparationUsesChunkedReadDiscardWithoutCallingDecoderSkip() throws Exception {
         AtomicInteger closeCount = new AtomicInteger();
-        AudioInputStream source = new ZeroSkipAudioInputStream(
-                pcmFrames((short) 100, (short) 200, (short) 300), closeCount
+        AtomicInteger skipCalls = new AtomicInteger();
+        AudioInputStream source = new RejectingSkipAudioInputStream(
+                pcmFrames((short) 100, (short) 200, (short) 300),
+                closeCount,
+                skipCalls
         );
         AudioStreamFactory factory = fixedFactory(source);
 
@@ -150,6 +157,7 @@ class AudioStreamPreparerTest {
             byte[] frame = prepared.readNBytes(AudioStreamFactory.MIX_FORMAT.getFrameSize());
             assertEquals(300, PcmMath.readLittleEndian(frame, 0));
             assertEquals(AudioStreamFactory.MIX_FORMAT.getFrameSize(), frame.length);
+            assertEquals(0, skipCalls.get());
         }
         assertEquals(1, closeCount.get());
     }
@@ -157,7 +165,7 @@ class AudioStreamPreparerTest {
     @Test
     void endOfStreamBeforeOffsetFailsAndClosesTheOpenedStream() throws Exception {
         AtomicInteger closeCount = new AtomicInteger();
-        AudioInputStream source = new ZeroSkipAudioInputStream(
+        AudioInputStream source = new CountingAudioInputStream(
                 pcmFrames((short) 100), closeCount
         );
 
@@ -168,7 +176,7 @@ class AudioStreamPreparerTest {
 
             assertInstanceOf(IOException.class, failure.getCause());
             assertTrue(failure.getCause().getMessage().contains("offset"));
-            assertEquals(1, closeCount.get());
+            assertClosedExactlyOnce(closeCount);
         }
     }
 
@@ -187,14 +195,14 @@ class AudioStreamPreparerTest {
             assertInstanceOf(IOException.class, failure.getCause());
             assertTrue(failure.getCause().getMessage().contains("zero bytes"));
             assertTrue(readCalls.get() <= 65, "persistent zero reads must be bounded");
-            assertEquals(1, closeCount.get());
+            assertClosedExactlyOnce(closeCount);
         }
     }
 
     @Test
-    void skipFailureCompletesExceptionallyAndClosesTheOpenedStream() throws Exception {
+    void readFailureCompletesExceptionallyAndClosesTheOpenedStream() throws Exception {
         AtomicInteger closeCount = new AtomicInteger();
-        AudioInputStream source = new FailingSkipAudioInputStream(closeCount);
+        AudioInputStream source = new FailingReadAudioInputStream(closeCount);
 
         try (AudioStreamPreparer preparer = new AudioStreamPreparer(fixedFactory(source), 1)) {
             ExecutionException failure = assertThrows(ExecutionException.class, () -> preparer
@@ -202,7 +210,23 @@ class AudioStreamPreparerTest {
                     .get(1, TimeUnit.SECONDS));
 
             assertInstanceOf(IOException.class, failure.getCause());
-            assertEquals(1, closeCount.get());
+            assertClosedExactlyOnce(closeCount);
+        }
+    }
+
+    @Test
+    void partialPcmFrameDuringDiscardFailsAndClosesTheOpenedStream() throws Exception {
+        AtomicInteger closeCount = new AtomicInteger();
+        AudioInputStream source = new PartialFrameReadAudioInputStream(closeCount);
+
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(fixedFactory(source), 1)) {
+            ExecutionException failure = assertThrows(ExecutionException.class, () -> preparer
+                    .prepare(Path.of("partial.wav"), 1)
+                    .get(1, TimeUnit.SECONDS));
+
+            assertInstanceOf(IOException.class, failure.getCause());
+            assertTrue(failure.getCause().getMessage().contains("frame size"));
+            assertClosedExactlyOnce(closeCount);
         }
     }
 
@@ -273,20 +297,20 @@ class AudioStreamPreparerTest {
     }
 
     @Test
-    void cancellationDuringSkipInterruptsAndClosesTheOpenedStream() throws Exception {
-        CountDownLatch skipEntered = new CountDownLatch(1);
-        CountDownLatch releaseSkip = new CountDownLatch(1);
+    void cancellationDuringReadInterruptsAndClosesTheOpenedStream() throws Exception {
+        CountDownLatch readEntered = new CountDownLatch(1);
+        CountDownLatch releaseRead = new CountDownLatch(1);
         CountDownLatch streamClosed = new CountDownLatch(1);
         AtomicInteger closeCount = new AtomicInteger();
-        AudioInputStream source = new BlockingSkipAudioInputStream(
-                skipEntered, releaseSkip, closeCount, streamClosed
+        AudioInputStream source = new BlockingReadAudioInputStream(
+                readEntered, releaseRead, closeCount, streamClosed
         );
 
         try (AudioStreamPreparer preparer = new AudioStreamPreparer(fixedFactory(source), 1)) {
             CompletableFuture<AudioInputStream> prepared = preparer.prepare(
-                    Path.of("cancel-skip.wav"), 1
+                    Path.of("cancel-read.wav"), 1
             );
-            assertTrue(skipEntered.await(1, TimeUnit.SECONDS));
+            assertTrue(readEntered.await(1, TimeUnit.SECONDS));
 
             assertTrue(prepared.cancel(true));
 
@@ -294,33 +318,33 @@ class AudioStreamPreparerTest {
             assertTrue(prepared.isCancelled());
             assertEquals(1, closeCount.get());
         } finally {
-            releaseSkip.countDown();
+            releaseRead.countDown();
         }
     }
 
     @Test
-    void cancellationWithoutInterruptStillClosesAStreamBlockedInSkip() throws Exception {
-        CountDownLatch skipEntered = new CountDownLatch(1);
-        CountDownLatch releaseSkip = new CountDownLatch(1);
+    void cancellationWithoutInterruptStillClosesAStreamBlockedInRead() throws Exception {
+        CountDownLatch readEntered = new CountDownLatch(1);
+        CountDownLatch releaseRead = new CountDownLatch(1);
         CountDownLatch streamClosed = new CountDownLatch(1);
         AtomicInteger closeCount = new AtomicInteger();
-        AudioInputStream source = new BlockingSkipAudioInputStream(
-                skipEntered, releaseSkip, closeCount, streamClosed
+        AudioInputStream source = new BlockingReadAudioInputStream(
+                readEntered, releaseRead, closeCount, streamClosed
         );
 
         try (AudioStreamPreparer preparer = new AudioStreamPreparer(fixedFactory(source), 1)) {
             CompletableFuture<AudioInputStream> prepared = preparer.prepare(
                     Path.of("cancel-without-interrupt.wav"), 1
             );
-            assertTrue(skipEntered.await(1, TimeUnit.SECONDS));
+            assertTrue(readEntered.await(1, TimeUnit.SECONDS));
 
             assertTrue(prepared.cancel(false));
 
             assertTrue(streamClosed.await(1, TimeUnit.SECONDS));
             assertEquals(1, closeCount.get());
-            releaseSkip.countDown();
+            releaseRead.countDown();
         } finally {
-            releaseSkip.countDown();
+            releaseRead.countDown();
         }
     }
 
@@ -346,14 +370,14 @@ class AudioStreamPreparerTest {
 
     @Test
     void closeCancelsPendingWorkStopsDaemonWorkerAndRejectsNewPrepare() throws Exception {
-        CountDownLatch skipEntered = new CountDownLatch(1);
-        CountDownLatch releaseSkip = new CountDownLatch(1);
+        CountDownLatch readEntered = new CountDownLatch(1);
+        CountDownLatch releaseRead = new CountDownLatch(1);
         CountDownLatch streamClosed = new CountDownLatch(1);
         AtomicInteger closeCount = new AtomicInteger();
         AtomicInteger openCount = new AtomicInteger();
         AtomicReference<Thread> worker = new AtomicReference<>();
-        AudioInputStream source = new BlockingSkipAudioInputStream(
-                skipEntered, releaseSkip, closeCount, streamClosed
+        AudioInputStream source = new BlockingReadAudioInputStream(
+                readEntered, releaseRead, closeCount, streamClosed
         );
         AudioStreamFactory factory = new AudioStreamFactory() {
             @Override
@@ -367,7 +391,7 @@ class AudioStreamPreparerTest {
         CompletableFuture<AudioInputStream> active = preparer.prepare(
                 Path.of("active.wav"), 1
         );
-        assertTrue(skipEntered.await(1, TimeUnit.SECONDS));
+        assertTrue(readEntered.await(1, TimeUnit.SECONDS));
         CompletableFuture<AudioInputStream> queued = preparer.prepare(
                 Path.of("queued.wav"), 0
         );
@@ -383,7 +407,7 @@ class AudioStreamPreparerTest {
         assertThrows(RejectedExecutionException.class,
                 () -> preparer.prepare(Path.of("late.wav"), 0));
         assertTrue(awaitCondition(() -> !worker.get().isAlive(), Duration.ofSeconds(2)));
-        releaseSkip.countDown();
+        releaseRead.countDown();
     }
 
     @Test
@@ -399,6 +423,85 @@ class AudioStreamPreparerTest {
             assertEquals(300, PcmMath.readLittleEndian(frame, 0));
             assertEquals(300, PcmMath.readLittleEndian(frame, 2));
         }
+    }
+
+    @Test
+    void realMp3OffsetCompletesWithinBoundAndMatchesBulkRead() throws Exception {
+        assertRealCodecOffset("test.mp3", 11_025L);
+    }
+
+    @Test
+    void realOggOffsetCompletesWithinBoundAndMatchesBulkRead() throws Exception {
+        assertRealCodecOffset("test.ogg", 11_025L);
+    }
+
+    private void assertRealCodecOffset(String fixtureName, long frameOffset) throws Exception {
+        Path source = tempDir.resolve(fixtureName);
+        try (InputStream fixture = getClass().getResourceAsStream(
+                "/datura/areamusic/audio/" + fixtureName
+        )) {
+            assertNotNull(fixture);
+            Files.copy(fixture, source);
+        }
+        byte[] expected = frameAtOffsetByBulkRead(source, frameOffset);
+
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(
+                new AudioStreamFactory(), 1
+        ); AudioInputStream prepared = preparer.prepare(
+                source, frameOffset
+        ).get(3, TimeUnit.SECONDS)) {
+            assertArrayEquals(expected, readExactFrame(prepared));
+        }
+    }
+
+    private static byte[] frameAtOffsetByBulkRead(Path path, long frameOffset) throws Exception {
+        try (AudioInputStream stream = new AudioStreamFactory().open(path)) {
+            long remaining = Math.multiplyExact(
+                    frameOffset,
+                    (long) AudioStreamFactory.MIX_FORMAT.getFrameSize()
+            );
+            byte[] discard = new byte[8192];
+            int zeroReads = 0;
+            while (remaining > 0L) {
+                int requested = (int) Math.min(remaining, (long) discard.length);
+                int read = stream.read(discard, 0, requested);
+                if (read < 0) {
+                    throw new IOException("Fixture ended before requested frame offset");
+                }
+                if (read == 0) {
+                    if (++zeroReads > 64) {
+                        throw new IOException("Fixture decoder stalled during bulk read");
+                    }
+                    continue;
+                }
+                assertEquals(0, read % AudioStreamFactory.MIX_FORMAT.getFrameSize());
+                remaining -= read;
+                zeroReads = 0;
+            }
+            return readExactFrame(stream);
+        }
+    }
+
+    private static byte[] readExactFrame(AudioInputStream stream) throws IOException {
+        int frameSize = AudioStreamFactory.MIX_FORMAT.getFrameSize();
+        byte[] frame = new byte[frameSize];
+        int total = 0;
+        int zeroReads = 0;
+        while (total < frameSize) {
+            int read = stream.read(frame, total, frameSize - total);
+            if (read < 0) {
+                throw new IOException("Fixture ended before comparison frame");
+            }
+            if (read == 0) {
+                if (++zeroReads > 64) {
+                    throw new IOException("Fixture decoder stalled before comparison frame");
+                }
+                continue;
+            }
+            total += read;
+            zeroReads = 0;
+        }
+        return frame;
     }
 
     private static AudioStreamFactory fixedFactory(AudioInputStream source) {
@@ -467,9 +570,16 @@ class AudioStreamPreparerTest {
             if (condition.value()) {
                 return true;
             }
-            Thread.yield();
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1L));
         }
         return condition.value();
+    }
+
+    private static void assertClosedExactlyOnce(AtomicInteger closeCount) {
+        assertTrue(awaitCondition(
+                () -> closeCount.get() == 1, Duration.ofSeconds(2)
+        ));
+        assertEquals(1, closeCount.get());
     }
 
     @FunctionalInterface
@@ -517,14 +627,22 @@ class AudioStreamPreparerTest {
         }
     }
 
-    private static final class ZeroSkipAudioInputStream extends CountingAudioInputStream {
-        private ZeroSkipAudioInputStream(byte[] pcm, AtomicInteger closeCount) {
+    private static final class RejectingSkipAudioInputStream extends CountingAudioInputStream {
+        private final AtomicInteger skipCalls;
+
+        private RejectingSkipAudioInputStream(
+                byte[] pcm,
+                AtomicInteger closeCount,
+                AtomicInteger skipCalls
+        ) {
             super(pcm, closeCount);
+            this.skipCalls = skipCalls;
         }
 
         @Override
-        public long skip(long bytes) {
-            return 0L;
+        public long skip(long bytes) throws IOException {
+            skipCalls.incrementAndGet();
+            throw new IOException("decoder skip must not be used");
         }
     }
 
@@ -540,34 +658,42 @@ class AudioStreamPreparerTest {
         }
 
         @Override
-        public long skip(long bytes) {
-            return 0L;
-        }
-
-        @Override
         public int read(byte[] buffer, int offset, int length) {
             readCalls.incrementAndGet();
             return 0;
         }
     }
 
-    private static final class FailingSkipAudioInputStream extends CountingAudioInputStream {
-        private FailingSkipAudioInputStream(AtomicInteger closeCount) {
+    private static final class FailingReadAudioInputStream extends CountingAudioInputStream {
+        private FailingReadAudioInputStream(AtomicInteger closeCount) {
             super(pcmFrames((short) 100), closeCount);
         }
 
         @Override
-        public long skip(long bytes) throws IOException {
-            throw new IOException("skip failed");
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            throw new IOException("read failed");
         }
     }
 
-    private static final class BlockingSkipAudioInputStream extends CountingAudioInputStream {
+    private static final class PartialFrameReadAudioInputStream extends CountingAudioInputStream {
+        private PartialFrameReadAudioInputStream(AtomicInteger closeCount) {
+            super(pcmFrames((short) 100), closeCount);
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) {
+            buffer[offset] = 0x12;
+            buffer[offset + 1] = 0x34;
+            return 2;
+        }
+    }
+
+    private static final class BlockingReadAudioInputStream extends CountingAudioInputStream {
         private final CountDownLatch entered;
         private final CountDownLatch release;
         private final CountDownLatch closed;
 
-        private BlockingSkipAudioInputStream(
+        private BlockingReadAudioInputStream(
                 CountDownLatch entered,
                 CountDownLatch release,
                 AtomicInteger closeCount,
@@ -580,10 +706,10 @@ class AudioStreamPreparerTest {
         }
 
         @Override
-        public long skip(long bytes) throws IOException {
+        public int read(byte[] buffer, int offset, int length) throws IOException {
             entered.countDown();
             awaitOrThrow(release);
-            return super.skip(bytes);
+            return super.read(buffer, offset, length);
         }
 
         @Override

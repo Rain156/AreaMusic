@@ -9,9 +9,9 @@ import java.util.Objects;
 public final class ClientPlaybackSession implements AutoCloseable {
     private final MixerFactory mixerFactory;
     private MusicLibrary musicLibrary;
-    private PlaybackState desiredState = PlaybackState.stopped();
+    private PlaybackUpdate latestUpdate;
     private ClientAudioMixer mixer;
-    private long latestRevision = -1L;
+    private long highestSeenRevision = -1L;
     private boolean reloadPending;
 
     public ClientPlaybackSession(MusicLibrary initialLibrary, MixerFactory mixerFactory) {
@@ -25,29 +25,27 @@ public final class ClientPlaybackSession implements AutoCloseable {
         }
         mixer = Objects.requireNonNull(mixerFactory.create(musicLibrary), "mixer");
         mixer.start();
-        if (latestRevision >= 0L) {
-            mixer.apply(latestRevision, desiredState);
-        }
+        applyLatestUpdate();
     }
 
     public boolean beginReload(long revision) {
         validateRevision(revision);
-        if (revision < latestRevision) {
+        if (revision < highestSeenRevision) {
             return false;
         }
-        latestRevision = revision;
+        highestSeenRevision = revision;
         reloadPending = true;
         return true;
     }
 
     public void apply(long revision, PlaybackState state) {
         validateRevision(revision);
-        if (revision < latestRevision) {
+        if (revision < highestSeenRevision) {
             return;
         }
         PlaybackState checkedState = Objects.requireNonNull(state, "state");
-        latestRevision = revision;
-        desiredState = checkedState;
+        latestUpdate = new PlaybackUpdate(revision, checkedState);
+        highestSeenRevision = revision;
         if (mixer != null && !reloadPending) {
             mixer.apply(revision, checkedState);
         }
@@ -58,17 +56,13 @@ public final class ClientPlaybackSession implements AutoCloseable {
         reloadPending = false;
         if (mixer != null) {
             mixer.updateMusicLibrary(library);
-            if (latestRevision >= 0L) {
-                mixer.apply(latestRevision, desiredState);
-            }
+            applyLatestUpdate();
         }
     }
 
     public void failReload() {
         reloadPending = false;
-        if (mixer != null && latestRevision >= 0L) {
-            mixer.apply(latestRevision, desiredState);
-        }
+        applyLatestUpdate();
     }
 
     public void setMasterGain(float gain) {
@@ -84,8 +78,8 @@ public final class ClientPlaybackSession implements AutoCloseable {
     }
 
     public void disconnect() {
-        desiredState = PlaybackState.stopped();
-        latestRevision = -1L;
+        latestUpdate = null;
+        highestSeenRevision = -1L;
         reloadPending = false;
         if (mixer != null) {
             mixer.close();
@@ -103,9 +97,21 @@ public final class ClientPlaybackSession implements AutoCloseable {
         ClientAudioMixer create(MusicLibrary musicLibrary);
     }
 
+    private void applyLatestUpdate() {
+        PlaybackUpdate update = latestUpdate;
+        if (mixer != null
+                && update != null
+                && (!reloadPending || update.revision() < highestSeenRevision)) {
+            mixer.apply(update.revision(), update.state());
+        }
+    }
+
     private static void validateRevision(long revision) {
         if (revision < 0L) {
             throw new IllegalArgumentException("Revision must not be negative");
         }
+    }
+
+    private record PlaybackUpdate(long revision, PlaybackState state) {
     }
 }

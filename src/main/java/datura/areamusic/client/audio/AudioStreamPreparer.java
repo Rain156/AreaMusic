@@ -98,7 +98,7 @@ public final class AudioStreamPreparer implements AutoCloseable {
             if (!preparation.registerOpenedStream(stream)) {
                 return;
             }
-            skipExactly(stream, preparation.offsetBytes, preparation.future);
+            discardExactly(stream, preparation.offsetBytes, preparation.future);
             if (preparation.future.complete(stream)) {
                 preparation.transferOwnership(stream);
             }
@@ -111,7 +111,7 @@ public final class AudioStreamPreparer implements AutoCloseable {
         }
     }
 
-    private static void skipExactly(
+    private static void discardExactly(
             AudioInputStream stream,
             long offsetBytes,
             CompletableFuture<AudioInputStream> future
@@ -122,17 +122,6 @@ public final class AudioStreamPreparer implements AutoCloseable {
         while (remaining > 0L) {
             if (future.isCancelled() || Thread.currentThread().isInterrupted()) {
                 throw new IOException("Interrupted while preparing audio stream offset");
-            }
-
-            long skipped = stream.skip(remaining);
-            if (skipped < 0L || skipped > remaining) {
-                throw new IOException("Decoder returned invalid skip count " + skipped);
-            }
-            if (skipped > 0L) {
-                requireFrameAligned(skipped, "skip");
-                remaining -= skipped;
-                consecutiveZeroReads = 0;
-                continue;
             }
 
             int requested = (int) Math.min(remaining, (long) discard.length);
