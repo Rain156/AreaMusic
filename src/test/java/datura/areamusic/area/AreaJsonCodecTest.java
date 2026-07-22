@@ -121,7 +121,7 @@ class AreaJsonCodecTest {
     }
 
     @Test
-    void v2RoundTripsEveryField() {
+    void v2RoundTripsEveryFieldIncludingUnicodeMusicId() {
         AreaDefinition original = area(true);
 
         AreaDefinition decoded = codec.read("boss", new StringReader(codec.write(original)));
@@ -228,7 +228,7 @@ class AreaJsonCodecTest {
                 "boss", ResourceLocation.tryParse("minecraft:the_nether"),
                 new BlockPos(-5, 10, -4), new BlockPos(8, 90, 7),
                 List.of(
-                        new AreaTrackDefinition("boss/intro.flac", 0, 0.65f, false, 750, 3500),
+                        new AreaTrackDefinition("boss/序曲.flac", 0, 0.65f, false, 750, 3500),
                         new AreaTrackDefinition("boss/fight.flac", 6, 1.0f, true, 100, 5000)
                 ),
                 resumeOnReenter,
