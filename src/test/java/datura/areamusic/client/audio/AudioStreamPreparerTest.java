@@ -7,12 +7,14 @@ import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -443,65 +445,86 @@ class AudioStreamPreparerTest {
             assertNotNull(fixture);
             Files.copy(fixture, source);
         }
-        byte[] expected = frameAtOffsetByBulkRead(source, frameOffset);
+        byte[] fullDecoded = decodedTailByBulkRead(source, 0L);
+        byte[] expectedTail = decodedTailByBulkRead(source, frameOffset);
+        long offsetBytes = Math.multiplyExact(
+                frameOffset,
+                (long) AudioStreamFactory.MIX_FORMAT.getFrameSize()
+        );
+        assertTrue(offsetBytes > 0L);
+        assertEquals(offsetBytes, (long) fullDecoded.length - expectedTail.length);
+        assertArrayEquals(
+                Arrays.copyOfRange(fullDecoded, Math.toIntExact(offsetBytes), fullDecoded.length),
+                expectedTail
+        );
 
         try (AudioStreamPreparer preparer = new AudioStreamPreparer(
                 new AudioStreamFactory(), 1
         ); AudioInputStream prepared = preparer.prepare(
                 source, frameOffset
         ).get(3, TimeUnit.SECONDS)) {
-            assertArrayEquals(expected, readExactFrame(prepared));
+            assertArrayEquals(expectedTail, readDecodedBytes(prepared));
         }
     }
 
-    private static byte[] frameAtOffsetByBulkRead(Path path, long frameOffset) throws Exception {
+    private static byte[] decodedTailByBulkRead(Path path, long frameOffset) throws Exception {
         try (AudioInputStream stream = new AudioStreamFactory().open(path)) {
-            long remaining = Math.multiplyExact(
-                    frameOffset,
-                    (long) AudioStreamFactory.MIX_FORMAT.getFrameSize()
-            );
-            byte[] discard = new byte[8192];
-            int zeroReads = 0;
-            while (remaining > 0L) {
-                int requested = (int) Math.min(remaining, (long) discard.length);
-                int read = stream.read(discard, 0, requested);
-                if (read < 0) {
-                    throw new IOException("Fixture ended before requested frame offset");
-                }
-                if (read == 0) {
-                    if (++zeroReads > 64) {
-                        throw new IOException("Fixture decoder stalled during bulk read");
-                    }
-                    continue;
-                }
-                assertEquals(0, read % AudioStreamFactory.MIX_FORMAT.getFrameSize());
-                remaining -= read;
-                zeroReads = 0;
-            }
-            return readExactFrame(stream);
+            discardFramesByBulkRead(stream, frameOffset);
+            return readDecodedBytes(stream);
         }
     }
 
-    private static byte[] readExactFrame(AudioInputStream stream) throws IOException {
-        int frameSize = AudioStreamFactory.MIX_FORMAT.getFrameSize();
-        byte[] frame = new byte[frameSize];
-        int total = 0;
+    private static void discardFramesByBulkRead(
+            AudioInputStream stream,
+            long frameOffset
+    ) throws IOException {
+        long remaining = Math.multiplyExact(
+                frameOffset,
+                (long) AudioStreamFactory.MIX_FORMAT.getFrameSize()
+        );
+        byte[] discard = new byte[8192];
         int zeroReads = 0;
-        while (total < frameSize) {
-            int read = stream.read(frame, total, frameSize - total);
+        while (remaining > 0L) {
+            int requested = (int) Math.min(remaining, (long) discard.length);
+            int read = stream.read(discard, 0, requested);
             if (read < 0) {
-                throw new IOException("Fixture ended before comparison frame");
+                throw new IOException("Fixture ended before requested frame offset");
             }
             if (read == 0) {
                 if (++zeroReads > 64) {
-                    throw new IOException("Fixture decoder stalled before comparison frame");
+                    throw new IOException("Fixture decoder stalled during bulk read");
                 }
                 continue;
             }
-            total += read;
+            assertEquals(0, read % AudioStreamFactory.MIX_FORMAT.getFrameSize());
+            remaining -= read;
             zeroReads = 0;
         }
-        return frame;
+    }
+
+    private static byte[] readDecodedBytes(AudioInputStream stream) throws IOException {
+        int frameSize = AudioStreamFactory.MIX_FORMAT.getFrameSize();
+        ByteArrayOutputStream decoded = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int zeroReads = 0;
+        while (true) {
+            int read = stream.read(buffer);
+            if (read < 0) {
+                break;
+            }
+            if (read == 0) {
+                if (++zeroReads > 64) {
+                    throw new IOException("Decoder stalled while reading complete decoded tail");
+                }
+                continue;
+            }
+            if (read % frameSize != 0) {
+                throw new IOException("Decoded tail contains a partial PCM frame");
+            }
+            decoded.write(buffer, 0, read);
+            zeroReads = 0;
+        }
+        return decoded.toByteArray();
     }
 
     private static AudioStreamFactory fixedFactory(AudioInputStream source) {
