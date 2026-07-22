@@ -8,11 +8,13 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -100,6 +102,58 @@ class MusicDirectoryTest {
         assertEquals(tempDir.resolve("game").toAbsolutePath().normalize().resolve("areamusic"), canonical);
         assertEquals(Set.of(), exactChildNames(tempDir));
         assertFalse(Files.exists(canonical, LinkOption.NOFOLLOW_LINKS));
+    }
+
+    @Test
+    void rollbackOnlyRestoresAPresentTemporaryEntryToAnAbsentLegacyEntry() {
+        for (MusicDirectory.Presence temporary : MusicDirectory.Presence.values()) {
+            for (MusicDirectory.Presence legacy : MusicDirectory.Presence.values()) {
+                IOException secondMoveFailure = new IOException("second move failed");
+                AtomicInteger rollbackMoves = new AtomicInteger();
+
+                IOException result = MusicDirectory.rollbackFailure(
+                        secondMoveFailure,
+                        temporary,
+                        legacy,
+                        () -> rollbackMoves.incrementAndGet()
+                );
+
+                boolean shouldRestore = temporary == MusicDirectory.Presence.PRESENT
+                        && legacy == MusicDirectory.Presence.ABSENT;
+                assertSame(secondMoveFailure, result);
+                assertEquals(shouldRestore ? 1 : 0, rollbackMoves.get());
+
+                boolean diagnosticRequired = temporary == MusicDirectory.Presence.UNKNOWN
+                        || legacy == MusicDirectory.Presence.UNKNOWN
+                        || temporary == MusicDirectory.Presence.PRESENT
+                        && legacy == MusicDirectory.Presence.PRESENT;
+                if (diagnosticRequired) {
+                    assertEquals(1, result.getSuppressed().length);
+                    String diagnostic = result.getSuppressed()[0].getMessage();
+                    assertTrue(diagnostic.contains(temporary.name()));
+                    assertTrue(diagnostic.contains(legacy.name()));
+                }
+            }
+        }
+    }
+
+    @Test
+    void rollbackMoveFailureIsSuppressedUnderTheOriginalSecondMoveFailure() {
+        IOException secondMoveFailure = new IOException("second move failed");
+        IOException rollbackMoveFailure = new IOException("rollback move failed");
+
+        IOException result = MusicDirectory.rollbackFailure(
+                secondMoveFailure,
+                MusicDirectory.Presence.PRESENT,
+                MusicDirectory.Presence.ABSENT,
+                () -> {
+                    throw rollbackMoveFailure;
+                }
+        );
+
+        assertSame(secondMoveFailure, result);
+        assertEquals(1, result.getSuppressed().length);
+        assertSame(rollbackMoveFailure, result.getSuppressed()[0]);
     }
 
     private void assertSymbolicLinkIsRejected(String entryName) throws Exception {

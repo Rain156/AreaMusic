@@ -79,16 +79,44 @@ public final class MusicDirectory {
         try {
             move(temporary, canonical);
         } catch (IOException originalFailure) {
-            if (Files.exists(temporary, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.exists(legacy, LinkOption.NOFOLLOW_LINKS)) {
-                try {
-                    move(temporary, legacy);
-                } catch (IOException restoreFailure) {
-                    originalFailure.addSuppressed(restoreFailure);
-                }
-            }
-            throw originalFailure;
+            throw rollbackFailure(
+                    originalFailure,
+                    presence(temporary),
+                    presence(legacy),
+                    () -> move(temporary, legacy)
+            );
         }
+    }
+
+    static IOException rollbackFailure(
+            IOException originalFailure,
+            Presence temporary,
+            Presence legacy,
+            RollbackMove rollbackMove
+    ) {
+        if (temporary == Presence.PRESENT && legacy == Presence.ABSENT) {
+            try {
+                rollbackMove.run();
+            } catch (IOException restoreFailure) {
+                originalFailure.addSuppressed(restoreFailure);
+            }
+        } else {
+            originalFailure.addSuppressed(new IOException(
+                    "Could not safely roll back music directory migration: temporary entry is "
+                            + temporary + "; legacy entry is " + legacy
+            ));
+        }
+        return originalFailure;
+    }
+
+    private static Presence presence(Path entry) {
+        if (Files.exists(entry, LinkOption.NOFOLLOW_LINKS)) {
+            return Presence.PRESENT;
+        }
+        if (Files.notExists(entry, LinkOption.NOFOLLOW_LINKS)) {
+            return Presence.ABSENT;
+        }
+        return Presence.UNKNOWN;
     }
 
     private static Path uniqueTemporarySibling(Path gameRoot) {
@@ -105,6 +133,17 @@ public final class MusicDirectory {
         } catch (AtomicMoveNotSupportedException exception) {
             Files.move(source, target);
         }
+    }
+
+    enum Presence {
+        PRESENT,
+        ABSENT,
+        UNKNOWN
+    }
+
+    @FunctionalInterface
+    interface RollbackMove {
+        void run() throws IOException;
     }
 
     public static final class ConflictException extends IOException {
