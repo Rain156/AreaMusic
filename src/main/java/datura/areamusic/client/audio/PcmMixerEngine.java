@@ -110,7 +110,10 @@ public final class PcmMixerEngine implements AutoCloseable {
             return;
         }
 
-        AreaSession incoming = createIncomingSession(revision, state);
+        AreaSession incoming = reclaimOutgoingSession(revision, state);
+        if (incoming == null) {
+            incoming = createIncomingSession(revision, state);
+        }
         if (previous != null) {
             transferContinuingTracks(previous, incoming);
             moveToOutgoing(previous);
@@ -198,6 +201,26 @@ public final class PcmMixerEngine implements AutoCloseable {
         return currentState;
     }
 
+    int liveSessionCount() {
+        int count = currentSession == null ? 0 : 1;
+        for (AreaSession session : outgoingSessions) {
+            if (!session.expeditedRemoval && !session.tracks.isEmpty()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    int retainedSessionCount() {
+        int count = currentSession == null ? 0 : 1;
+        for (AreaSession session : outgoingSessions) {
+            if (!session.tracks.isEmpty()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     @Override
     public void close() {
         if (closed) {
@@ -221,6 +244,38 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
     }
 
+    private AreaSession reclaimOutgoingSession(long revision, PlaybackState state) {
+        Iterator<AreaSession> iterator = outgoingSessions.iterator();
+        while (iterator.hasNext()) {
+            AreaSession session = iterator.next();
+            if (session.revision != revision
+                    || session.snapshotInvalidated
+                    || !session.state.resumeOnReenter()
+                    || !session.state.areaId().equals(state.areaId())
+                    || !session.state.equals(state)) {
+                continue;
+            }
+
+            iterator.remove();
+            resumeSnapshots.remove(session.resumeKey());
+            session.outgoing = false;
+            session.snapshotWhenSilent = false;
+            session.expeditedRemoval = false;
+            session.recoverMissingStartedTracks = true;
+            for (RuntimeTrack track : session.tracks) {
+                AreaTrackDefinition definition = session.state.tracks().get(track.trackIndex);
+                track.lifecycleGain.fadeTo(
+                        1.0f, definition.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
+                );
+                track.volumeGain.fadeTo(
+                        definition.volume(), definition.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
+                );
+            }
+            return session;
+        }
+        return null;
+    }
+
     private void ensureOpen() {
         if (closed) {
             throw new IllegalStateException("PCM mixer engine is closed");
@@ -231,29 +286,37 @@ public final class PcmMixerEngine implements AutoCloseable {
         if (previous.revision != incoming.revision || previous.snapshotInvalidated) {
             return;
         }
+        List<TrackIdentity> previousIdentities = trackIdentities(previous.state.tracks());
+        List<TrackIdentity> incomingIdentities = trackIdentities(incoming.state.tracks());
+        Map<TrackIdentity, Integer> availableDestinations = new HashMap<>();
+        for (int index = 0; index < incoming.state.tracks().size(); index++) {
+            if (incoming.timeline.remainingDelayFrames(index) == 0L
+                    && !incoming.timeline.started(index)
+                    && !incoming.timeline.completed(index)
+                    && !incoming.timeline.failed(index)) {
+                availableDestinations.put(incomingIdentities.get(index), index);
+            }
+        }
+
         Iterator<RuntimeTrack> iterator = previous.tracks.iterator();
         while (iterator.hasNext()) {
             RuntimeTrack runtime = iterator.next();
-            int index = runtime.trackIndex;
-            if (index >= incoming.state.tracks().size()) {
-                continue;
-            }
-            AreaTrackDefinition destination = incoming.state.tracks().get(index);
-            if (destination.delayFrames(AudioStreamFactory.SAMPLE_RATE) != 0L
-                    || !runtime.musicId().equals(destination.musicId())
-                    || runtime.exhausted
-                    || runtime.lifecycleGain.target() == 0.0f
-                    || incoming.timeline.started(index)
-                    || incoming.timeline.completed(index)
-                    || incoming.timeline.failed(index)) {
+            if (runtime.exhausted || runtime.lifecycleGain.target() == 0.0f) {
                 continue;
             }
 
-            long position = previous.timeline.positionInLoopFrames(index);
+            Integer destinationIndex = availableDestinations.remove(
+                    previousIdentities.get(runtime.trackIndex)
+            );
+            if (destinationIndex == null) {
+                continue;
+            }
+            AreaTrackDefinition destination = incoming.state.tracks().get(destinationIndex);
+            long position = previous.timeline.positionInLoopFrames(runtime.trackIndex);
             iterator.remove();
-            incoming.timeline.markStarted(index);
-            incoming.timeline.recordFramesRead(index, position);
-            runtime.attach(incoming, index, destination);
+            incoming.timeline.markStarted(destinationIndex);
+            incoming.timeline.recordFramesRead(destinationIndex, position);
+            runtime.attach(incoming, destinationIndex, destination);
             runtime.lifecycleGain.fadeTo(
                     1.0f, destination.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
             );
@@ -262,6 +325,17 @@ public final class PcmMixerEngine implements AutoCloseable {
             );
             incoming.tracks.add(runtime);
         }
+    }
+
+    private static List<TrackIdentity> trackIdentities(List<AreaTrackDefinition> definitions) {
+        Map<String, Integer> occurrences = new HashMap<>();
+        List<TrackIdentity> identities = new ArrayList<>(definitions.size());
+        for (AreaTrackDefinition definition : definitions) {
+            int occurrence = occurrences.getOrDefault(definition.musicId(), 0);
+            identities.add(new TrackIdentity(definition.musicId(), occurrence));
+            occurrences.put(definition.musicId(), occurrence + 1);
+        }
+        return identities;
     }
 
     private void moveToOutgoing(AreaSession session) {
@@ -342,7 +416,7 @@ public final class PcmMixerEngine implements AutoCloseable {
     }
 
     private void scheduleRestoredTracks(AreaSession session) {
-        if (!session.restored || session.outgoing || session != currentSession) {
+        if (!session.recoverMissingStartedTracks || session.outgoing || session != currentSession) {
             return;
         }
         for (int trackIndex = 0; trackIndex < session.state.tracks().size(); trackIndex++) {
@@ -451,41 +525,27 @@ public final class PcmMixerEngine implements AutoCloseable {
     }
 
     private void makeRoomForCurrentSession() {
-        if (currentSession == null || !currentSession.tracks.isEmpty()) {
+        if (currentSession == null) {
             return;
         }
-        if (liveOutgoingSessionCount() < MAX_LIVE_SESSIONS) {
-            return;
-        }
-        expediteQuietestOutgoingSession();
-    }
-
-    private int liveOutgoingSessionCount() {
-        int count = 0;
-        for (AreaSession session : outgoingSessions) {
-            if (!session.tracks.isEmpty()) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private boolean currentSessionHasRoom() {
-        return currentSession == null
-                || !currentSession.tracks.isEmpty()
-                || liveOutgoingSessionCount() < MAX_LIVE_SESSIONS;
-    }
-
-    private void expediteQuietestOutgoingSession() {
-        for (AreaSession session : outgoingSessions) {
-            if (session.expeditedRemoval) {
+        while (liveSessionCount() > MAX_LIVE_SESSIONS) {
+            if (!expediteQuietestOutgoingSession()) {
                 return;
             }
         }
+    }
 
+    private boolean currentSessionHasRoom() {
+        return currentSession == null || liveSessionCount() <= MAX_LIVE_SESSIONS;
+    }
+
+    private boolean expediteQuietestOutgoingSession() {
         AreaSession quietest = null;
         float quietestGain = Float.POSITIVE_INFINITY;
         for (AreaSession session : outgoingSessions) {
+            if (session.expeditedRemoval || session.tracks.isEmpty()) {
+                continue;
+            }
             float sessionGain = 0.0f;
             for (RuntimeTrack track : session.tracks) {
                 sessionGain += track.lifecycleGain.value() * track.volumeGain.value();
@@ -496,7 +556,7 @@ public final class PcmMixerEngine implements AutoCloseable {
             }
         }
         if (quietest == null) {
-            return;
+            return false;
         }
         quietest.expeditedRemoval = true;
         for (RuntimeTrack track : quietest.tracks) {
@@ -504,6 +564,7 @@ public final class PcmMixerEngine implements AutoCloseable {
                     0.0f, OVERFLOW_FADE_MS, AudioStreamFactory.SAMPLE_RATE
             );
         }
+        return true;
     }
 
     private void startDueTracks(AreaSession session) {
@@ -689,7 +750,7 @@ public final class PcmMixerEngine implements AutoCloseable {
         private final AreaPlaybackTimeline timeline;
         private final List<RuntimeTrack> tracks = new ArrayList<>();
         private final Map<Integer, PendingPreparation> preparations = new LinkedHashMap<>();
-        private final boolean restored;
+        private boolean recoverMissingStartedTracks;
         private boolean outgoing;
         private boolean snapshotWhenSilent;
         private boolean snapshotInvalidated;
@@ -699,12 +760,12 @@ public final class PcmMixerEngine implements AutoCloseable {
                 long revision,
                 PlaybackState state,
                 AreaPlaybackTimeline timeline,
-                boolean restored
+                boolean recoverMissingStartedTracks
         ) {
             this.revision = revision;
             this.state = state;
             this.timeline = timeline;
-            this.restored = restored;
+            this.recoverMissingStartedTracks = recoverMissingStartedTracks;
         }
 
         private ResumeKey resumeKey() {
@@ -878,6 +939,9 @@ public final class PcmMixerEngine implements AutoCloseable {
     }
 
     private record ResumeKey(long revision, String areaId) {
+    }
+
+    private record TrackIdentity(String musicId, int occurrence) {
     }
 
     private record SessionSnapshot(

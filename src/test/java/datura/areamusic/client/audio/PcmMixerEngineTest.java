@@ -646,6 +646,88 @@ class PcmMixerEngineTest {
     }
 
     @Test
+    void matchesImmediateSameMusicIdsByOccurrenceOrderAcrossAreas() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("shared.wav"), new short[]{1000, 2000, 3000});
+        writeWav(root.resolve("old-marker.wav"), constantFrames(3, (short) 0));
+        writeWav(root.resolve("new-marker.wav"), constantFrames(3, (short) 0));
+        List<String> openOrder = new ArrayList<>();
+        AtomicInteger sharedOpenCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                String fileName = path.getFileName().toString();
+                openOrder.add(fileName);
+                if (fileName.equals("shared.wav")) {
+                    sharedOpenCount.incrementAndGet();
+                }
+                return super.open(path);
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(1L, state(
+                    "first",
+                    false,
+                    track("shared.wav", 0, true, 0, 0),
+                    track("old-marker.wav", 0, true, 0, 0),
+                    track("shared.wav", 0, true, 0, 0)
+            ));
+            assertEquals(2000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(1L, state(
+                    "second",
+                    false,
+                    track("new-marker.wav", 0, true, 0, 0),
+                    track("shared.wav", 0, true, 0, 0),
+                    track("shared.wav", 0, true, 0, 0)
+            ));
+
+            assertEquals(4000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(2, sharedOpenCount.get());
+            assertEquals(
+                    List.of("shared.wav", "old-marker.wav", "shared.wav", "new-marker.wav"),
+                    openOrder
+            );
+        }
+    }
+
+    @Test
+    void delayedDestinationTrackDoesNotStealAnOutgoingSameIdStream() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("shared.wav"), new short[]{1000, 2000, 3000});
+        AtomicInteger openCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                openCount.incrementAndGet();
+                return super.open(path);
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(1L, state(
+                    "immediate", false, track("shared.wav", 0, true, 0, 0)
+            ));
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(1L, state(
+                    "delayed", false, track("shared.wav", 5, true, 0, 0)
+            ));
+
+            byte[] firstSecond = engine.renderFrames(44_100, 1.0f);
+            assertEquals(0, leftSample(firstSecond, 44_099));
+            assertEquals(1, openCount.get());
+            assertAllSilent(engine.renderFrames(176_399, 1.0f));
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(2, openCount.get());
+        }
+    }
+
+    @Test
     void sameIdContinuationFadesVolumeFromZeroToOneWithoutReopening() throws Exception {
         Path root = tempDir.resolve("music");
         short[] frames = constantFrames(44_103, (short) 10_000);
@@ -882,24 +964,28 @@ class PcmMixerEngineTest {
     }
 
     @Test
-    void fifthRapidTransitionDoesNotHardEvictAnAudibleTrack() throws Exception {
+    void fifthRapidAreaTransitionSoftFadesInsteadOfHardEvicting() throws Exception {
         Path root = tempDir.resolve("music");
-        writeWav(root.resolve("track0.wav"), constantFrames(16, (short) 10_000));
+        writeWav(root.resolve("track0.wav"), constantFrames(4096, (short) 10_000));
         for (int index = 1; index < 5; index++) {
-            writeWav(root.resolve("track" + index + ".wav"), constantFrames(16, (short) 0));
+            writeWav(root.resolve("track" + index + ".wav"), constantFrames(4096, (short) 0));
         }
         PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), MusicLibrary.scan(root));
 
         for (int index = 0; index < 4; index++) {
             engine.apply(1L, playing(
-                    "area" + index, "track" + index + ".wav", 1.0f, true, 0, 10_000
+                    "area" + index, "track" + index + ".wav", 1.0f, true, 0, 60_000
             ));
             engine.renderFrames(1, 1.0f);
         }
 
-        engine.apply(1L, playing("area4", "track4.wav", 1.0f, true, 0, 10_000));
+        engine.apply(1L, playing("area4", "track4.wav", 1.0f, true, 0, 60_000));
 
+        assertTrue(engine.liveSessionCount() <= 4);
+        assertEquals(5, engine.retainedSessionCount());
         assertTrue(firstLeftSample(engine.renderFrames(1, 1.0f)) > 9_000);
+        engine.renderFrames(881, 1.0f);
+        assertEquals(4, engine.retainedSessionCount());
         engine.close();
     }
 
@@ -961,6 +1047,52 @@ class PcmMixerEngineTest {
 
         assertTrue(firstLeftSample(engine.renderFrames(1, 1.0f)) > 9_000);
         engine.close();
+    }
+
+    @Test
+    void rapidSharedContinuationsKeepLogicalAndRetainedSessionsBounded() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("shared.wav"), constantFrames(4096, (short) 100));
+        for (int index = 0; index < 10; index++) {
+            writeWav(
+                    root.resolve("replacement" + index + ".wav"),
+                    constantFrames(4096, (short) 0)
+            );
+        }
+        AtomicInteger sharedOpenCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.getFileName().toString().equals("shared.wav")) {
+                    sharedOpenCount.incrementAndGet();
+                }
+                return super.open(path);
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            for (int index = 0; index < 10; index++) {
+                engine.apply(1L, state(
+                        "area" + index,
+                        false,
+                        track("shared.wav", 0, true, 0, 60_000),
+                        track("replacement" + index + ".wav", 0, true, 0, 60_000)
+                ));
+                assertTrue(
+                        engine.liveSessionCount() <= 4,
+                        "logical live session overflow after transition " + index
+                );
+                assertEquals(100, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            }
+
+            assertEquals(1, sharedOpenCount.get());
+            assertTrue(engine.retainedSessionCount() > engine.liveSessionCount());
+            engine.renderFrames(882, 1.0f);
+            assertEquals(1, sharedOpenCount.get());
+            assertEquals(engine.liveSessionCount(), engine.retainedSessionCount());
+            assertTrue(engine.retainedSessionCount() <= 4);
+        }
     }
 
     @Test
@@ -1041,6 +1173,182 @@ class PcmMixerEngineTest {
         }
 
         assertEquals(expectedBlocks, renderedBlocks);
+    }
+
+    @Test
+    void reentersMatchingResumableAreaByReclaimingItsLiveOutgoingSession() throws Exception {
+        Path root = tempDir.resolve("music");
+        short[] areaFrames = increasingFrames(1000, 2000);
+        writeWav(root.resolve("area.wav"), areaFrames);
+        writeWav(root.resolve("between.wav"), constantFrames(2000, (short) 0));
+        AtomicInteger areaOpenCount = new AtomicInteger();
+        AtomicInteger areaCloseCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.getFileName().toString().equals("area.wav")) {
+                    areaOpenCount.incrementAndGet();
+                    return new CloseCountingAudioInputStream(
+                            pcmFrames(areaFrames), areaCloseCount
+                    );
+                }
+                return super.open(path);
+            }
+        };
+        PlaybackState area = state(
+                "area", true, track("area.wav", 0, true, 0, 10)
+        );
+        PlaybackState between = state(
+                "between", false, track("between.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, area);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, between);
+            assertEquals(1001, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(7L, area);
+
+            assertEquals(1002, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1, areaOpenCount.get());
+            assertEquals(0, areaCloseCount.get());
+
+            engine.apply(7L, PlaybackState.stopped());
+            engine.renderFrames(441, 1.0f);
+            assertEquals(1, areaCloseCount.get());
+            engine.apply(7L, area);
+            assertEquals(1444, firstNonSilentSample(engine));
+            assertEquals(2, areaOpenCount.get());
+        }
+    }
+
+    @Test
+    void outgoingResumableSessionRequiresCompletePlaybackStateMatch() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("area.wav"), constantFrames(1000, (short) 1000));
+        writeWav(root.resolve("between.wav"), constantFrames(1000, (short) 0));
+        AtomicInteger areaOpenCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.getFileName().toString().equals("area.wav")) {
+                    areaOpenCount.incrementAndGet();
+                }
+                return super.open(path);
+            }
+        };
+        PlaybackState original = state(
+                "area", true, track("area.wav", 0, 1.0f, true, 0, 100)
+        );
+        PlaybackState changed = state(
+                "area", true, track("area.wav", 0, 0.5f, true, 0, 100)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, original);
+            engine.renderFrames(1, 1.0f);
+            engine.apply(7L, state(
+                    "between", false, track("between.wav", 0, true, 0, 0)
+            ));
+            engine.renderFrames(1, 1.0f);
+
+            engine.apply(7L, changed);
+
+            assertEquals(2, areaOpenCount.get());
+        }
+    }
+
+    @Test
+    void reclaimedResumableSessionKeepsPendingDelayFrozen() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("carrier.wav"), constantFrames(100_000, (short) 0));
+        writeWav(root.resolve("delayed.wav"), new short[]{1234});
+        writeWav(root.resolve("between.wav"), constantFrames(100_000, (short) 0));
+        AtomicInteger carrierOpenCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.getFileName().toString().equals("carrier.wav")) {
+                    carrierOpenCount.incrementAndGet();
+                }
+                return super.open(path);
+            }
+        };
+        PlaybackState area = state(
+                "area",
+                true,
+                track("carrier.wav", 0, true, 0, 60_000),
+                track("delayed.wav", 2, false, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, area);
+            assertAllSilent(engine.renderFrames(44_100, 1.0f));
+            engine.apply(7L, state(
+                    "between", false, track("between.wav", 0, true, 0, 0)
+            ));
+            assertAllSilent(engine.renderFrames(20_000, 1.0f));
+
+            engine.apply(7L, area);
+
+            assertEquals(1, carrierOpenCount.get());
+            assertAllSilent(engine.renderFrames(44_099, 1.0f));
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1234, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        }
+    }
+
+    @Test
+    void reclaimedSessionRestoresOnlyStartedTracksRemovedAtFadeEndpoints() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("short.wav"), increasingFrames(1000, 2000));
+        writeWav(root.resolve("long.wav"), constantFrames(2000, (short) 0));
+        writeWav(root.resolve("once.wav"), new short[]{0});
+        writeWav(root.resolve("between.wav"), constantFrames(2000, (short) 0));
+        AtomicInteger shortOpenCount = new AtomicInteger();
+        AtomicInteger longOpenCount = new AtomicInteger();
+        AtomicInteger onceOpenCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                switch (path.getFileName().toString()) {
+                    case "short.wav" -> shortOpenCount.incrementAndGet();
+                    case "long.wav" -> longOpenCount.incrementAndGet();
+                    case "once.wav" -> onceOpenCount.incrementAndGet();
+                    default -> {
+                    }
+                }
+                return super.open(path);
+            }
+        };
+        PlaybackState area = state(
+                "area",
+                true,
+                track("short.wav", 0, true, 0, 1),
+                track("long.wav", 0, true, 0, 100),
+                track("once.wav", 0, false, 0, 1)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, area);
+            engine.renderFrames(2, 1.0f);
+            engine.apply(7L, state(
+                    "between", false, track("between.wav", 0, true, 0, 0)
+            ));
+            engine.renderFrames(44, 1.0f);
+
+            engine.apply(7L, area);
+
+            assertEquals(1046, firstNonSilentSample(engine));
+            assertEquals(2, shortOpenCount.get());
+            assertEquals(1, longOpenCount.get());
+            assertEquals(1, onceOpenCount.get());
+        }
     }
 
     @Test
