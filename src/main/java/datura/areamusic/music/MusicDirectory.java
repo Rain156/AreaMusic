@@ -117,8 +117,10 @@ public final class MusicDirectory {
                 legacy,
                 canonical,
                 temporary,
-                MusicDirectory::moveNoClobber,
-                MusicDirectory::readEntryAttributes
+                defaultMigrationOperations(
+                        MusicDirectory::moveNoClobber,
+                        MusicDirectory::readEntryAttributes
+                )
         );
     }
 
@@ -132,8 +134,7 @@ public final class MusicDirectory {
                 validateDirectory(legacy),
                 canonical,
                 temporary,
-                moveOperation,
-                MusicDirectory::readEntryAttributes
+                defaultMigrationOperations(moveOperation, MusicDirectory::readEntryAttributes)
         );
     }
 
@@ -144,23 +145,127 @@ public final class MusicDirectory {
             MoveOperation moveOperation,
             IdentityProbe identityProbe
     ) throws IOException {
-        moveOperation.move(legacy.path(), temporary);
+        migrate(legacy, canonical, temporary, defaultMigrationOperations(moveOperation, identityProbe));
+    }
+
+    static void migrate(
+            ValidatedDirectory legacy,
+            Path canonical,
+            Path temporary,
+            MigrationOperations operations
+    ) throws IOException {
+        operations.move().move(legacy.path(), temporary);
         try {
-            ValidatedDirectory moved = validateDirectory(temporary, identityProbe);
+            ValidatedDirectory moved = validateDirectory(temporary, operations.identity());
             if (!legacy.identity().matches(moved.identity())) {
                 throw new IOException("Music directory identity changed during migration: " + temporary);
             }
-            moveOperation.move(temporary, canonical);
         } catch (IOException originalFailure) {
-            throw rollbackFailure(
-                    originalFailure,
-                    presence(temporary),
-                    presence(legacy.path()),
-                    temporary,
+            throw rollbackMigrationFailure(originalFailure, legacy.path(), temporary, operations);
+        }
+
+        Presence canonicalPresence = operations.presence().presence(canonical);
+        if (canonicalPresence == Presence.ABSENT) {
+            installCanonical(legacy, canonical, temporary, operations);
+            return;
+        }
+        if (canonicalPresence == Presence.UNKNOWN) {
+            throw rollbackMigrationFailure(
+                    new IOException("Canonical music directory presence is UNKNOWN: " + canonical),
                     legacy.path(),
-                    moveOperation
+                    temporary,
+                    operations
             );
         }
+
+        normalizeSameFileAlias(legacy, canonical, temporary, operations);
+    }
+
+    private static void installCanonical(
+            ValidatedDirectory legacy,
+            Path canonical,
+            Path temporary,
+            MigrationOperations operations
+    ) throws IOException {
+        try {
+            operations.move().move(temporary, canonical);
+            Presence installedPresence = operations.presence().presence(canonical);
+            Presence temporaryPresence = operations.presence().presence(temporary);
+            if (installedPresence != Presence.PRESENT || temporaryPresence != Presence.ABSENT) {
+                throw new IOException("Could not confirm canonical music directory installation: canonical="
+                        + installedPresence + "; temporary=" + temporaryPresence);
+            }
+            requireMatchingIdentity(legacy, canonical, operations.identity(), "installed canonical directory");
+        } catch (IOException originalFailure) {
+            throw rollbackMigrationFailure(originalFailure, legacy.path(), temporary, operations);
+        }
+    }
+
+    private static void normalizeSameFileAlias(
+            ValidatedDirectory legacy,
+            Path canonical,
+            Path temporary,
+            MigrationOperations operations
+    ) throws IOException {
+        try {
+            requireMatchingIdentity(legacy, canonical, operations.identity(), "canonical alias");
+            if (!operations.sameFile().isSameFile(temporary, canonical)) {
+                throw new IOException("Canonical music directory is not the same file as temporary: " + canonical);
+            }
+        } catch (IOException conflict) {
+            throw rollbackMigrationFailure(conflict, legacy.path(), temporary, operations);
+        }
+
+        operations.delete().delete(temporary);
+
+        Presence canonicalPresence = operations.presence().presence(canonical);
+        Presence temporaryPresence = operations.presence().presence(temporary);
+        if (canonicalPresence != Presence.PRESENT || temporaryPresence != Presence.ABSENT) {
+            throw new IOException("Could not confirm same-file alias cleanup: canonical="
+                    + canonicalPresence + "; temporary=" + temporaryPresence);
+        }
+        requireMatchingIdentity(legacy, canonical, operations.identity(), "canonical alias after cleanup");
+    }
+
+    private static void requireMatchingIdentity(
+            ValidatedDirectory expected,
+            Path candidate,
+            IdentityProbe identityProbe,
+            String description
+    ) throws IOException {
+        ValidatedDirectory actual = validateDirectory(candidate, identityProbe);
+        if (!expected.identity().matches(actual.identity())) {
+            throw new IOException("Music directory identity conflict for " + description + ": " + candidate);
+        }
+    }
+
+    private static IOException rollbackMigrationFailure(
+            IOException originalFailure,
+            Path legacy,
+            Path temporary,
+            MigrationOperations operations
+    ) {
+        return rollbackFailure(
+                originalFailure,
+                operations.presence().presence(temporary),
+                operations.presence().presence(legacy),
+                temporary,
+                legacy,
+                operations.move()
+        );
+    }
+
+    private static MigrationOperations defaultMigrationOperations(
+            MoveOperation moveOperation,
+            IdentityProbe identityProbe
+    ) {
+        return new MigrationOperations(
+                moveOperation,
+                MusicDirectory::presence,
+                identityProbe,
+                Files::isSameFile,
+                Files::delete
+        );
     }
 
     static IOException rollbackFailure(
@@ -242,6 +347,25 @@ public final class MusicDirectory {
     @FunctionalInterface
     interface IdentityProbe {
         EntryAttributes read(Path path) throws IOException;
+    }
+
+    @FunctionalInterface
+    interface SameFileProbe {
+        boolean isSameFile(Path first, Path second) throws IOException;
+    }
+
+    @FunctionalInterface
+    interface DeleteOperation {
+        void delete(Path path) throws IOException;
+    }
+
+    record MigrationOperations(
+            MoveOperation move,
+            PresenceProbe presence,
+            IdentityProbe identity,
+            SameFileProbe sameFile,
+            DeleteOperation delete
+    ) {
     }
 
     record EntryAttributes(

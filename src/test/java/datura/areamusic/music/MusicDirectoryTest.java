@@ -9,7 +9,10 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayDeque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -352,6 +355,150 @@ class MusicDirectoryTest {
     }
 
     @Test
+    void verifiedSameFileAliasIsCleanedWithoutASecondMove() throws Exception {
+        Path legacy = tempDir.resolve("legacy-exact-entry");
+        Path canonical = tempDir.resolve("canonical-exact-entry");
+        Path temporary = tempDir.resolve("temporary-exact-entry");
+        Map<Path, String> namespace = new HashMap<>();
+        namespace.put(legacy, "music-object");
+        AtomicInteger moves = new AtomicInteger();
+        AtomicInteger cleanups = new AtomicInteger();
+        MusicDirectory.IdentityProbe identityProbe = namespaceIdentityProbe(namespace);
+        MusicDirectory.ValidatedDirectory captured = MusicDirectory.validateDirectory(legacy, identityProbe);
+        MusicDirectory.MoveOperation moveOperation = (source, target) -> {
+            moves.incrementAndGet();
+            moveNamespaceEntry(namespace, source, target);
+            namespace.put(canonical, namespace.get(temporary));
+        };
+        MusicDirectory.MigrationOperations operations = new MusicDirectory.MigrationOperations(
+                moveOperation,
+                namespacePresenceProbe(namespace),
+                identityProbe,
+                (left, right) -> Objects.equals(namespace.get(left), namespace.get(right)),
+                path -> {
+                    cleanups.incrementAndGet();
+                    namespace.remove(path);
+                }
+        );
+
+        MusicDirectory.migrate(captured, canonical, temporary, operations);
+
+        assertEquals(1, moves.get());
+        assertEquals(1, cleanups.get());
+        assertEquals("music-object", namespace.get(canonical));
+        assertFalse(namespace.containsKey(temporary));
+        assertFalse(namespace.containsKey(legacy));
+    }
+
+    @Test
+    void sameFileAliasCleanupFailureLeavesCanonicalAndTemporaryForDiagnosis() throws Exception {
+        Path legacy = tempDir.resolve("legacy-exact-entry");
+        Path canonical = tempDir.resolve("canonical-exact-entry");
+        Path temporary = tempDir.resolve("temporary-exact-entry");
+        Map<Path, String> namespace = new HashMap<>();
+        namespace.put(legacy, "music-object");
+        AtomicInteger moves = new AtomicInteger();
+        IOException cleanupFailure = new IOException("alias cleanup failed");
+        MusicDirectory.IdentityProbe identityProbe = namespaceIdentityProbe(namespace);
+        MusicDirectory.ValidatedDirectory captured = MusicDirectory.validateDirectory(legacy, identityProbe);
+        MusicDirectory.MigrationOperations operations = new MusicDirectory.MigrationOperations(
+                (source, target) -> {
+                    moves.incrementAndGet();
+                    moveNamespaceEntry(namespace, source, target);
+                    namespace.put(canonical, namespace.get(temporary));
+                },
+                namespacePresenceProbe(namespace),
+                identityProbe,
+                (left, right) -> Objects.equals(namespace.get(left), namespace.get(right)),
+                ignored -> {
+                    throw cleanupFailure;
+                }
+        );
+
+        IOException failure = assertThrows(IOException.class,
+                () -> MusicDirectory.migrate(captured, canonical, temporary, operations));
+
+        assertSame(cleanupFailure, failure);
+        assertEquals(1, moves.get());
+        assertEquals("music-object", namespace.get(canonical));
+        assertEquals("music-object", namespace.get(temporary));
+        assertFalse(namespace.containsKey(legacy));
+    }
+
+    @Test
+    void differentCanonicalEntryIsPreservedWhileTemporaryRollsBack() throws Exception {
+        Path legacy = tempDir.resolve("legacy-exact-entry");
+        Path canonical = tempDir.resolve("canonical-exact-entry");
+        Path temporary = tempDir.resolve("temporary-exact-entry");
+        Map<Path, String> namespace = new HashMap<>();
+        namespace.put(legacy, "music-object");
+        namespace.put(canonical, "canonical-sentinel");
+        AtomicInteger moves = new AtomicInteger();
+        AtomicInteger sameFileChecks = new AtomicInteger();
+        MusicDirectory.IdentityProbe identityProbe = namespaceIdentityProbe(namespace);
+        MusicDirectory.ValidatedDirectory captured = MusicDirectory.validateDirectory(legacy, identityProbe);
+        MusicDirectory.MigrationOperations operations = new MusicDirectory.MigrationOperations(
+                (source, target) -> {
+                    moves.incrementAndGet();
+                    moveNamespaceEntry(namespace, source, target);
+                },
+                namespacePresenceProbe(namespace),
+                identityProbe,
+                (left, right) -> {
+                    sameFileChecks.incrementAndGet();
+                    return Objects.equals(namespace.get(left), namespace.get(right));
+                },
+                namespace::remove
+        );
+
+        IOException failure = assertThrows(IOException.class,
+                () -> MusicDirectory.migrate(captured, canonical, temporary, operations));
+
+        assertTrue(failure.getMessage().contains("identity"));
+        assertEquals(2, moves.get());
+        assertEquals(0, sameFileChecks.get());
+        assertEquals("canonical-sentinel", namespace.get(canonical));
+        assertEquals("music-object", namespace.get(legacy));
+        assertFalse(namespace.containsKey(temporary));
+    }
+
+    @Test
+    void unknownCanonicalPresenceFailsClosedAndRollsBack() throws Exception {
+        Path legacy = tempDir.resolve("legacy-exact-entry");
+        Path canonical = tempDir.resolve("canonical-exact-entry");
+        Path temporary = tempDir.resolve("temporary-exact-entry");
+        Map<Path, String> namespace = new HashMap<>();
+        namespace.put(legacy, "music-object");
+        AtomicInteger moves = new AtomicInteger();
+        MusicDirectory.IdentityProbe identityProbe = namespaceIdentityProbe(namespace);
+        MusicDirectory.ValidatedDirectory captured = MusicDirectory.validateDirectory(legacy, identityProbe);
+        MusicDirectory.PresenceProbe presenceProbe = path -> path.equals(canonical)
+                ? MusicDirectory.Presence.UNKNOWN
+                : namespace.containsKey(path)
+                ? MusicDirectory.Presence.PRESENT
+                : MusicDirectory.Presence.ABSENT;
+        MusicDirectory.MigrationOperations operations = new MusicDirectory.MigrationOperations(
+                (source, target) -> {
+                    moves.incrementAndGet();
+                    moveNamespaceEntry(namespace, source, target);
+                },
+                presenceProbe,
+                identityProbe,
+                (left, right) -> false,
+                namespace::remove
+        );
+
+        IOException failure = assertThrows(IOException.class,
+                () -> MusicDirectory.migrate(captured, canonical, temporary, operations));
+
+        assertTrue(failure.getMessage().contains("UNKNOWN"));
+        assertEquals(2, moves.get());
+        assertEquals("music-object", namespace.get(legacy));
+        assertFalse(namespace.containsKey(temporary));
+        assertFalse(namespace.containsKey(canonical));
+    }
+
+    @Test
     void rollbackOnlyRestoresAPresentTemporaryEntryToAnAbsentLegacyEntry() {
         for (MusicDirectory.Presence temporary : MusicDirectory.Presence.values()) {
             for (MusicDirectory.Presence legacy : MusicDirectory.Presence.values()) {
@@ -506,7 +653,7 @@ class MusicDirectoryTest {
                 probe
         );
 
-        assertEquals(2, reads.get());
+        assertEquals(3, reads.get());
         assertEquals("original track", Files.readString(target.resolve("track.ogg")));
         assertFalse(Files.exists(source, LinkOption.NOFOLLOW_LINKS));
         assertFalse(Files.exists(temporary, LinkOption.NOFOLLOW_LINKS));
@@ -554,6 +701,33 @@ class MusicDirectoryTest {
                 new MusicDirectory.StoreIdentity(storeName, "test-store-type"),
                 FileTime.fromMillis(creationMillis)
         );
+    }
+
+    private static MusicDirectory.IdentityProbe namespaceIdentityProbe(Map<Path, String> namespace) {
+        return path -> {
+            String identity = namespace.get(path);
+            if (identity == null) {
+                throw new IOException("Missing fake namespace entry: " + path);
+            }
+            return keyedAttributes(identity);
+        };
+    }
+
+    private static MusicDirectory.PresenceProbe namespacePresenceProbe(Map<Path, String> namespace) {
+        return path -> namespace.containsKey(path)
+                ? MusicDirectory.Presence.PRESENT
+                : MusicDirectory.Presence.ABSENT;
+    }
+
+    private static void moveNamespaceEntry(Map<Path, String> namespace, Path source, Path target) throws IOException {
+        if (namespace.containsKey(target)) {
+            throw new IOException("Fake target already exists: " + target);
+        }
+        String identity = namespace.remove(source);
+        if (identity == null) {
+            throw new IOException("Fake source is missing: " + source);
+        }
+        namespace.put(target, identity);
     }
 
     private static boolean createSymbolicLink(Path link, Path target) {
