@@ -181,6 +181,9 @@ public final class PcmMixerEngine implements AutoCloseable {
         session.outgoing = true;
         for (RuntimeTrack track : session.tracks) {
             AreaTrackDefinition definition = session.state.tracks().get(track.trackIndex);
+            track.volumeGain.fadeTo(
+                    track.volumeGain.value(), 0, AudioStreamFactory.SAMPLE_RATE
+            );
             track.lifecycleGain.fadeTo(
                     0.0f, definition.fadeOutMs(), AudioStreamFactory.SAMPLE_RATE
             );

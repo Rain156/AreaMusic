@@ -709,6 +709,48 @@ class PcmMixerEngineTest {
     }
 
     @Test
+    void outgoingFadeFreezesAnInProgressVolumeRiseAndRemainsMonotonic() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("constant.wav"), new short[]{10_000});
+        AtomicInteger closeCount = new AtomicInteger();
+        AudioInputStream stream = new CloseCountingAudioInputStream(
+                pcmFrames(constantFrames(70_000, (short) 10_000)), closeCount
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new FixedAudioStreamFactory(stream), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "quiet",
+                    false,
+                    track("constant.wav", 0, 0.0f, true, 0, 1000)
+            ));
+            engine.renderFrames(1, 1.0f);
+            engine.apply(state(
+                    "audible",
+                    false,
+                    track("constant.wav", 0, 1.0f, true, 1000, 1000)
+            ));
+            engine.renderFrames(22_050, 1.0f);
+
+            engine.apply(PlaybackState.stopped());
+
+            int firstOutgoing = firstLeftSample(engine.renderFrames(1, 1.0f));
+            engine.renderFrames(11_024, 1.0f);
+            int quarterFade = firstLeftSample(engine.renderFrames(1, 1.0f));
+
+            assertEquals(5000, firstOutgoing, 2);
+            assertEquals(3750, quarterFade, 2);
+            assertTrue(quarterFade < firstOutgoing);
+
+            engine.renderFrames(33_074, 1.0f);
+
+            assertFalse(engine.hasWork());
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1, closeCount.get());
+        }
+    }
+
+    @Test
     void crossfadesOldAndNewTracksAtTheSameTime() throws Exception {
         Path root = tempDir.resolve("music");
         short[] positive = constantFrames(50_000, (short) 10_000);
