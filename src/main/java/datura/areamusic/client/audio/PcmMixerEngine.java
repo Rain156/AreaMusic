@@ -15,16 +15,16 @@ import java.util.Objects;
 public final class PcmMixerEngine implements AutoCloseable {
     private static final int CHANNELS = AudioStreamFactory.MIX_FORMAT.getChannels();
     private static final int FRAME_SIZE = AudioStreamFactory.MIX_FORMAT.getFrameSize();
-    private static final int MAX_TRACKS = 4;
+    private static final int MAX_LIVE_SESSIONS = 4;
     private static final int MAX_CONSECUTIVE_ZERO_READS = 64;
     private static final int OVERFLOW_FADE_MS = 20;
 
     private final AudioStreamFactory streamFactory;
-    private final List<Track> tracks = new ArrayList<>();
+    private final List<AreaSession> outgoingSessions = new ArrayList<>();
+    private final List<AudioFailure> failures = new ArrayList<>();
     private MusicLibrary musicLibrary;
     private PlaybackState currentState = PlaybackState.stopped();
-    private CompletedTrack completedTrack;
-    private PlaybackState pendingStart;
+    private AreaSession currentSession;
 
     public PcmMixerEngine(AudioStreamFactory streamFactory, MusicLibrary musicLibrary) {
         this.streamFactory = Objects.requireNonNull(streamFactory, "streamFactory");
@@ -35,45 +35,38 @@ public final class PcmMixerEngine implements AutoCloseable {
         this.musicLibrary = Objects.requireNonNull(musicLibrary, "musicLibrary");
     }
 
-    public void apply(PlaybackState state) throws AudioPlaybackException {
-        Objects.requireNonNull(state, "state");
-        if (!state.playing()) {
-            completedTrack = null;
-            pendingStart = null;
-            int fadeOutMs = currentState.playing() ? primaryTrack(currentState).fadeOutMs() : 0;
-            fadeAllToSilence(fadeOutMs);
-            currentState = state;
-            return;
-        }
-        AreaTrackDefinition primaryTrack = primaryTrack(state);
-        if (completedTrack != null && completedTrack.matches(state) && !primaryTrack.loop()) {
-            pendingStart = null;
-            currentState = state;
-            return;
-        }
-        completedTrack = null;
-
-        Track continuing = currentState.playing()
-                && primaryTrack(currentState).musicId().equals(primaryTrack.musicId())
-                ? findContinuingTrack(primaryTrack.musicId())
-                : null;
-        if (continuing != null) {
-            pendingStart = null;
-            continuing.areaId = state.areaId();
-            continuing.loop = primaryTrack.loop();
-            continuing.gain.fadeTo(primaryTrack.volume(), primaryTrack.fadeInMs(), AudioStreamFactory.SAMPLE_RATE);
-            currentState = state;
-            return;
-        }
-
-        int oldFadeOutMs = currentState.playing() ? primaryTrack(currentState).fadeOutMs() : 0;
-        fadeAllToSilence(oldFadeOutMs);
-        currentState = state;
-        pendingStart = state;
-        startPendingIfRoom();
+    public void apply(PlaybackState state) {
+        apply(0L, state);
     }
 
-    public byte[] renderFrames(int frameCount, float masterGain) throws AudioPlaybackException {
+    public void apply(long revision, PlaybackState state) {
+        Objects.requireNonNull(state, "state");
+        removeSilentOutgoingSessions();
+        if (state.equals(currentState)) {
+            return;
+        }
+
+        AreaSession previous = currentSession;
+        currentSession = null;
+        if (!state.playing()) {
+            moveToOutgoing(previous);
+            currentState = state;
+            removeSilentOutgoingSessions();
+            return;
+        }
+
+        AreaSession incoming = new AreaSession(revision, state);
+        if (previous != null) {
+            transferContinuingTracks(previous, incoming);
+            moveToOutgoing(previous);
+        }
+        currentSession = incoming;
+        currentState = state;
+        makeRoomForCurrentSession();
+        startDueTracks(incoming);
+    }
+
+    public byte[] renderFrames(int frameCount, float masterGain) {
         if (frameCount < 0) {
             throw new IllegalArgumentException("Frame count must not be negative");
         }
@@ -82,55 +75,29 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
 
         byte[] output = new byte[frameCount * FRAME_SIZE];
-        startPendingIfRoom();
-        if (frameCount == 0 || tracks.isEmpty()) {
-            return output;
-        }
-
         int[] mixed = new int[frameCount * CHANNELS];
-        Iterator<Track> iterator = tracks.iterator();
-        while (iterator.hasNext()) {
-            Track track = iterator.next();
-            byte[] trackPcm = new byte[output.length];
-            int framesRead;
-            try {
-                framesRead = track.readFrames(trackPcm, frameCount);
-            } catch (Exception exception) {
-                track.close();
-                iterator.remove();
-                throw new AudioPlaybackException(
-                        AudioFailure.Kind.DECODE,
-                        track.musicId,
-                        "Could not decode " + track.musicId,
-                        exception
-                );
-            }
+        int renderedFrames = 0;
+        while (renderedFrames < frameCount) {
+            removeSilentOutgoingSessions();
+            makeRoomForCurrentSession();
+            startDueTracks(currentSession);
 
-            for (int frame = 0; frame < frameCount; frame++) {
-                float gain = track.gain.value() * masterGain;
-                if (frame < framesRead) {
-                    int frameOffset = frame * FRAME_SIZE;
-                    int sampleIndex = frame * CHANNELS;
-                    mixed[sampleIndex] += PcmMath.scale(PcmMath.readLittleEndian(trackPcm, frameOffset), gain);
-                    mixed[sampleIndex + 1] += PcmMath.scale(
-                            PcmMath.readLittleEndian(trackPcm, frameOffset + 2), gain
-                    );
-                }
-                track.gain.advance(1);
+            long untilStart = currentSession == null
+                    ? Long.MAX_VALUE
+                    : currentSession.timeline.framesUntilNextStart();
+            int segmentFrames = (int) Math.min(
+                    frameCount - renderedFrames,
+                    Math.max(1L, untilStart)
+            );
+            mixSegment(mixed, renderedFrames, segmentFrames, masterGain);
+            if (currentSession != null && !currentSession.outgoing) {
+                currentSession.timeline.advancePending(segmentFrames);
             }
-
-            if (track.shouldRemove()) {
-                if (track.exhausted && !track.loop
-                        && currentState.playing()
-                        && track.areaId.equals(currentState.areaId())
-                        && track.musicId.equals(primaryTrack(currentState).musicId())) {
-                    completedTrack = new CompletedTrack(track.areaId, track.musicId);
-                }
-                track.close();
-                iterator.remove();
-            }
+            renderedFrames += segmentFrames;
         }
-        startPendingIfRoom();
+        removeSilentOutgoingSessions();
+        makeRoomForCurrentSession();
+        startDueTracks(currentSession);
 
         for (int sample = 0; sample < mixed.length; sample++) {
             PcmMath.writeLittleEndian(output, sample * 2, mixed[sample]);
@@ -138,8 +105,24 @@ public final class PcmMixerEngine implements AutoCloseable {
         return output;
     }
 
-    public boolean hasTracks() {
-        return !tracks.isEmpty();
+    public List<AudioFailure> drainFailures() {
+        List<AudioFailure> drained = List.copyOf(failures);
+        failures.clear();
+        return drained;
+    }
+
+    public boolean hasWork() {
+        if (currentSession != null
+                && (!currentSession.tracks.isEmpty()
+                || currentSession.timeline.framesUntilNextStart() != Long.MAX_VALUE)) {
+            return true;
+        }
+        for (AreaSession session : outgoingSessions) {
+            if (!session.tracks.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public PlaybackState currentState() {
@@ -148,104 +131,240 @@ public final class PcmMixerEngine implements AutoCloseable {
 
     @Override
     public void close() {
-        for (Track track : tracks) {
-            track.close();
+        if (currentSession != null) {
+            currentSession.close();
+            currentSession = null;
         }
-        tracks.clear();
+        for (AreaSession session : outgoingSessions) {
+            session.close();
+        }
+        outgoingSessions.clear();
+        failures.clear();
         currentState = PlaybackState.stopped();
-        completedTrack = null;
-        pendingStart = null;
     }
 
-    private Track findContinuingTrack(String musicId) {
-        for (int index = tracks.size() - 1; index >= 0; index--) {
-            Track track = tracks.get(index);
-            if (track.musicId.equals(musicId) && !track.exhausted && track.gain.target() > 0.0f) {
-                return track;
+    private void transferContinuingTracks(AreaSession previous, AreaSession incoming) {
+        Iterator<RuntimeTrack> iterator = previous.tracks.iterator();
+        while (iterator.hasNext()) {
+            RuntimeTrack runtime = iterator.next();
+            int index = runtime.trackIndex;
+            if (index >= incoming.state.tracks().size()) {
+                continue;
             }
-        }
-        return null;
-    }
-
-    private void fadeAllToSilence(int durationMs) {
-        for (Track track : tracks) {
-            if (!track.expeditedRemoval) {
-                track.gain.fadeTo(0.0f, durationMs, AudioStreamFactory.SAMPLE_RATE);
+            AreaTrackDefinition destination = incoming.state.tracks().get(index);
+            if (destination.delayFrames(AudioStreamFactory.SAMPLE_RATE) != 0L
+                    || !runtime.musicId().equals(destination.musicId())
+                    || runtime.exhausted
+                    || runtime.gain.target() == 0.0f) {
+                continue;
             }
+
+            long position = previous.timeline.positionInLoopFrames(index);
+            iterator.remove();
+            incoming.timeline.markStarted(index);
+            incoming.timeline.recordFramesRead(index, position);
+            runtime.attach(incoming, index, destination);
+            runtime.gain.fadeTo(
+                    destination.volume(), destination.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
+            );
+            incoming.tracks.add(runtime);
         }
     }
 
-    private void startPendingIfRoom() throws AudioPlaybackException {
-        removeSilentTracks();
-        if (pendingStart == null) {
+    private void moveToOutgoing(AreaSession session) {
+        if (session == null) {
             return;
         }
-        if (tracks.size() >= MAX_TRACKS) {
-            expediteQuietestOutgoingTrack();
-            return;
+        session.outgoing = true;
+        for (RuntimeTrack track : session.tracks) {
+            AreaTrackDefinition definition = session.state.tracks().get(track.trackIndex);
+            track.gain.fadeTo(0.0f, definition.fadeOutMs(), AudioStreamFactory.SAMPLE_RATE);
         }
-
-        PlaybackState state = pendingStart;
-        AreaTrackDefinition primaryTrack = primaryTrack(state);
-        Path path = musicLibrary.find(primaryTrack.musicId()).orElse(null);
-        if (path == null) {
-            pendingStart = null;
-            throw new AudioPlaybackException(
-                    AudioFailure.Kind.MISSING_FILE,
-                    primaryTrack.musicId(),
-                    "Local MusicID is missing: " + primaryTrack.musicId()
-            );
-        }
-        try {
-            Track incoming = new Track(state.areaId(), primaryTrack.musicId(), path, primaryTrack.loop());
-            incoming.gain.fadeTo(
-                    primaryTrack.volume(), primaryTrack.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
-            );
-            tracks.add(incoming);
-            pendingStart = null;
-        } catch (Exception exception) {
-            pendingStart = null;
-            throw new AudioPlaybackException(
-                    AudioFailure.Kind.DECODE,
-                    primaryTrack.musicId(),
-                    "Could not open " + primaryTrack.musicId(),
-                    exception
-            );
+        if (session.tracks.isEmpty()) {
+            session.close();
+        } else {
+            outgoingSessions.add(session);
         }
     }
 
-    private void expediteQuietestOutgoingTrack() {
-        for (Track track : tracks) {
-            if (track.expeditedRemoval) {
+    private void makeRoomForCurrentSession() {
+        if (currentSession == null || !currentSession.tracks.isEmpty()) {
+            return;
+        }
+        if (liveOutgoingSessionCount() < MAX_LIVE_SESSIONS) {
+            return;
+        }
+        expediteQuietestOutgoingSession();
+    }
+
+    private int liveOutgoingSessionCount() {
+        int count = 0;
+        for (AreaSession session : outgoingSessions) {
+            if (!session.tracks.isEmpty()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private boolean currentSessionHasRoom() {
+        return currentSession == null
+                || !currentSession.tracks.isEmpty()
+                || liveOutgoingSessionCount() < MAX_LIVE_SESSIONS;
+    }
+
+    private void expediteQuietestOutgoingSession() {
+        for (AreaSession session : outgoingSessions) {
+            if (session.expeditedRemoval) {
                 return;
             }
         }
 
-        Track quietest = null;
-        for (Track track : tracks) {
-            if (quietest == null || track.gain.value() < quietest.gain.value()) {
-                quietest = track;
+        AreaSession quietest = null;
+        float quietestGain = Float.POSITIVE_INFINITY;
+        for (AreaSession session : outgoingSessions) {
+            float sessionGain = 0.0f;
+            for (RuntimeTrack track : session.tracks) {
+                sessionGain += track.gain.value();
+            }
+            if (quietest == null || sessionGain < quietestGain) {
+                quietest = session;
+                quietestGain = sessionGain;
             }
         }
-        if (quietest != null) {
-            quietest.expeditedRemoval = true;
-            quietest.gain.fadeTo(0.0f, OVERFLOW_FADE_MS, AudioStreamFactory.SAMPLE_RATE);
+        if (quietest == null) {
+            return;
+        }
+        quietest.expeditedRemoval = true;
+        for (RuntimeTrack track : quietest.tracks) {
+            track.gain.fadeTo(0.0f, OVERFLOW_FADE_MS, AudioStreamFactory.SAMPLE_RATE);
         }
     }
 
-    private void removeSilentTracks() {
-        Iterator<Track> iterator = tracks.iterator();
+    private void startDueTracks(AreaSession session) {
+        if (session == null || session.outgoing || session != currentSession) {
+            return;
+        }
+        if (!currentSessionHasRoom()) {
+            return;
+        }
+
+        for (int trackIndex : session.timeline.dueTrackIndices()) {
+            AreaTrackDefinition definition = session.state.tracks().get(trackIndex);
+            Path path = musicLibrary.find(definition.musicId()).orElse(null);
+            if (path == null) {
+                session.timeline.markFailed(trackIndex);
+                failures.add(new AudioPlaybackException(
+                        AudioFailure.Kind.MISSING_FILE,
+                        definition.musicId(),
+                        "Local MusicID is missing: " + definition.musicId()
+                ).failure());
+                continue;
+            }
+
+            try {
+                RuntimeTrack runtime = new RuntimeTrack(session, trackIndex, definition, path);
+                session.timeline.markStarted(trackIndex);
+                runtime.gain.fadeTo(
+                        definition.volume(), definition.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
+                );
+                session.tracks.add(runtime);
+            } catch (Exception exception) {
+                session.timeline.markFailed(trackIndex);
+                failures.add(new AudioPlaybackException(
+                        AudioFailure.Kind.DECODE,
+                        definition.musicId(),
+                        "Could not open " + definition.musicId(),
+                        exception
+                ).failure());
+            }
+        }
+    }
+
+    private void mixSegment(
+            int[] mixed,
+            int outputFrameOffset,
+            int frameCount,
+            float masterGain
+    ) {
+        for (AreaSession session : outgoingSessions) {
+            mixSession(session, mixed, outputFrameOffset, frameCount, masterGain);
+        }
+        mixSession(currentSession, mixed, outputFrameOffset, frameCount, masterGain);
+    }
+
+    private void mixSession(
+            AreaSession session,
+            int[] mixed,
+            int outputFrameOffset,
+            int frameCount,
+            float masterGain
+    ) {
+        if (session == null) {
+            return;
+        }
+        Iterator<RuntimeTrack> iterator = session.tracks.iterator();
         while (iterator.hasNext()) {
-            Track track = iterator.next();
-            if (track.gain.isComplete() && track.gain.target() == 0.0f) {
+            RuntimeTrack track = iterator.next();
+            byte[] trackPcm = new byte[frameCount * FRAME_SIZE];
+            int framesRead;
+            try {
+                framesRead = track.readFrames(trackPcm, frameCount);
+            } catch (Exception exception) {
+                if (!session.timeline.failed(track.trackIndex)
+                        && !session.timeline.completed(track.trackIndex)) {
+                    session.timeline.markFailed(track.trackIndex);
+                }
+                track.close();
+                iterator.remove();
+                failures.add(new AudioPlaybackException(
+                        AudioFailure.Kind.DECODE,
+                        track.musicId(),
+                        "Could not decode " + track.musicId(),
+                        exception
+                ).failure());
+                continue;
+            }
+
+            for (int frame = 0; frame < frameCount; frame++) {
+                float gain = track.gain.value() * masterGain;
+                if (frame < framesRead) {
+                    int sourceOffset = frame * FRAME_SIZE;
+                    int mixedSample = (outputFrameOffset + frame) * CHANNELS;
+                    mixed[mixedSample] += PcmMath.scale(
+                            PcmMath.readLittleEndian(trackPcm, sourceOffset), gain
+                    );
+                    mixed[mixedSample + 1] += PcmMath.scale(
+                            PcmMath.readLittleEndian(trackPcm, sourceOffset + 2), gain
+                    );
+                }
+                track.gain.advance(1);
+            }
+
+            if (track.shouldRemove()) {
                 track.close();
                 iterator.remove();
             }
         }
     }
 
-    private static AreaTrackDefinition primaryTrack(PlaybackState state) {
-        return state.tracks().get(0);
+    private void removeSilentOutgoingSessions() {
+        Iterator<AreaSession> sessionIterator = outgoingSessions.iterator();
+        while (sessionIterator.hasNext()) {
+            AreaSession session = sessionIterator.next();
+            Iterator<RuntimeTrack> trackIterator = session.tracks.iterator();
+            while (trackIterator.hasNext()) {
+                RuntimeTrack track = trackIterator.next();
+                if (track.gain.isComplete() && track.gain.target() == 0.0f) {
+                    track.close();
+                    trackIterator.remove();
+                }
+            }
+            if (session.tracks.isEmpty()) {
+                session.close();
+                sessionIterator.remove();
+            }
+        }
     }
 
     public static final class AudioPlaybackException extends Exception {
@@ -274,28 +393,66 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
     }
 
-    private record CompletedTrack(String areaId, String musicId) {
-        private boolean matches(PlaybackState state) {
-            return areaId.equals(state.areaId()) && musicId.equals(primaryTrack(state).musicId());
+    private final class AreaSession implements AutoCloseable {
+        private final long revision;
+        private final PlaybackState state;
+        private final AreaPlaybackTimeline timeline;
+        private final List<RuntimeTrack> tracks = new ArrayList<>();
+        private boolean outgoing;
+        private boolean snapshotWhenSilent;
+        private boolean expeditedRemoval;
+
+        private AreaSession(long revision, PlaybackState state) {
+            this.revision = revision;
+            this.state = state;
+            this.timeline = AreaPlaybackTimeline.fresh(
+                    state.tracks(), AudioStreamFactory.SAMPLE_RATE
+            );
+        }
+
+        @Override
+        public void close() {
+            for (RuntimeTrack track : tracks) {
+                track.close();
+            }
+            tracks.clear();
         }
     }
 
-    private final class Track {
-        private String areaId;
-        private final String musicId;
+    private final class RuntimeTrack {
+        private AreaSession session;
+        private int trackIndex;
+        private AreaTrackDefinition definition;
         private final Path path;
         private final FadeEnvelope gain = new FadeEnvelope(0.0f);
         private AudioInputStream stream;
-        private boolean loop;
         private boolean exhausted;
-        private boolean expeditedRemoval;
 
-        private Track(String areaId, String musicId, Path path, boolean loop) throws Exception {
-            this.areaId = areaId;
-            this.musicId = musicId;
+        private RuntimeTrack(
+                AreaSession session,
+                int trackIndex,
+                AreaTrackDefinition definition,
+                Path path
+        ) throws Exception {
+            this.session = session;
+            this.trackIndex = trackIndex;
+            this.definition = definition;
             this.path = path;
-            this.loop = loop;
             this.stream = streamFactory.open(path);
+        }
+
+        private void attach(
+                AreaSession destinationSession,
+                int destinationIndex,
+                AreaTrackDefinition destinationDefinition
+        ) {
+            session = destinationSession;
+            trackIndex = destinationIndex;
+            definition = destinationDefinition;
+        }
+
+        private String musicId() {
+            return definition.musicId();
         }
 
         private int readFrames(byte[] destination, int requestedFrames) throws Exception {
@@ -306,7 +463,13 @@ public final class PcmMixerEngine implements AutoCloseable {
             while (totalBytes < requestedBytes) {
                 int read = stream.read(destination, totalBytes, requestedBytes - totalBytes);
                 if (read > 0) {
+                    if (read % FRAME_SIZE != 0) {
+                        throw new IOException(
+                                "Decoder for " + musicId() + " returned a partial PCM frame"
+                        );
+                    }
                     totalBytes += read;
+                    session.timeline.recordFramesRead(trackIndex, read / FRAME_SIZE);
                     consecutiveZeroReads = 0;
                     reopenedWithoutData = false;
                     continue;
@@ -315,17 +478,19 @@ public final class PcmMixerEngine implements AutoCloseable {
                     consecutiveZeroReads++;
                     if (consecutiveZeroReads > MAX_CONSECUTIVE_ZERO_READS) {
                         throw new IOException(
-                                "Decoder for " + musicId + " returned zero bytes "
+                                "Decoder for " + musicId() + " returned zero bytes "
                                         + consecutiveZeroReads + " consecutive times"
                         );
                     }
                     continue;
                 }
-                if (!loop || reopenedWithoutData) {
+                if (!definition.loop() || reopenedWithoutData) {
                     exhausted = true;
+                    session.timeline.markCompleted(trackIndex);
                     break;
                 }
                 reopen();
+                session.timeline.markLoopRestarted(trackIndex);
                 consecutiveZeroReads = 0;
                 reopenedWithoutData = true;
             }
@@ -337,14 +502,22 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
 
         private void reopen() throws Exception {
-            stream.close();
+            closeStream();
             stream = streamFactory.open(path);
         }
 
         private void close() {
             try {
-                stream.close();
+                closeStream();
             } catch (IOException ignored) {
+            }
+        }
+
+        private void closeStream() throws IOException {
+            AudioInputStream openStream = stream;
+            stream = null;
+            if (openStream != null) {
+                openStream.close();
             }
         }
     }

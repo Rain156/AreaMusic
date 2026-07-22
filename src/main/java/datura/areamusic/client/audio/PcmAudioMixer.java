@@ -108,6 +108,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     private void runAudioLoop() {
         AudioOutput output = null;
         boolean outputStarted = false;
+        byte[] pendingWrite = null;
         long deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
         try (PcmMixerEngine engine = new PcmMixerEngine(new AudioStreamFactory(), initialLibrary)) {
             while (running) {
@@ -118,8 +119,8 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                 if (update.playbackState() != null) {
                     try {
                         engine.apply(update.playbackState());
-                    } catch (PcmMixerEngine.AudioPlaybackException exception) {
-                        errorListener.onError(exception.failure());
+                    } finally {
+                        reportEngineFailures(engine);
                     }
                 }
 
@@ -131,7 +132,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     waitForSignal(50L);
                     continue;
                 }
-                if (!engine.hasTracks()) {
+                if (!engine.hasWork() && pendingWrite == null) {
                     if (output != null) {
                         if (!outputStarted) {
                             try {
@@ -155,6 +156,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                 }
 
                 if (output == null && !engine.currentState().playing()) {
+                    pendingWrite = null;
                     engine.close();
                     continue;
                 }
@@ -185,19 +187,20 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     }
                 }
 
-                byte[] rendered;
-                try {
-                    rendered = engine.renderFrames(BLOCK_FRAMES, masterGain);
-                } catch (PcmMixerEngine.AudioPlaybackException exception) {
-                    errorListener.onError(exception.failure());
-                    continue;
-                } catch (Exception exception) {
-                    report(AudioFailure.Kind.DECODE, "", exception);
-                    continue;
+                if (pendingWrite == null) {
+                    try {
+                        pendingWrite = engine.renderFrames(BLOCK_FRAMES, masterGain);
+                    } catch (Exception exception) {
+                        report(AudioFailure.Kind.DECODE, "", exception);
+                        continue;
+                    } finally {
+                        reportEngineFailures(engine);
+                    }
                 }
 
                 try {
-                    output.write(rendered);
+                    output.write(pendingWrite);
+                    pendingWrite = null;
                     deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
                 } catch (InterruptedException exception) {
                     if (running) {
@@ -252,6 +255,12 @@ public final class PcmAudioMixer implements ClientAudioMixer {
 
     private void report(AudioFailure.Kind kind, String musicId, Throwable error) {
         errorListener.onError(new AudioFailure(kind, musicId, error));
+    }
+
+    private void reportEngineFailures(PcmMixerEngine engine) {
+        for (AudioFailure failure : engine.drainFailures()) {
+            errorListener.onError(failure);
+        }
     }
 
     private PendingUpdate drainPendingUpdate() {

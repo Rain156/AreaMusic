@@ -20,13 +20,152 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PcmAudioMixerTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void writesSilentBlocksUntilADelayedTrackBecomesDue() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeConstantWav(root.resolve("delayed.wav"), (short) 3456, 1);
+        DelayCapturingOutput output = new DelayCapturingOutput();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.scan(root), () -> output, failures::add
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.playing(
+                    "area",
+                    List.of(new AreaTrackDefinition("delayed.wav", 1, 1.0f, false, 0, 0)),
+                    false
+            ));
+
+            assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
+            assertTrue(output.firstNonSilent.await(2, TimeUnit.SECONDS));
+            assertEquals(0, PcmMath.readLittleEndian(output.firstBlock.get(), 0));
+            assertEquals(44_100, output.firstNonSilentFrame.get());
+            assertTrue(failures.isEmpty());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void reportsOneTrackFailureWhileAnotherTrackKeepsWriting() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeConstantWav(root.resolve("good.wav"), (short) 2345, 4096);
+        FakeOutput output = new FakeOutput();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        CountDownLatch reported = new CountDownLatch(1);
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.scan(root),
+                () -> output,
+                failure -> {
+                    failures.add(failure);
+                    reported.countDown();
+                }
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.playing(
+                    "area",
+                    List.of(
+                            new AreaTrackDefinition("missing.wav", 0, 1.0f, false, 0, 0),
+                            new AreaTrackDefinition("good.wav", 0, 1.0f, true, 0, 0)
+                    ),
+                    false
+            ));
+
+            assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
+            assertTrue(reported.await(1, TimeUnit.SECONDS));
+            assertEquals(2345, PcmMath.readLittleEndian(output.firstBlock.get(), 0));
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.MISSING_FILE, failures.get(0).kind());
+            assertEquals("missing.wav", failures.get(0).musicId());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void pauseFreezesDelayedPlaybackUntilTheWorkerResumes() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeConstantWav(root.resolve("delayed.wav"), (short) 3456, 1);
+        PausableDelayOutput output = new PausableDelayOutput();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.scan(root), () -> output, failure -> {
+                }
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.playing(
+                    "area",
+                    List.of(new AreaTrackDefinition("delayed.wav", 1, 1.0f, false, 0, 0)),
+                    false
+            ));
+            assertTrue(output.firstWriteEntered.await(1, TimeUnit.SECONDS));
+
+            mixer.setPaused(true);
+            output.releaseFirstWrite.countDown();
+
+            assertTrue(output.stopped.await(1, TimeUnit.SECONDS));
+            assertFalse(output.secondWrite.await(250, TimeUnit.MILLISECONDS));
+
+            mixer.setPaused(false);
+
+            assertTrue(output.firstNonSilent.await(2, TimeUnit.SECONDS));
+            assertEquals(44_100, output.firstNonSilentFrame.get());
+        } finally {
+            output.releaseFirstWrite.countDown();
+            mixer.close();
+        }
+    }
+
+    @Test
+    void deviceOpenBackoffDoesNotAdvanceDelayedPlayback() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeConstantWav(root.resolve("delayed.wav"), (short) 3456, 1);
+        DelayCapturingOutput workingOutput = new DelayCapturingOutput();
+        AtomicInteger openAttempts = new AtomicInteger();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.scan(root),
+                () -> {
+                    if (openAttempts.getAndIncrement() == 0) {
+                        throw new IllegalStateException("open failed");
+                    }
+                    return workingOutput;
+                },
+                failures::add
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.playing(
+                    "area",
+                    List.of(new AreaTrackDefinition("delayed.wav", 1, 1.0f, false, 0, 0)),
+                    false
+            ));
+
+            assertTrue(workingOutput.firstNonSilent.await(3, TimeUnit.SECONDS));
+            assertEquals(44_100, workingOutput.firstNonSilentFrame.get());
+            assertEquals(2, openAttempts.get());
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.DEVICE, failures.get(0).kind());
+        } finally {
+            mixer.close();
+        }
+    }
 
     @Test
     void rendersSubmittedPlaybackStateOnTheOwnedAudioThread() throws Exception {
@@ -123,6 +262,37 @@ class PcmAudioMixerTest {
         assertTrue(retried);
         assertTrue(failedOutputClosed.get());
         assertTrue(error.get().getMessage().contains("write failed"));
+    }
+
+    @Test
+    void writeFailureRetriesTheSameRenderedBlockWithoutSkippingContent() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeTwoBlockWav(root.resolve("sequence.wav"), (short) 1200, (short) 2400);
+        FakeOutput workingOutput = new FakeOutput();
+        AtomicBoolean failedOutputClosed = new AtomicBoolean();
+        AtomicReference<byte[]> failedBlock = new AtomicReference<>();
+        AtomicInteger openAttempts = new AtomicInteger();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.scan(root),
+                () -> openAttempts.getAndIncrement() == 0
+                        ? new WriteFailingOutput(failedOutputClosed, failedBlock)
+                        : workingOutput,
+                failure -> {
+                }
+        );
+
+        try {
+            mixer.start();
+            mixer.apply(playing("area", "sequence.wav", 1.0f, false, 0, 0));
+
+            assertTrue(workingOutput.firstWrite.await(2, TimeUnit.SECONDS));
+            assertNotNull(failedBlock.get());
+            assertArrayEquals(failedBlock.get(), workingOutput.firstBlock.get());
+            assertEquals(1200, PcmMath.readLittleEndian(workingOutput.firstBlock.get(), 0));
+            assertTrue(failedOutputClosed.get());
+        } finally {
+            mixer.close();
+        }
     }
 
     @Test
@@ -289,6 +459,23 @@ class PcmAudioMixerTest {
         }
     }
 
+    private static void writeTwoBlockWav(Path path, short firstSample, short secondSample)
+            throws Exception {
+        int blockFrames = 1024;
+        Files.createDirectories(path.getParent());
+        byte[] pcm = new byte[blockFrames * 2 * AudioStreamFactory.MIX_FORMAT.getFrameSize()];
+        for (int frame = 0; frame < blockFrames * 2; frame++) {
+            short sample = frame < blockFrames ? firstSample : secondSample;
+            int offset = frame * AudioStreamFactory.MIX_FORMAT.getFrameSize();
+            PcmMath.writeLittleEndian(pcm, offset, sample);
+            PcmMath.writeLittleEndian(pcm, offset + 2, sample);
+        }
+        try (AudioInputStream stream = new AudioInputStream(
+                new ByteArrayInputStream(pcm), AudioStreamFactory.MIX_FORMAT, blockFrames * 2L)) {
+            AudioSystem.write(stream, AudioFileFormat.Type.WAVE, path.toFile());
+        }
+    }
+
     private static final class FakeOutput implements PcmAudioMixer.AudioOutput {
         private final CountDownLatch firstWrite = new CountDownLatch(1);
         private final CountDownLatch closed = new CountDownLatch(1);
@@ -317,6 +504,100 @@ class PcmAudioMixerTest {
         @Override
         public void close() {
             closed.countDown();
+        }
+    }
+
+    private static final class DelayCapturingOutput implements PcmAudioMixer.AudioOutput {
+        private static final int BLOCK_FRAMES = 1024;
+
+        private final CountDownLatch firstWrite = new CountDownLatch(1);
+        private final CountDownLatch firstNonSilent = new CountDownLatch(1);
+        private final AtomicReference<byte[]> firstBlock = new AtomicReference<>();
+        private final AtomicInteger blocksWritten = new AtomicInteger();
+        private final AtomicInteger firstNonSilentFrame = new AtomicInteger(-1);
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public void write(byte[] pcm) {
+            firstBlock.compareAndSet(null, pcm.clone());
+            firstWrite.countDown();
+            int block = blocksWritten.getAndIncrement();
+            int frameSize = AudioStreamFactory.MIX_FORMAT.getFrameSize();
+            for (int frame = 0; frame < pcm.length / frameSize; frame++) {
+                if (PcmMath.readLittleEndian(pcm, frame * frameSize) == 0) {
+                    continue;
+                }
+                if (firstNonSilentFrame.compareAndSet(-1, block * BLOCK_FRAMES + frame)) {
+                    firstNonSilent.countDown();
+                }
+                break;
+            }
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class PausableDelayOutput implements PcmAudioMixer.AudioOutput {
+        private static final int BLOCK_FRAMES = 1024;
+
+        private final CountDownLatch firstWriteEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseFirstWrite = new CountDownLatch(1);
+        private final CountDownLatch secondWrite = new CountDownLatch(1);
+        private final CountDownLatch stopped = new CountDownLatch(1);
+        private final CountDownLatch firstNonSilent = new CountDownLatch(1);
+        private final AtomicInteger blocksWritten = new AtomicInteger();
+        private final AtomicInteger firstNonSilentFrame = new AtomicInteger(-1);
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+            stopped.countDown();
+        }
+
+        @Override
+        public void write(byte[] pcm) throws InterruptedException {
+            int block = blocksWritten.getAndIncrement();
+            if (block == 0) {
+                firstWriteEntered.countDown();
+                releaseFirstWrite.await(2, TimeUnit.SECONDS);
+            } else {
+                secondWrite.countDown();
+            }
+            int frameSize = AudioStreamFactory.MIX_FORMAT.getFrameSize();
+            for (int frame = 0; frame < pcm.length / frameSize; frame++) {
+                if (PcmMath.readLittleEndian(pcm, frame * frameSize) == 0) {
+                    continue;
+                }
+                if (firstNonSilentFrame.compareAndSet(-1, block * BLOCK_FRAMES + frame)) {
+                    firstNonSilent.countDown();
+                }
+                break;
+            }
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+            releaseFirstWrite.countDown();
         }
     }
 
@@ -352,9 +633,18 @@ class PcmAudioMixerTest {
 
     private static final class WriteFailingOutput implements PcmAudioMixer.AudioOutput {
         private final AtomicBoolean closed;
+        private final AtomicReference<byte[]> attemptedBlock;
 
         private WriteFailingOutput(AtomicBoolean closed) {
+            this(closed, null);
+        }
+
+        private WriteFailingOutput(
+                AtomicBoolean closed,
+                AtomicReference<byte[]> attemptedBlock
+        ) {
             this.closed = closed;
+            this.attemptedBlock = attemptedBlock;
         }
 
         @Override
@@ -367,6 +657,9 @@ class PcmAudioMixerTest {
 
         @Override
         public void write(byte[] pcm) {
+            if (attemptedBlock != null) {
+                attemptedBlock.compareAndSet(null, pcm.clone());
+            }
             throw new IllegalStateException("write failed");
         }
 

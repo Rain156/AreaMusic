@@ -9,26 +9,440 @@ import org.junit.jupiter.api.io.TempDir;
 import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.UnsupportedAudioFileException;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PcmMixerEngineTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void publicApplyAndRenderApisDoNotDeclarePerTrackFailures() throws Exception {
+        assertEquals(
+                0,
+                PcmMixerEngine.class
+                        .getMethod("apply", PlaybackState.class)
+                        .getExceptionTypes().length
+        );
+        assertEquals(
+                0,
+                PcmMixerEngine.class
+                        .getMethod("apply", long.class, PlaybackState.class)
+                        .getExceptionTypes().length
+        );
+        assertEquals(
+                0,
+                PcmMixerEngine.class
+                        .getMethod("renderFrames", int.class, float.class)
+                        .getExceptionTypes().length
+        );
+    }
+
+    @Test
+    void startsDelayedTrackOnTheExactFrameWhileAnotherTrackKeepsPlaying() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("first.wav"), constantFrames(44_101, (short) 1000));
+        writeWav(root.resolve("second.wav"), constantFrames(44_101, (short) 2000));
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(1L, state(
+                    "area",
+                    false,
+                    track("first.wav", 0, true, 0, 0),
+                    track("second.wav", 1, true, 0, 0)
+            ));
+
+            byte[] beforeDelay = engine.renderFrames(44_100, 1.0f);
+
+            assertEquals(1000, leftSample(beforeDelay, 44_099));
+            assertEquals(3000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        }
+    }
+
+    @Test
+    void startsMultipleDueNonLoopTracksOnTheSameFrame() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("first.wav"), new short[]{1000});
+        writeWav(root.resolve("second.wav"), new short[]{2000});
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("first.wav", 0, false, 0, 0),
+                    track("second.wav", 0, false, 0, 0)
+            ));
+
+            assertEquals(3000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        }
+    }
+
+    @Test
+    void appliesEachTrackVolumeBeforeMixing() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("first.wav"), new short[]{10_000, 10_000});
+        writeWav(root.resolve("second.wav"), new short[]{10_000, 10_000});
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("first.wav", 0, 0.5f, false, 0, 0),
+                    track("second.wav", 0, 0.25f, false, 0, 0)
+            ));
+
+            assertEquals(7500, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(3750, firstLeftSample(engine.renderFrames(1, 0.5f)));
+        }
+    }
+
+    @Test
+    void opensSimultaneouslyDueDuplicateIdsInStableJsonOrder() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("same.wav"), new short[]{1000});
+        writeWav(root.resolve("third.wav"), new short[]{2000});
+        List<String> openOrder = new ArrayList<>();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                openOrder.add(path.getFileName().toString());
+                return super.open(path);
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("same.wav", 0, false, 0, 0),
+                    track("same.wav", 0, false, 0, 0),
+                    track("third.wav", 0, false, 0, 0)
+            ));
+
+            assertEquals(List.of("same.wav", "same.wav", "third.wav"), openOrder);
+            assertEquals(4000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        }
+    }
+
+    @Test
+    void loopRestartAdvancesOnlyTheTrackThatReachedEof() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("short-loop.wav"), new short[]{100, 200});
+        writeWav(root.resolve("long-once.wav"), new short[]{1000, 2000, 3000});
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("short-loop.wav", 0, true, 0, 0),
+                    track("long-once.wav", 0, false, 0, 0)
+            ));
+
+            byte[] rendered = engine.renderFrames(3, 1.0f);
+
+            assertEquals(1100, leftSample(rendered, 0));
+            assertEquals(2200, leftSample(rendered, 1));
+            assertEquals(3100, leftSample(rendered, 2));
+        }
+    }
+
+    @Test
+    void nonLoopEofCompletesOnlyThatTrack() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("once.wav"), new short[]{1000});
+        writeWav(root.resolve("loop.wav"), new short[]{2000});
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("once.wav", 0, false, 0, 0),
+                    track("loop.wav", 0, true, 0, 0)
+            ));
+
+            byte[] rendered = engine.renderFrames(2, 1.0f);
+
+            assertEquals(3000, leftSample(rendered, 0));
+            assertEquals(2000, leftSample(rendered, 1));
+            assertTrue(engine.hasWork());
+            assertTrue(engine.drainFailures().isEmpty());
+        }
+    }
+
+    @Test
+    void saturatesMixedSamplesAtSignedPcmBounds() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("positive.wav"), new short[]{30_000});
+        writeWav(root.resolve("negative.wav"), new short[]{-30_000});
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "positive",
+                    false,
+                    track("positive.wav", 0, false, 0, 0),
+                    track("positive.wav", 0, false, 0, 0)
+            ));
+            assertEquals(Short.MAX_VALUE, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(state(
+                    "negative",
+                    false,
+                    track("negative.wav", 0, false, 0, 0),
+                    track("negative.wav", 0, false, 0, 0)
+            ));
+            assertEquals(Short.MIN_VALUE, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        }
+    }
+
+    @Test
+    void largeRenderBlockCrossesMultipleDelayBoundariesExactly() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("first.wav"), constantFrames(88_201, (short) 1000));
+        writeWav(root.resolve("second.wav"), constantFrames(88_201, (short) 2000));
+        writeWav(root.resolve("third.wav"), constantFrames(88_201, (short) 4000));
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("first.wav", 0, true, 0, 0),
+                    track("second.wav", 1, true, 0, 0),
+                    track("third.wav", 2, true, 0, 0)
+            ));
+
+            byte[] rendered = engine.renderFrames(88_201, 1.0f);
+
+            assertEquals(1000, leftSample(rendered, 44_099));
+            assertEquals(3000, leftSample(rendered, 44_100));
+            assertEquals(3000, leftSample(rendered, 88_199));
+            assertEquals(7000, leftSample(rendered, 88_200));
+        }
+    }
+
+    @Test
+    void stoppedTransitionAndRepeatedCloseReleaseEachStreamOnce() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("first.wav"), new short[]{1000});
+        writeWav(root.resolve("second.wav"), new short[]{2000});
+        AtomicInteger firstCloseCount = new AtomicInteger();
+        AtomicInteger secondCloseCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path) {
+                boolean first = path.getFileName().toString().equals("first.wav");
+                return new CloseCountingAudioInputStream(
+                        pcmFrames(first ? (short) 1000 : (short) 2000),
+                        first ? firstCloseCount : secondCloseCount
+                );
+            }
+        };
+        PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root));
+        engine.apply(state(
+                "area",
+                false,
+                track("first.wav", 0, true, 0, 0),
+                track("second.wav", 0, true, 0, 0)
+        ));
+        engine.apply(PlaybackState.stopped());
+
+        assertEquals(1, firstCloseCount.get());
+        assertEquals(1, secondCloseCount.get());
+
+        engine.close();
+        engine.close();
+
+        assertEquals(1, firstCloseCount.get());
+        assertEquals(1, secondCloseCount.get());
+    }
+
+    @Test
+    void missingDueTrackDoesNotStopAnotherDueTrack() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("good.wav"), new short[]{2345});
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("missing.wav", 0, false, 0, 0),
+                    track("good.wav", 0, false, 0, 0)
+            ));
+
+            assertEquals(2345, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            List<AudioFailure> failures = engine.drainFailures();
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.MISSING_FILE, failures.get(0).kind());
+            assertEquals("missing.wav", failures.get(0).musicId());
+            assertTrue(engine.drainFailures().isEmpty());
+        }
+    }
+
+    @Test
+    void reportsPendingDelayedTrackAsWorkUntilItIsCancelled() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("delayed.wav"), new short[]{1234});
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area", false, track("delayed.wav", 1, false, 0, 0)
+            ));
+
+            assertTrue(engine.hasWork());
+
+            engine.apply(PlaybackState.stopped());
+
+            assertFalse(engine.hasWork());
+        }
+    }
+
+    @Test
+    void openFailureDoesNotStopAnotherDueTrack() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{1111});
+        writeWav(root.resolve("good.wav"), new short[]{2345});
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.getFileName().toString().equals("bad.wav")) {
+                    throw new IOException("open failed");
+                }
+                return super.open(path);
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("bad.wav", 0, false, 0, 0),
+                    track("good.wav", 0, false, 0, 0)
+            ));
+
+            assertEquals(2345, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            List<AudioFailure> failures = engine.drainFailures();
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.DECODE, failures.get(0).kind());
+            assertEquals("bad.wav", failures.get(0).musicId());
+            assertTrue(engine.drainFailures().isEmpty());
+        }
+    }
+
+    @Test
+    void firstDecodeFailureDoesNotStopAnotherActiveTrack() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{1111});
+        writeWav(root.resolve("good.wav"), new short[]{2345});
+        AtomicInteger badCloseCount = new AtomicInteger();
+        AudioInputStream badStream = new ThrowingReadAudioInputStream(
+                pcmFrames((short) 1111), 0, badCloseCount
+        );
+        AudioStreamFactory factory = streamFactoryWithBadStream(badStream);
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("bad.wav", 0, false, 0, 0),
+                    track("good.wav", 0, true, 0, 0)
+            ));
+
+            assertEquals(2345, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertSingleDecodeFailure(engine, "bad.wav");
+            assertEquals(1, badCloseCount.get());
+        }
+    }
+
+    @Test
+    void runningDecodeFailureTerminatesOnlyThatTrack() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{1111});
+        writeWav(root.resolve("good.wav"), new short[]{2345});
+        AtomicInteger badCloseCount = new AtomicInteger();
+        AudioInputStream badStream = new ThrowingReadAudioInputStream(
+                pcmFrames((short) 1111), 1, badCloseCount
+        );
+        AudioStreamFactory factory = streamFactoryWithBadStream(badStream);
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("bad.wav", 0, false, 0, 0),
+                    track("good.wav", 0, true, 0, 0)
+            ));
+
+            assertEquals(3456, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(2345, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertSingleDecodeFailure(engine, "bad.wav");
+            assertEquals(1, badCloseCount.get());
+        }
+    }
+
+    @Test
+    void loopReopenFailureTerminatesOnlyThatTrackWithoutDoubleClose() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("bad.wav"), new short[]{1111});
+        writeWav(root.resolve("good.wav"), new short[]{2345});
+        AtomicInteger badOpenCount = new AtomicInteger();
+        AtomicInteger badCloseCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (!path.getFileName().toString().equals("bad.wav")) {
+                    return super.open(path);
+                }
+                if (badOpenCount.getAndIncrement() > 0) {
+                    throw new IOException("reopen failed");
+                }
+                return new CloseCountingAudioInputStream(
+                        pcmFrames((short) 1111), badCloseCount
+                );
+            }
+        };
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("bad.wav", 0, true, 0, 0),
+                    track("good.wav", 0, true, 0, 0)
+            ));
+
+            assertEquals(3456, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(2345, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertSingleDecodeFailure(engine, "bad.wav");
+            assertEquals(2, badOpenCount.get());
+            assertEquals(1, badCloseCount.get());
+        }
+    }
 
     @Test
     void keepsStreamPositionWhenAdjacentAreasUseTheSameMusicId() throws Exception {
@@ -63,6 +477,54 @@ class PcmMixerEngineTest {
 
         assertEquals(0, halfWaySample, 2);
         engine.close();
+    }
+
+    @Test
+    void appliesEachTrackFadeInIndependently() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("immediate.wav"), constantFrames(50_000, (short) 10_000));
+        writeWav(root.resolve("fading.wav"), constantFrames(50_000, (short) 10_000));
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "area",
+                    false,
+                    track("immediate.wav", 0, true, 0, 0),
+                    track("fading.wav", 0, true, 1000, 0)
+            ));
+
+            assertEquals(10_000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.renderFrames(22_049, 1.0f);
+            assertEquals(15_000, firstLeftSample(engine.renderFrames(1, 1.0f)), 2);
+        }
+    }
+
+    @Test
+    void appliesEachOutgoingTrackFadeOutIndependently() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("immediate.wav"), constantFrames(50_000, (short) 10_000));
+        writeWav(root.resolve("fading.wav"), constantFrames(50_000, (short) 10_000));
+        writeWav(root.resolve("silent.wav"), constantFrames(50_000, (short) 0));
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(state(
+                    "old",
+                    false,
+                    track("immediate.wav", 0, true, 0, 0),
+                    track("fading.wav", 0, true, 0, 1000)
+            ));
+            assertEquals(20_000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(state(
+                    "new", false, track("silent.wav", 0, true, 0, 0)
+            ));
+
+            assertEquals(10_000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.renderFrames(22_049, 1.0f);
+            assertEquals(5000, firstLeftSample(engine.renderFrames(1, 1.0f)), 2);
+        }
     }
 
     @Test
@@ -179,7 +641,7 @@ class PcmMixerEngineTest {
     }
 
     @Test
-    void persistentZeroReadsFailAsDecodeError() throws Exception {
+    void persistentZeroReadsQueueOneDecodeFailure() throws Exception {
         Path root = tempDir.resolve("music");
         Files.createDirectories(root);
         Files.write(root.resolve("stalled.wav"), new byte[0]);
@@ -189,15 +651,18 @@ class PcmMixerEngineTest {
                 new FixedAudioStreamFactory(stream), MusicLibrary.scan(root))) {
             engine.apply(playing("stalled", "stalled.wav", 1.0f, false, 0, 0));
 
-            PcmMixerEngine.AudioPlaybackException exception = assertTimeoutPreemptively(
-                    Duration.ofSeconds(2),
-                    () -> assertThrows(
-                            PcmMixerEngine.AudioPlaybackException.class,
-                            () -> engine.renderFrames(2, 1.0f)
-                    )
+            assertTimeoutPreemptively(
+                    Duration.ofSeconds(2), () -> engine.renderFrames(2, 1.0f)
             );
-            assertEquals(AudioFailure.Kind.DECODE, exception.failure().kind());
-            assertInstanceOf(IOException.class, exception.getCause());
+            List<AudioFailure> failures = engine.drainFailures();
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.DECODE, failures.get(0).kind());
+            PcmMixerEngine.AudioPlaybackException cause = assertInstanceOf(
+                    PcmMixerEngine.AudioPlaybackException.class, failures.get(0).cause()
+            );
+            assertInstanceOf(IOException.class, cause.getCause());
+            assertTrue(engine.drainFailures().isEmpty());
+            assertFalse(engine.hasWork());
         }
     }
 
@@ -225,11 +690,11 @@ class PcmMixerEngineTest {
         try (PcmMixerEngine engine = new PcmMixerEngine(
                 new AudioStreamFactory(), MusicLibrary.scan(root))) {
             engine.apply(playing("ogg", "test.ogg", 1.0f, false, 0, 0));
-            while (engine.hasTracks() && renderedBlocks < renderGuard) {
+            while (engine.hasWork() && renderedBlocks < renderGuard) {
                 engine.renderFrames(1024, 1.0f);
                 renderedBlocks++;
             }
-            assertFalse(engine.hasTracks(), "Mixer did not reach the end of test.ogg within the render guard");
+            assertFalse(engine.hasWork(), "Mixer did not reach the end of test.ogg within the render guard");
         }
 
         assertEquals(expectedBlocks, renderedBlocks);
@@ -243,11 +708,36 @@ class PcmMixerEngineTest {
             int fadeInMs,
             int fadeOutMs
     ) {
-        return PlaybackState.playing(
-                areaId,
-                List.of(new AreaTrackDefinition(musicId, 0, volume, loop, fadeInMs, fadeOutMs)),
-                false
-        );
+        return state(areaId, false, track(musicId, 0, volume, loop, fadeInMs, fadeOutMs));
+    }
+
+    private static AreaTrackDefinition track(
+            String musicId,
+            int delaySeconds,
+            boolean loop,
+            int fadeInMs,
+            int fadeOutMs
+    ) {
+        return track(musicId, delaySeconds, 1.0f, loop, fadeInMs, fadeOutMs);
+    }
+
+    private static AreaTrackDefinition track(
+            String musicId,
+            int delaySeconds,
+            float volume,
+            boolean loop,
+            int fadeInMs,
+            int fadeOutMs
+    ) {
+        return new AreaTrackDefinition(musicId, delaySeconds, volume, loop, fadeInMs, fadeOutMs);
+    }
+
+    private static PlaybackState state(
+            String areaId,
+            boolean resumeOnReenter,
+            AreaTrackDefinition... tracks
+    ) {
+        return PlaybackState.playing(areaId, List.of(tracks), resumeOnReenter);
     }
 
     private static short[] constantFrames(int count, short sample) {
@@ -268,6 +758,37 @@ class PcmMixerEngineTest {
                 new ByteArrayInputStream(pcm), AudioStreamFactory.MIX_FORMAT, monoSamples.length)) {
             AudioSystem.write(stream, AudioFileFormat.Type.WAVE, path.toFile());
         }
+    }
+
+    private static byte[] pcmFrames(short... samples) {
+        byte[] pcm = new byte[samples.length * AudioStreamFactory.MIX_FORMAT.getFrameSize()];
+        for (int frame = 0; frame < samples.length; frame++) {
+            int offset = frame * AudioStreamFactory.MIX_FORMAT.getFrameSize();
+            PcmMath.writeLittleEndian(pcm, offset, samples[frame]);
+            PcmMath.writeLittleEndian(pcm, offset + 2, samples[frame]);
+        }
+        return pcm;
+    }
+
+    private static AudioStreamFactory streamFactoryWithBadStream(AudioInputStream badStream) {
+        return new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.getFileName().toString().equals("bad.wav")) {
+                    return badStream;
+                }
+                return super.open(path);
+            }
+        };
+    }
+
+    private static void assertSingleDecodeFailure(PcmMixerEngine engine, String musicId) {
+        List<AudioFailure> failures = engine.drainFailures();
+        assertEquals(1, failures.size());
+        assertEquals(AudioFailure.Kind.DECODE, failures.get(0).kind());
+        assertEquals(musicId, failures.get(0).musicId());
+        assertTrue(engine.drainFailures().isEmpty());
     }
 
     private static DecodedFrameCount countDecodedFrames(AudioInputStream stream) throws IOException {
@@ -346,6 +867,59 @@ class PcmMixerEngineTest {
                 return 0;
             }
             return super.read(buffer, offset, length);
+        }
+    }
+
+    private static final class ThrowingReadAudioInputStream extends AudioInputStream {
+        private int successfulReadsRemaining;
+        private final AtomicInteger closeCount;
+
+        private ThrowingReadAudioInputStream(
+                byte[] pcm,
+                int successfulReadsBeforeFailure,
+                AtomicInteger closeCount
+        ) {
+            super(
+                    new ByteArrayInputStream(pcm),
+                    AudioStreamFactory.MIX_FORMAT,
+                    pcm.length / AudioStreamFactory.MIX_FORMAT.getFrameSize()
+            );
+            this.successfulReadsRemaining = successfulReadsBeforeFailure;
+            this.closeCount = closeCount;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (successfulReadsRemaining == 0) {
+                throw new IOException("decode failed");
+            }
+            successfulReadsRemaining--;
+            return super.read(buffer, offset, length);
+        }
+
+        @Override
+        public void close() throws IOException {
+            closeCount.incrementAndGet();
+            super.close();
+        }
+    }
+
+    private static final class CloseCountingAudioInputStream extends AudioInputStream {
+        private final AtomicInteger closeCount;
+
+        private CloseCountingAudioInputStream(byte[] pcm, AtomicInteger closeCount) {
+            super(
+                    new ByteArrayInputStream(pcm),
+                    AudioStreamFactory.MIX_FORMAT,
+                    pcm.length / AudioStreamFactory.MIX_FORMAT.getFrameSize()
+            );
+            this.closeCount = closeCount;
+        }
+
+        @Override
+        public void close() throws IOException {
+            closeCount.incrementAndGet();
+            super.close();
         }
     }
 }
