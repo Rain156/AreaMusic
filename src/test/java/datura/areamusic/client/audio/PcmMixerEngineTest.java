@@ -1228,6 +1228,83 @@ class PcmMixerEngineTest {
     }
 
     @Test
+    void successfulLibraryUpdateDoesNotTransferAnActiveRuntimeIntoTheNewRevision()
+            throws Exception {
+        Path oldRoot = tempDir.resolve("old-music");
+        Path newRoot = tempDir.resolve("new-music");
+        writeWav(oldRoot.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        writeWav(newRoot.resolve("loop.wav"), new short[]{7000, 8000, 9000});
+        AtomicInteger oldOpenCount = new AtomicInteger();
+        AtomicInteger newOpenCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.startsWith(oldRoot.toAbsolutePath().normalize())) {
+                    oldOpenCount.incrementAndGet();
+                }
+                if (path.startsWith(newRoot.toAbsolutePath().normalize())) {
+                    newOpenCount.incrementAndGet();
+                }
+                return super.open(path);
+            }
+        };
+        MusicLibrary newLibrary = MusicLibrary.scan(newRoot);
+        PlaybackState state = state(
+                "area", true, track("loop.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                factory, MusicLibrary.scan(oldRoot))) {
+            engine.apply(6L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.setMusicLibrary(newLibrary);
+            engine.apply(7L, state);
+            assertEquals(7000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+
+            assertEquals(8000, firstNonSilentSample(engine));
+            assertEquals(1, oldOpenCount.get());
+            assertEquals(2, newOpenCount.get());
+        }
+    }
+
+    @Test
+    void revisionChangeDoesNotTransferTheOldCursorIntoANewRevisionSnapshot() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
+        AtomicInteger openCount = new AtomicInteger();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                openCount.incrementAndGet();
+                return super.open(path);
+            }
+        };
+        PlaybackState state = state(
+                "area", true, track("loop.wav", 0, true, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(6L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(7L, state);
+            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, state);
+
+            assertEquals(2000, firstNonSilentSample(engine));
+            assertEquals(3, openCount.get());
+        }
+    }
+
+    @Test
     void failedReloadPathWithoutLibraryUpdateKeepsTheResumeSnapshot() throws Exception {
         Path root = tempDir.resolve("music");
         writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});

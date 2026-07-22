@@ -219,6 +219,9 @@ public final class PcmMixerEngine implements AutoCloseable {
     }
 
     private void transferContinuingTracks(AreaSession previous, AreaSession incoming) {
+        if (previous.revision != incoming.revision || previous.snapshotInvalidated) {
+            return;
+        }
         Iterator<RuntimeTrack> iterator = previous.tracks.iterator();
         while (iterator.hasNext()) {
             RuntimeTrack runtime = iterator.next();
