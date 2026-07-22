@@ -144,8 +144,14 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                         try {
                             output.output.stop();
                             output.started = false;
+                            if (!running) {
+                                break;
+                            }
                             refreshConfirmedBytes(output, queue);
                         } catch (Exception exception) {
+                            if (!running) {
+                                break;
+                            }
                             report(AudioFailure.Kind.DEVICE, "", exception);
                             closeOutputAfterFailure(output, queue);
                             output = null;
@@ -157,17 +163,30 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                 if (!engine.hasWork() && queue.isEmpty()) {
                     if (output != null) {
                         try {
-                            startOutput(output, queue);
-                            refreshConfirmedBytes(output, queue);
-                            output.output.drain();
-                            queue.confirmThrough(output.writePositionBytes);
+                            if (running) {
+                                startOutput(output, queue);
+                            }
+                            if (running) {
+                                refreshConfirmedBytes(output, queue);
+                            }
+                            if (running) {
+                                output.output.drain();
+                            }
+                            if (running) {
+                                queue.confirmThrough(output.writePositionBytes);
+                            }
                         } catch (Exception exception) {
-                            report(AudioFailure.Kind.DEVICE, "", exception);
+                            if (running) {
+                                report(AudioFailure.Kind.DEVICE, "", exception);
+                            }
                         } finally {
                             closeOutput(output.output);
                         }
                         output = null;
                         deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
+                    }
+                    if (!running) {
+                        break;
                     }
                     waitForSignal(50L);
                     continue;
@@ -179,17 +198,26 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                         output = new OutputState(openedOutput);
                         liveOutput = openedOutput;
                     } catch (Exception exception) {
+                        if (!running) {
+                            break;
+                        }
                         report(AudioFailure.Kind.DEVICE, "", exception);
                         waitForSignal(deviceRetryMs);
                         deviceRetryMs = nextRetryDelay(deviceRetryMs);
                         continue;
                     }
                 }
+                if (!running) {
+                    break;
+                }
 
                 if (!output.started) {
                     try {
                         startOutput(output, queue);
                     } catch (Exception exception) {
+                        if (!running) {
+                            break;
+                        }
                         report(AudioFailure.Kind.DEVICE, "", exception);
                         closeOutputAfterFailure(output, queue);
                         output = null;
@@ -198,12 +226,21 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                         continue;
                     }
                 }
+                if (!running) {
+                    break;
+                }
 
                 WriteSlice slice;
                 try {
                     refreshConfirmedBytes(output, queue);
+                    if (!running) {
+                        break;
+                    }
                     slice = queue.sliceAt(output.writePositionBytes);
                 } catch (Exception exception) {
+                    if (!running) {
+                        break;
+                    }
                     report(AudioFailure.Kind.DEVICE, "", exception);
                     closeOutputAfterFailure(output, queue);
                     output = null;
@@ -222,12 +259,21 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     } finally {
                         reportEngineFailures(engine);
                     }
+                    if (!running) {
+                        break;
+                    }
                     slice = queue.sliceAt(output.writePositionBytes);
                 }
 
+                if (!running) {
+                    break;
+                }
                 try {
                     if (slice == null) {
                         output.output.drain();
+                        if (!running) {
+                            break;
+                        }
                         queue.confirmThrough(output.writePositionBytes);
                         closeOutput(output.output);
                         output = null;
@@ -236,6 +282,9 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     }
 
                     int written = output.output.write(slice.pcm(), slice.offset(), slice.length());
+                    if (!running) {
+                        break;
+                    }
                     int remaining = slice.length();
                     if (written < 0 || written > remaining) {
                         throw new IllegalStateException(
@@ -262,6 +311,9 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     }
                     Thread.currentThread().interrupt();
                 } catch (Exception exception) {
+                    if (!running) {
+                        break;
+                    }
                     report(AudioFailure.Kind.DEVICE, "", exception);
                     closeOutputAfterFailure(output, queue);
                     output = null;
@@ -343,7 +395,9 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         try {
             output.close();
         } catch (Exception exception) {
-            report(AudioFailure.Kind.DEVICE, "", exception);
+            if (running) {
+                report(AudioFailure.Kind.DEVICE, "", exception);
+            }
         } finally {
             if (liveOutput == output) {
                 liveOutput = null;

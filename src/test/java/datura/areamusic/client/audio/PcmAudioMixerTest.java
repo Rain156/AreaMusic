@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PcmAudioMixerTest {
@@ -509,6 +510,60 @@ class PcmAudioMixerTest {
             assertEquals(1, engine.renderCalls.get());
             assertEquals(0, output.writeCalls.get());
         } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void closeAfterBlockedWriteReturnsWithoutReportingDeviceFailure() throws Exception {
+        assertCloseDuringBlockedWriteIsSilent(false);
+    }
+
+    @Test
+    void closeAfterBlockedWriteThrowsWithoutReportingDeviceFailure() throws Exception {
+        assertCloseDuringBlockedWriteIsSilent(true);
+    }
+
+    private void assertCloseDuringBlockedWriteIsSilent(boolean throwFromWrite) throws Exception {
+        ShutdownRenderEngine engine = new ShutdownRenderEngine();
+        ShutdownBlockingOutput output = new ShutdownBlockingOutput(throwFromWrite);
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> output,
+                library -> engine,
+                failures::add
+        );
+        AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+        Thread closeThread = new Thread(() -> {
+            try {
+                mixer.close();
+            } catch (Throwable error) {
+                closeFailure.set(error);
+            }
+        }, "PcmAudioMixerTest close");
+
+        try {
+            mixer.start();
+            mixer.apply(PlaybackState.stopped());
+            assertTrue(output.writeEntered.await(1, TimeUnit.SECONDS));
+
+            closeThread.start();
+            closeThread.join(1500L);
+
+            assertFalse(closeThread.isAlive(), "mixer.close() must not wait for its join timeout");
+            assertNull(closeFailure.get());
+            assertTrue(engine.closed.await(1, TimeUnit.SECONDS));
+            assertTrue(output.closed.await(1, TimeUnit.SECONDS));
+            assertTrue(failures.isEmpty());
+            assertEquals(0, output.postClosePositionReads.get());
+            assertEquals(1, engine.renderCalls.get());
+            assertEquals(1, output.writeCalls.get());
+            assertEquals(2, output.closeCalls.get());
+        } finally {
+            output.forceRelease();
+            closeThread.interrupt();
+            closeThread.join(2500L);
             mixer.close();
         }
     }
@@ -1704,6 +1759,111 @@ class PcmAudioMixerTest {
         @Override
         public void close() {
             closed.countDown();
+        }
+    }
+
+    private static final class ShutdownRenderEngine implements PcmAudioMixer.AudioEngine {
+        private final AtomicBoolean work = new AtomicBoolean();
+        private final AtomicInteger renderCalls = new AtomicInteger();
+        private final CountDownLatch closed = new CountDownLatch(1);
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+        }
+
+        @Override
+        public void apply(PlaybackState state) {
+            work.set(true);
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            renderCalls.incrementAndGet();
+            work.set(false);
+            return constantPcmBlock((short) 1000);
+        }
+
+        @Override
+        public List<AudioFailure> drainFailures() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return work.get();
+        }
+
+        @Override
+        public void close() {
+            closed.countDown();
+        }
+    }
+
+    private static final class ShutdownBlockingOutput implements PcmAudioMixer.AudioOutput {
+        private final boolean throwFromWrite;
+        private final AtomicBoolean closedState = new AtomicBoolean();
+        private final AtomicInteger writeCalls = new AtomicInteger();
+        private final AtomicInteger closeCalls = new AtomicInteger();
+        private final AtomicInteger postClosePositionReads = new AtomicInteger();
+        private final CountDownLatch writeEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseWrite = new CountDownLatch(1);
+        private final CountDownLatch closed = new CountDownLatch(1);
+
+        private ShutdownBlockingOutput(boolean throwFromWrite) {
+            this.throwFromWrite = throwFromWrite;
+        }
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            writeCalls.incrementAndGet();
+            writeEntered.countDown();
+            while (!closedState.get()) {
+                try {
+                    releaseWrite.await();
+                } catch (InterruptedException ignored) {
+                }
+            }
+            if (throwFromWrite) {
+                throw new IllegalStateException("output closed during write");
+            }
+            return length;
+        }
+
+        @Override
+        public long playedFrames() {
+            if (closedState.get()) {
+                postClosePositionReads.incrementAndGet();
+                return 0L;
+            }
+            return 100L;
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+            int call = closeCalls.incrementAndGet();
+            closedState.set(true);
+            releaseWrite.countDown();
+            closed.countDown();
+            if (call > 1) {
+                throw new IllegalStateException("output closed more than once");
+            }
+        }
+
+        private void forceRelease() {
+            closedState.set(true);
+            releaseWrite.countDown();
         }
     }
 
