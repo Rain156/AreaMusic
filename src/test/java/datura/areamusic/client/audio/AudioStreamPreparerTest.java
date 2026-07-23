@@ -16,7 +16,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
@@ -136,6 +138,68 @@ class AudioStreamPreparerTest {
                 future.get(1, TimeUnit.SECONDS).close();
             }
             assertTrue(maximumActive.get() <= workerCount);
+        } finally {
+            releaseWorkers.countDown();
+        }
+    }
+
+    @Test
+    void boundedQueueRejectsOverflowAndCanceledTaskImmediatelyFreesCapacity()
+            throws Exception {
+        int workerCount = 2;
+        int queueCapacity = 16;
+        CountDownLatch workersEntered = new CountDownLatch(workerCount);
+        CountDownLatch releaseWorkers = new CountDownLatch(1);
+        Set<Path> openedPaths = ConcurrentHashMap.newKeySet();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path) throws IOException {
+                openedPaths.add(path);
+                workersEntered.countDown();
+                awaitOrThrow(releaseWorkers);
+                return stream(pcmFrames((short) 100), new AtomicInteger());
+            }
+        };
+
+        List<CompletableFuture<AudioInputStream>> active = new ArrayList<>();
+        List<CompletableFuture<AudioInputStream>> queued = new ArrayList<>();
+        List<Path> queuedPaths = new ArrayList<>();
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(factory, workerCount)) {
+            for (int index = 0; index < workerCount; index++) {
+                active.add(preparer.prepare(Path.of("active-" + index + ".wav"), 0));
+            }
+            assertTrue(workersEntered.await(1, TimeUnit.SECONDS));
+
+            for (int index = 0; index < queueCapacity; index++) {
+                Path path = Path.of("queued-" + index + ".wav");
+                queuedPaths.add(path);
+                queued.add(preparer.prepare(path, 0));
+            }
+            assertThrows(
+                    RejectedExecutionException.class,
+                    () -> preparer.prepare(Path.of("overflow.wav"), 0)
+            );
+
+            Path canceledPath = queuedPaths.remove(0);
+            CompletableFuture<AudioInputStream> canceled = queued.remove(0);
+            assertTrue(canceled.cancel(true));
+            Path replacementPath = Path.of("replacement.wav");
+            CompletableFuture<AudioInputStream> replacement = preparer.prepare(
+                    replacementPath, 0
+            );
+
+            releaseWorkers.countDown();
+            for (CompletableFuture<AudioInputStream> future : active) {
+                future.get(1, TimeUnit.SECONDS).close();
+            }
+            for (CompletableFuture<AudioInputStream> future : queued) {
+                future.get(1, TimeUnit.SECONDS).close();
+            }
+            replacement.get(1, TimeUnit.SECONDS).close();
+
+            assertFalse(openedPaths.contains(canceledPath));
+            assertTrue(openedPaths.contains(replacementPath));
+            assertEquals(workerCount + queueCapacity, openedPaths.size());
         } finally {
             releaseWorkers.countDown();
         }

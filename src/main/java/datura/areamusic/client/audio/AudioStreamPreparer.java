@@ -8,13 +8,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -23,11 +24,12 @@ public final class AudioStreamPreparer implements AutoCloseable {
     private static final int FRAME_SIZE = AudioStreamFactory.MIX_FORMAT.getFrameSize();
     private static final int MAX_CONSECUTIVE_ZERO_READS = 64;
     private static final int DISCARD_BUFFER_BYTES = 8192;
+    static final int MAX_QUEUED_PREPARATIONS = 16;
     private static final AtomicInteger POOL_IDS = new AtomicInteger();
 
     private final Object lifecycleLock = new Object();
     private final AudioStreamFactory streamFactory;
-    private final ExecutorService executor;
+    private final ThreadPoolExecutor executor;
     private final Set<Preparation> pending = ConcurrentHashMap.newKeySet();
     private boolean closed;
 
@@ -46,7 +48,15 @@ public final class AudioStreamPreparer implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         };
-        executor = Executors.newFixedThreadPool(workerCount, threadFactory);
+        executor = new ThreadPoolExecutor(
+                workerCount,
+                workerCount,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(MAX_QUEUED_PREPARATIONS),
+                threadFactory,
+                new ThreadPoolExecutor.AbortPolicy()
+        );
     }
 
     public CompletableFuture<AudioInputStream> prepare(Path path, long frameOffset) {
@@ -185,7 +195,7 @@ public final class AudioStreamPreparer implements AutoCloseable {
         private void setTask(Future<?> submitted) {
             task.set(submitted);
             if (future.isCancelled()) {
-                submitted.cancel(interruptRequested.get());
+                cancelSubmittedTask(submitted, interruptRequested.get());
             }
         }
 
@@ -196,7 +206,14 @@ public final class AudioStreamPreparer implements AutoCloseable {
             closeOpenedStream();
             Future<?> submitted = task.get();
             if (submitted != null) {
-                submitted.cancel(mayInterruptIfRunning);
+                cancelSubmittedTask(submitted, mayInterruptIfRunning);
+            }
+        }
+
+        private void cancelSubmittedTask(Future<?> submitted, boolean mayInterruptIfRunning) {
+            submitted.cancel(mayInterruptIfRunning);
+            if (submitted instanceof Runnable runnable) {
+                executor.remove(runnable);
             }
         }
 
