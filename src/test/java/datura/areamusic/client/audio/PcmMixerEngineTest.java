@@ -1772,6 +1772,7 @@ class PcmMixerEngineTest {
             throws Exception {
         Path oldRoot = tempDir.resolve("old-music-pending");
         Path newRoot = tempDir.resolve("new-music-pending");
+        Path sentinelPath = tempDir.resolve("pending-refresh-sentinel");
         writeWav(oldRoot.resolve("restore.wav"), constantFrames(10_000, (short) 100));
         writeWav(oldRoot.resolve("healthy.wav"), constantFrames(10_000, (short) 1000));
         writeWav(oldRoot.resolve("between.wav"), constantFrames(10_000, (short) 0));
@@ -1792,6 +1793,11 @@ class PcmMixerEngineTest {
             @Override
             public AudioInputStream open(Path path)
                     throws UnsupportedAudioFileException, IOException {
+                if (path.equals(sentinelPath)) {
+                    return new CloseCountingAudioInputStream(
+                            pcmFrames((short) 0), new AtomicInteger()
+                    );
+                }
                 Path normalized = path.toAbsolutePath().normalize();
                 if (normalized.startsWith(normalizedOldRoot)) {
                     if (path.getFileName().toString().equals("restore.wav")) {
@@ -1861,17 +1867,198 @@ class PcmMixerEngineTest {
             engine.apply(7L, area);
 
             assertEquals(0, oldHealthyCloseCount.get());
-            assertEquals(13000, firstLeftSample(engine.renderFrames(1, 1.0f)));
-            assertEquals(2, newOpenCount.get());
+            assertEquals(0, newOpenCount.get());
+            CompletableFuture<AudioInputStream> sentinel = preparer.prepare(sentinelPath, 0L);
             releasePendingRestore.countDown();
             assertTrue(lateRestoreClosed.await(1, TimeUnit.SECONDS));
             assertEquals(1, lateRestoreCloseCount.get());
+            try (AudioInputStream ignored = sentinel.get(1, TimeUnit.SECONDS)) {
+            }
+            assertEquals(13000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(2, newOpenCount.get());
             assertTrue(engine.drainFailures().isEmpty());
 
             engine.renderFrames(4409, 1.0f);
             assertEquals(1, oldHealthyCloseCount.get());
         } finally {
             releasePendingRestore.countDown();
+        }
+    }
+
+    @Test
+    void libraryRefreshKeepsCompletedTrackSilentWhileReplacingBlockedRestore()
+            throws Exception {
+        Path oldRoot = tempDir.resolve("old-completed-refresh");
+        Path newRoot = tempDir.resolve("new-completed-refresh");
+        writeWav(oldRoot.resolve("once.wav"), new short[]{4000});
+        writeWav(oldRoot.resolve("loop.wav"), new short[]{1000, 2000, 3000, 4000});
+        writeWav(newRoot.resolve("once.wav"), new short[]{6000});
+        writeWav(newRoot.resolve("loop.wav"), new short[]{7000, 8000, 9000, 10000});
+        Path normalizedOldRoot = oldRoot.toAbsolutePath().normalize();
+        Path normalizedNewRoot = newRoot.toAbsolutePath().normalize();
+        CountDownLatch blockedRestoreEntered = new CountDownLatch(1);
+        CountDownLatch releaseBlockedRestore = new CountDownLatch(1);
+        CountDownLatch lateRestoreClosed = new CountDownLatch(1);
+        AtomicInteger oldLoopOpenCount = new AtomicInteger();
+        AtomicInteger lateRestoreCloseCount = new AtomicInteger();
+        AtomicInteger newOnceOpenCount = new AtomicInteger();
+        AtomicInteger newLoopOpenCount = new AtomicInteger();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                Path normalized = path.toAbsolutePath().normalize();
+                if (normalized.startsWith(normalizedOldRoot)
+                        && path.getFileName().toString().equals("loop.wav")) {
+                    if (oldLoopOpenCount.incrementAndGet() == 1) {
+                        return delegate.open(path);
+                    }
+                    blockedRestoreEntered.countDown();
+                    awaitLatchIgnoringInterrupt(releaseBlockedRestore);
+                    return new CloseSignallingAudioInputStream(
+                            pcmFrames((short) 1000, (short) 2000, (short) 3000, (short) 4000),
+                            lateRestoreCloseCount,
+                            lateRestoreClosed
+                    );
+                }
+                if (normalized.startsWith(normalizedNewRoot)) {
+                    if (path.getFileName().toString().equals("once.wav")) {
+                        newOnceOpenCount.incrementAndGet();
+                        return new CloseCountingAudioInputStream(
+                                pcmFrames((short) 6000), new AtomicInteger()
+                        );
+                    }
+                    newLoopOpenCount.incrementAndGet();
+                    return new CloseCountingAudioInputStream(
+                            pcmFrames(
+                                    (short) 7000,
+                                    (short) 8000,
+                                    (short) 9000,
+                                    (short) 10000
+                            ),
+                            new AtomicInteger()
+                    );
+                }
+                return delegate.open(path);
+            }
+        };
+        PlaybackState area = state(
+                "area",
+                true,
+                track("once.wav", 0, false, 0, 0),
+                track("loop.wav", 0, true, 0, 0)
+        );
+
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(factory, 1);
+             PcmMixerEngine engine = new PcmMixerEngine(
+                     factory, MusicLibrary.scan(oldRoot), preparer
+             )) {
+            engine.apply(7L, area);
+            engine.renderFrames(2, 1.0f);
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, area);
+            assertTrue(blockedRestoreEntered.await(1, TimeUnit.SECONDS));
+
+            engine.setMusicLibrary(MusicLibrary.scan(newRoot));
+            engine.apply(7L, area);
+
+            assertEquals(0, newOnceOpenCount.get());
+            releaseBlockedRestore.countDown();
+            assertTrue(lateRestoreClosed.await(1, TimeUnit.SECONDS));
+            assertEquals(1, lateRestoreCloseCount.get());
+            assertEquals(9000, firstNonSilentSample(engine));
+            assertEquals(0, newOnceOpenCount.get());
+            assertEquals(1, newLoopOpenCount.get());
+            assertTrue(engine.drainFailures().isEmpty());
+        } finally {
+            releaseBlockedRestore.countDown();
+        }
+    }
+
+    @Test
+    void libraryRefreshPreservesRemainingDelayWhileReplacingBlockedRestore()
+            throws Exception {
+        Path oldRoot = tempDir.resolve("old-delay-refresh");
+        Path newRoot = tempDir.resolve("new-delay-refresh");
+        Path sentinelPath = tempDir.resolve("delay-refresh-sentinel");
+        writeWav(oldRoot.resolve("carrier.wav"), constantFrames(100_000, (short) 0));
+        writeWav(oldRoot.resolve("delayed.wav"), new short[]{1234});
+        writeWav(newRoot.resolve("carrier.wav"), constantFrames(100_000, (short) 0));
+        writeWav(newRoot.resolve("delayed.wav"), new short[]{1234});
+        Path normalizedOldRoot = oldRoot.toAbsolutePath().normalize();
+        Path normalizedNewRoot = newRoot.toAbsolutePath().normalize();
+        CountDownLatch blockedRestoreEntered = new CountDownLatch(1);
+        CountDownLatch releaseBlockedRestore = new CountDownLatch(1);
+        CountDownLatch lateRestoreClosed = new CountDownLatch(1);
+        AtomicInteger oldCarrierOpenCount = new AtomicInteger();
+        AtomicInteger lateRestoreCloseCount = new AtomicInteger();
+        AtomicInteger newDelayedOpenCount = new AtomicInteger();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                if (path.equals(sentinelPath)) {
+                    return new CloseCountingAudioInputStream(
+                            pcmFrames((short) 0), new AtomicInteger()
+                    );
+                }
+                Path normalized = path.toAbsolutePath().normalize();
+                if (normalized.startsWith(normalizedOldRoot)
+                        && path.getFileName().toString().equals("carrier.wav")) {
+                    if (oldCarrierOpenCount.incrementAndGet() == 1) {
+                        return delegate.open(path);
+                    }
+                    blockedRestoreEntered.countDown();
+                    awaitLatchIgnoringInterrupt(releaseBlockedRestore);
+                    return new CloseSignallingAudioInputStream(
+                            pcmFrames(constantFrames(100_000, (short) 0)),
+                            lateRestoreCloseCount,
+                            lateRestoreClosed
+                    );
+                }
+                if (normalized.startsWith(normalizedNewRoot)
+                        && path.getFileName().toString().equals("delayed.wav")) {
+                    newDelayedOpenCount.incrementAndGet();
+                }
+                return delegate.open(path);
+            }
+        };
+        PlaybackState area = state(
+                "area",
+                true,
+                track("carrier.wav", 0, true, 0, 0),
+                track("delayed.wav", 2, false, 0, 0)
+        );
+
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(factory, 1);
+             PcmMixerEngine engine = new PcmMixerEngine(
+                     factory, MusicLibrary.scan(oldRoot), preparer
+             )) {
+            engine.apply(7L, area);
+            assertAllSilent(engine.renderFrames(44_100, 1.0f));
+            engine.apply(7L, PlaybackState.stopped());
+            engine.apply(7L, area);
+            assertTrue(blockedRestoreEntered.await(1, TimeUnit.SECONDS));
+
+            engine.setMusicLibrary(MusicLibrary.scan(newRoot));
+            engine.apply(7L, area);
+            CompletableFuture<AudioInputStream> sentinel = preparer.prepare(sentinelPath, 0L);
+            releaseBlockedRestore.countDown();
+            assertTrue(lateRestoreClosed.await(1, TimeUnit.SECONDS));
+            assertEquals(1, lateRestoreCloseCount.get());
+            try (AudioInputStream ignored = sentinel.get(1, TimeUnit.SECONDS)) {
+            }
+
+            assertAllSilent(engine.renderFrames(44_099, 1.0f));
+            assertEquals(0, newDelayedOpenCount.get());
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1, newDelayedOpenCount.get());
+            assertEquals(1234, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertTrue(engine.drainFailures().isEmpty());
+        } finally {
+            releaseBlockedRestore.countDown();
         }
     }
 
@@ -1909,12 +2096,12 @@ class PcmMixerEngineTest {
 
             engine.setMusicLibrary(newLibrary);
             engine.apply(7L, state);
-            assertEquals(7000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(8000, firstNonSilentSample(engine));
 
             engine.apply(7L, PlaybackState.stopped());
             engine.apply(7L, state);
 
-            assertEquals(8000, firstNonSilentSample(engine));
+            assertEquals(9000, firstNonSilentSample(engine));
             assertEquals(1, oldOpenCount.get());
             assertEquals(2, newOpenCount.get());
         }
@@ -1950,6 +2137,74 @@ class PcmMixerEngineTest {
 
             assertEquals(3000, firstNonSilentSample(engine));
             assertEquals(2, openCount.get());
+        }
+    }
+
+    @Test
+    void revisionOnlyUpdatePreservesCompletedPendingFailedAndCursorStates()
+            throws Exception {
+        Path root = tempDir.resolve("revision-timeline");
+        short[] cursorFrames = new short[100_000];
+        cursorFrames[0] = 1000;
+        cursorFrames[1] = 1001;
+        cursorFrames[2] = 1002;
+        writeWav(root.resolve("completed.wav"), new short[]{4000});
+        writeWav(root.resolve("delayed.wav"), new short[]{1234});
+        writeWav(root.resolve("failed.wav"), new short[]{500});
+        writeWav(root.resolve("cursor.wav"), cursorFrames);
+        AtomicInteger completedOpenCount = new AtomicInteger();
+        AtomicInteger delayedOpenCount = new AtomicInteger();
+        AtomicInteger failedOpenCount = new AtomicInteger();
+        AtomicInteger cursorOpenCount = new AtomicInteger();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                switch (path.getFileName().toString()) {
+                    case "completed.wav" -> completedOpenCount.incrementAndGet();
+                    case "delayed.wav" -> delayedOpenCount.incrementAndGet();
+                    case "failed.wav" -> {
+                        failedOpenCount.incrementAndGet();
+                        throw new IOException("expected decode failure");
+                    }
+                    case "cursor.wav" -> cursorOpenCount.incrementAndGet();
+                    default -> {
+                    }
+                }
+                return delegate.open(path);
+            }
+        };
+        PlaybackState state = state(
+                "area",
+                true,
+                track("completed.wav", 0, false, 0, 0),
+                track("delayed.wav", 2, false, 0, 0),
+                track("failed.wav", 0, false, 0, 0),
+                track("cursor.wav", 0, false, 0, 0)
+        );
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(factory, MusicLibrary.scan(root))) {
+            engine.apply(7L, state);
+            byte[] initial = engine.renderFrames(2, 1.0f);
+            assertEquals(5000, leftSample(initial, 0));
+            assertEquals(1001, leftSample(initial, 1));
+            assertSingleDecodeFailure(engine, "failed.wav");
+
+            engine.apply(8L, state);
+
+            assertEquals(1002, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1, completedOpenCount.get());
+            assertEquals(0, delayedOpenCount.get());
+            assertEquals(1, failedOpenCount.get());
+            assertEquals(1, cursorOpenCount.get());
+            assertTrue(engine.drainFailures().isEmpty());
+
+            engine.renderFrames(88_196, 1.0f);
+            assertEquals(0, delayedOpenCount.get());
+            assertEquals(0, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1, delayedOpenCount.get());
+            assertEquals(1234, firstLeftSample(engine.renderFrames(1, 1.0f)));
         }
     }
 
