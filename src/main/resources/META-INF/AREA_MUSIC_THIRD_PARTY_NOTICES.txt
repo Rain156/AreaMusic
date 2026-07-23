@@ -13,3 +13,4 @@ name "jorbis" and cannot coexist in the loader module layer.
 
 These libraries are distributed under the GNU Lesser General Public License.
 The corresponding upstream projects and license sources are listed above.
+Full LGPL-2.1 text: META-INF/licenses/LGPL-2.1.txt

@@ -81,8 +81,8 @@ Run `./gradlew.bat test`. Expected: zero failed tests.
 ### Task 3: Validate the reported MP3 files and package the fix
 
 **Files:**
-- Verify: `run/AreaMusic/Chace - Auto-Save.mp3`
-- Verify: `run/AreaMusic/Warsic,壹勺籽糖 - 坠入星河的帷幕.mp3`
+- Verify: `run/areamusic/Chace - Auto-Save.mp3`
+- Verify: `run/areamusic/Warsic,壹勺籽糖 - 坠入星河的帷幕.mp3`
 - Produce: `build/libs/areamusic-0.0.1-all.jar`
 
 - [x] **Step 1: Measure both real 48 kHz MP3 paths**
