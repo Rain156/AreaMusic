@@ -79,7 +79,6 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
         if (currentSession != null) {
             currentSession.snapshotInvalidated = true;
-            currentSession.requiresLibraryRefresh |= !currentSession.preparations.isEmpty();
             currentSession.discardPreparations();
         }
     }
@@ -98,7 +97,7 @@ public final class PcmMixerEngine implements AutoCloseable {
         if (state.equals(currentState)
                 && (currentSession == null
                 || currentSession.revision == revision
-                && !currentSession.requiresLibraryRefresh)) {
+                && currentSession.libraryGeneration == libraryGeneration)) {
             return;
         }
 
@@ -112,11 +111,13 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
 
         AreaSession incoming = reclaimOutgoingSession(revision, state);
+        boolean projectedTimeline = false;
         if (incoming == null) {
-            incoming = createIncomingSession(revision, state);
+            projectedTimeline = canProjectTimeline(previous, state);
+            incoming = createIncomingSession(revision, state, previous);
         }
         if (previous != null) {
-            transferContinuingTracks(previous, incoming);
+            transferContinuingTracks(previous, incoming, projectedTimeline);
             moveToOutgoing(previous);
         }
         currentSession = incoming;
@@ -284,7 +285,11 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
     }
 
-    private void transferContinuingTracks(AreaSession previous, AreaSession incoming) {
+    private void transferContinuingTracks(
+            AreaSession previous,
+            AreaSession incoming,
+            boolean projectedTimeline
+    ) {
         if (previous.libraryGeneration != incoming.libraryGeneration) {
             return;
         }
@@ -292,10 +297,15 @@ public final class PcmMixerEngine implements AutoCloseable {
         List<TrackIdentity> incomingIdentities = trackIdentities(incoming.state.tracks());
         Map<TrackIdentity, Integer> availableDestinations = new HashMap<>();
         for (int index = 0; index < incoming.state.tracks().size(); index++) {
-            if (incoming.timeline.remainingDelayFrames(index) == 0L
-                    && !incoming.timeline.started(index)
+            boolean canReceiveFreshTrack = incoming.timeline.remainingDelayFrames(index) == 0L
+                    && !incoming.timeline.started(index);
+            boolean canReceiveProjectedTrack = projectedTimeline
+                    && incoming.timeline.started(index);
+            if ((canReceiveFreshTrack || canReceiveProjectedTrack)
                     && !incoming.timeline.completed(index)
-                    && !incoming.timeline.failed(index)) {
+                    && !incoming.timeline.failed(index)
+                    && !incoming.hasRuntimeTrack(index)
+                    && !incoming.preparations.containsKey(index)) {
                 availableDestinations.put(incomingIdentities.get(index), index);
             }
         }
@@ -316,8 +326,10 @@ public final class PcmMixerEngine implements AutoCloseable {
             AreaTrackDefinition destination = incoming.state.tracks().get(destinationIndex);
             long position = previous.timeline.positionInLoopFrames(runtime.trackIndex);
             iterator.remove();
-            incoming.timeline.markStarted(destinationIndex);
-            incoming.timeline.recordFramesRead(destinationIndex, position);
+            if (!incoming.timeline.started(destinationIndex)) {
+                incoming.timeline.markStarted(destinationIndex);
+                incoming.timeline.recordFramesRead(destinationIndex, position);
+            }
             runtime.attach(incoming, destinationIndex, destination);
             runtime.lifecycleGain.fadeTo(
                     1.0f, destination.fadeInMs(), AudioStreamFactory.SAMPLE_RATE
@@ -367,7 +379,20 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
     }
 
-    private AreaSession createIncomingSession(long revision, PlaybackState state) {
+    private AreaSession createIncomingSession(
+            long revision,
+            PlaybackState state,
+            AreaSession previous
+    ) {
+        if (canProjectTimeline(previous, state)) {
+            return new AreaSession(
+                    revision,
+                    libraryGeneration,
+                    state,
+                    projectTimeline(previous, state),
+                    true
+            );
+        }
         ResumeKey key = new ResumeKey(revision, state.areaId());
         SessionSnapshot snapshot = resumeSnapshots.remove(key);
         if (snapshot != null && snapshot.state().equals(state)) {
@@ -387,6 +412,46 @@ public final class PcmMixerEngine implements AutoCloseable {
                 state,
                 AreaPlaybackTimeline.fresh(state.tracks(), AudioStreamFactory.SAMPLE_RATE),
                 false
+        );
+    }
+
+    private static boolean canProjectTimeline(AreaSession previous, PlaybackState state) {
+        return previous != null && previous.state.areaId().equals(state.areaId());
+    }
+
+    private static AreaPlaybackTimeline projectTimeline(
+            AreaSession previous,
+            PlaybackState destinationState
+    ) {
+        AreaPlaybackTimeline fresh = AreaPlaybackTimeline.fresh(
+                destinationState.tracks(), AudioStreamFactory.SAMPLE_RATE
+        );
+        List<AreaPlaybackTimeline.TrackSnapshot> projected = new ArrayList<>(
+                fresh.snapshot().tracks()
+        );
+        List<AreaPlaybackTimeline.TrackSnapshot> source = previous.timeline.snapshot().tracks();
+        List<TrackIdentity> sourceIdentities = trackIdentities(previous.state.tracks());
+        List<TrackIdentity> destinationIdentities = trackIdentities(destinationState.tracks());
+        Map<TrackIdentity, Integer> sourceIndices = new HashMap<>();
+        for (int index = 0; index < sourceIdentities.size(); index++) {
+            sourceIndices.put(sourceIdentities.get(index), index);
+        }
+        for (int destinationIndex = 0;
+             destinationIndex < destinationIdentities.size();
+             destinationIndex++) {
+            Integer sourceIndex = sourceIndices.get(destinationIdentities.get(destinationIndex));
+            if (sourceIndex == null
+                    || !previous.state.tracks().get(sourceIndex).equals(
+                            destinationState.tracks().get(destinationIndex)
+                    )) {
+                continue;
+            }
+            projected.set(destinationIndex, source.get(sourceIndex));
+        }
+        return AreaPlaybackTimeline.restore(
+                new AreaPlaybackTimeline.Snapshot(projected),
+                destinationState.tracks(),
+                AudioStreamFactory.SAMPLE_RATE
         );
     }
 
@@ -760,7 +825,6 @@ public final class PcmMixerEngine implements AutoCloseable {
         private boolean snapshotWhenSilent;
         private boolean snapshotInvalidated;
         private boolean expeditedRemoval;
-        private boolean requiresLibraryRefresh;
 
         private AreaSession(
                 long revision,
