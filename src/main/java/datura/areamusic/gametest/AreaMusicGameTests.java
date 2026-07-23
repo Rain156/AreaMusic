@@ -36,10 +36,24 @@ public final class AreaMusicGameTests {
                 0
         );
         PlaybackState state = PlaybackState.fromArea(area);
-        if (!state.tracks().equals(tracks)
-                || !state.resumeOnReenter()
-                || !"areamusic".equals(MusicDirectory.DIRECTORY_NAME)) {
-            helper.fail("AreaMusic multitrack server model did not round-trip");
+        if (!state.playing()) {
+            helper.fail("AreaMusic playback state was not playing");
+            return;
+        }
+        if (!"smoke".equals(state.areaId())) {
+            helper.fail("AreaMusic playback state did not retain the area ID");
+            return;
+        }
+        if (!state.tracks().equals(tracks)) {
+            helper.fail("AreaMusic playback state did not retain the tracks");
+            return;
+        }
+        if (!state.resumeOnReenter()) {
+            helper.fail("AreaMusic playback state did not retain resume-on-reenter");
+            return;
+        }
+        if (!"areamusic".equals(MusicDirectory.DIRECTORY_NAME)) {
+            helper.fail("AreaMusic music directory name was not canonical lowercase");
             return;
         }
         helper.succeed();

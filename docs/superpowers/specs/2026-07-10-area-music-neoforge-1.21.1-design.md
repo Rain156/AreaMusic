@@ -64,7 +64,7 @@ This command improvement is applied first to `forge-1.20.1`, then carried into `
 
 ## Data compatibility
 
-The NeoForge build reads and writes the same data as Forge 1.20.1 without migration:
+The NeoForge build shares schema v1/v2 area JSON and client configuration with Forge 1.20.1 without schema migration; a legacy uppercase `AreaMusic` audio root is safely migrated once to canonical `areamusic`:
 
 - local audio root: `<game-directory>/areamusic`;
 - client volume config: `config/areamusic-client.toml`;
