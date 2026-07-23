@@ -1,12 +1,10 @@
 # AreaMusic Implementation Plan
 
-> **Historical status (synchronized with the 2026-07-22 extension):** This completed plan records the original Forge 1.20.1 single-track implementation. The [multitrack/resume design](../specs/2026-07-22-area-music-multitrack-resume-design.md) and [implementation plan](./2026-07-22-area-music-multitrack-resume.md) are authoritative for current work. Their schema v2 replaces scalar playback fields with 1–16 `tracks`, gives each track a `delaySeconds` default of `0`, and adds area-level `resumeOnReenter` defaulting to `false`; schema v1 still maps to one track. New runtime paths use `<gameDir>/areamusic`, and the old uppercase directory name is only a migration source. Scalar API/code snippets below are retained as historical v1 steps.
-
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a Forge 1.20.1 mod that assigns local audio files to server-controlled cuboid regions, persists regions per save, and crossfades music on the client.
 
-**Architecture:** The physical server owns immutable music and area snapshots, resolves one active area per player, and sends playback state changes through a Forge SimpleChannel. Each physical client scans its own `areamusic` directory and streams decoded PCM through a dedicated Java Sound mixer. Core path, area, persistence, and fade logic remain independent enough for JUnit tests.
+**Architecture:** The physical server owns immutable music and area snapshots, resolves one active area per player, and sends playback state changes through a Forge SimpleChannel. Each physical client scans its own `AreaMusic` directory and streams decoded PCM through a dedicated Java Sound mixer. Core path, area, persistence, and fade logic remain independent enough for JUnit tests.
 
 **Tech Stack:** Java 17, Forge 47.4.21, ForgeGradle 6, Gson, Brigadier, Forge SimpleChannel, Java Sound, MP3SPI 1.9.5.4, VorbisSPI 1.0.3.3, jFLAC 1.5.2, JUnit Jupiter 5.10.2.
 
@@ -419,7 +417,7 @@ When applying a different MusicID, fade every current track to zero using the pr
 
 - [x] **Step 4: Add client lifecycle and error delivery**
 
-Client setup creates and scans `<gameDir>/areamusic`. Client ticks update `master * music` gain and real pause state. Login/reload rescans transactionally. Logout and game shutdown stop the mixer. Missing/invalid audio posts one translatable client message per error key per successful reload and logs the exception.
+Client setup creates and scans `<gameDir>/AreaMusic`. Client ticks update `master * music` gain and real pause state. Login/reload rescans transactionally. Logout and game shutdown stop the mixer. Missing/invalid audio posts one translatable client message per error key per successful reload and logs the exception.
 
 - [x] **Step 5: Compile client-only integration and commit**
 
@@ -480,7 +478,7 @@ Expected: `META-INF/jarjar/metadata.json` and nested codec jars are present. If 
 
 - [x] **Step 3: Run a development-client smoke test**
 
-Place short OGG, MP3, WAV, and FLAC fixtures under `run/areamusic`, launch `.\gradlew.bat runClient`, create two adjacent regions, and verify looping, exit fade, crossfade, same-ID continuity, priority, and reload. The client must also show a clear one-time message when a referenced local file is removed.
+Place short OGG, MP3, WAV, and FLAC fixtures under `run/AreaMusic`, launch `.\gradlew.bat runClient`, create two adjacent regions, and verify looping, exit fade, crossfade, same-ID continuity, priority, and reload. The client must also show a clear one-time message when a referenced local file is removed.
 
 Verified with Quick Play client runs for MP3, OGG, and FLAC under Forge's module classloader; the mixer thread remained active in Java Sound output with no audio errors. WAV decoding, looping, fades, crossfades, same-ID continuity, priority, reload sequencing, and structured failure mapping are covered by the focused automated suite; client error delivery deduplicates each failure kind and MusicID until the next successful reload.
 

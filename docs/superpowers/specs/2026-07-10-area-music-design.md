@@ -1,10 +1,8 @@
 # AreaMusic Forge 1.20.1 设计说明
 
-> **历史定位（2026-07-22 扩展同步）：** 本文保留 Forge 1.20.1 首版单音轨设计语境；当前多音轨、延迟、重进恢复与小写目录规则以 [2026-07-22 设计](./2026-07-22-area-music-multitrack-resume-design.md) 和 [实施计划](../plans/2026-07-22-area-music-multitrack-resume.md) 为权威来源。当前区域 schema v2 使用 1–16 项 `tracks`，每轨 `delaySeconds` 默认 `0`，区域级 `resumeOnReenter` 默认 `false`；schema v1 的根级单音轨字段仍向后兼容并映射为一条音轨。新安装只创建 `<gameDir>/areamusic`；旧大写 `AreaMusic` 仅作为安全迁移来源。
-
 ## 目标
 
-AreaMusic 为 Forge 1.20.1 提供由服务端管理的长方体音乐区域。玩家进入区域时，客户端从游戏根目录的 `areamusic` 文件夹播放本地音乐；离开全部区域时淡出；从一个区域进入另一个区域时交叉淡化。
+AreaMusic 为 Forge 1.20.1 提供由服务端管理的长方体音乐区域。玩家进入区域时，客户端从游戏根目录的 `AreaMusic` 文件夹播放本地音乐；离开全部区域时淡出；从一个区域进入另一个区域时交叉淡化。
 
 首版必须满足以下条件：
 
@@ -32,7 +30,7 @@ AreaMusic 为 Forge 1.20.1 提供由服务端管理的长方体音乐区域。�
 
 ```text
 <gameDir>/
-  areamusic/
+  AreaMusic/
     village/day.mp3
   config/
     areamusic/
@@ -42,13 +40,11 @@ AreaMusic 为 Forge 1.20.1 提供由服务端管理的长方体音乐区域。�
 
 `saveId` 由当前世界存储目录名生成：保留便于识别的安全名称，并附加原始目录名的 8 位 SHA-256 摘要以避免清理名称导致碰撞。单人存档目录在同一游戏根目录内唯一；独立服务器拥有自己的游戏根目录，因此每个存档都得到独立区域目录。
 
-MusicID 是 `areamusic` 下包含扩展名的相对路径，统一使用 `/` 分隔，例如 `village/day.mp3`。扫描递归处理子目录，忽略不支持的扩展名、目录和逃逸根目录的符号链接。ID 保留 Unicode 和大小写；扫描时拒绝仅大小写不同的冲突项，避免 Windows 与 Linux 行为不一致。
+MusicID 是 `AreaMusic` 下包含扩展名的相对路径，统一使用 `/` 分隔，例如 `village/day.mp3`。扫描递归处理子目录，忽略不支持的扩展名、目录和逃逸根目录的符号链接。ID 保留 Unicode 和大小写；扫描时拒绝仅大小写不同的冲突项，避免 Windows 与 Linux 行为不一致。
 
 ## 区域 JSON
 
 文件名是不含扩展名的区域 ID。区域 ID 必须匹配 `[a-z0-9][a-z0-9_-]{0,63}`，从而可以安全地作为命令参数和文件名。
-
-以下对象是首版 schema v1 的历史示例；当前写入格式为上述 schema v2，读取 v1 时不会自动改写磁盘文件。
 
 ```json
 {
@@ -84,7 +80,7 @@ MusicID 是 `areamusic` 下包含扩展名的相对路径，统一使用 `/` 分
 
 ### MusicLibrary
 
-扫描服务端 `areamusic` 目录，建立不可变的 `MusicID -> Path` 快照并提供命令补全。扫描和解析在服务器线程之外完成，快照替换回到服务器线程执行。
+扫描服务端 `AreaMusic` 目录，建立不可变的 `MusicID -> Path` 快照并提供命令补全。扫描和解析在服务器线程之外完成，快照替换回到服务器线程执行。
 
 ### AreaRepository
 
@@ -102,13 +98,13 @@ MusicID 是 `areamusic` 下包含扩展名的相对路径，统一使用 `/` 分
 
 ### AreaMusicNetwork
 
-使用 Forge `SimpleChannel` 和严格协议版本。当前服务端到客户端的状态包包含配置版本、可选区域 ID、1–16 条带 MusicID、延迟、音量、循环和淡化参数的音轨，以及区域级恢复标志。重载包要求客户端重扫本地目录；音频字节永不进入网络包。
+使用 Forge `SimpleChannel` 和严格协议版本。服务端到客户端的状态包包含配置版本、可选区域 ID、MusicID、音量、循环、淡入和淡出参数。重载包要求客户端重扫本地目录；音频字节永不进入网络包。
 
 ## 客户端音频
 
 ### ClientMusicLibrary
 
-启动、连接服务器以及收到成功重载通知时扫描本地 `areamusic`。它采用与服务端相同的 MusicID 规范化和冲突检查。扫描失败保留上一份有效本地索引。
+启动、连接服务器以及收到成功重载通知时扫描本地 `AreaMusic`。它采用与服务端相同的 MusicID 规范化和冲突检查。扫描失败保留上一份有效本地索引。
 
 ### DecoderRegistry
 
@@ -169,7 +165,7 @@ Forge 集成验证覆盖命令注册、权限、坐标解析、MusicID 补全、
 
 ## 验收标准
 
-1. 新安装首次启动后，服务端与客户端均自动创建 `areamusic` 目录。
+1. 新安装首次启动后，服务端与客户端均自动创建 `AreaMusic` 目录。
 2. 放入音频并执行 `/areamusic reload` 后，MusicID 立即出现在 `create` 命令补全中。
 3. `create` 生成当前存档独立的可读 JSON，并立即生效。
 4. 玩家进入区域后音乐按设置播放和循环；离开时在默认 2 秒内平滑淡出。

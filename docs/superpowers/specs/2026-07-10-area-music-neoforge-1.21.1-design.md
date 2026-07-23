@@ -1,7 +1,5 @@
 # AreaMusic NeoForge 1.21.1 Port Design
 
-> **Historical status (synchronized with the 2026-07-22 extension):** This document remains the original NeoForge port baseline. The [multitrack/resume design](./2026-07-22-area-music-multitrack-resume-design.md) and [implementation plan](../plans/2026-07-22-area-music-multitrack-resume.md) are authoritative for the current extension; this note does not claim that the NeoForge work has been completed or verified. The current shared data contract is schema v2 with 1–16 `tracks`, per-track `delaySeconds` defaulting to `0`, and area-level `resumeOnReenter` defaulting to `false`; schema v1 remains readable by mapping its scalar fields to one track. New installations use `<game-directory>/areamusic`, while the former uppercase name is accepted only as a safe migration source.
-
 ## Goal
 
 Create a native NeoForge build of AreaMusic for Minecraft 1.21.1 while preserving the completed Forge 1.20.1 build, all existing data, and all playback behavior. The same GitHub repository will hold independent loader-and-version branches so Fabric and other Minecraft versions can be added later without turning the project into a multi-loader build.
@@ -64,12 +62,12 @@ This command improvement is applied first to `forge-1.20.1`, then carried into `
 
 ## Data compatibility
 
-The NeoForge build shares schema v1/v2 area JSON and client configuration with Forge 1.20.1 without schema migration; a legacy uppercase `AreaMusic` audio root is safely migrated once to canonical `areamusic`:
+The NeoForge build reads and writes the same data as Forge 1.20.1 without migration:
 
-- local audio root: `<game-directory>/areamusic`;
+- local audio root: `<game-directory>/AreaMusic`;
 - client volume config: `config/areamusic-client.toml`;
 - per-save area files: `config/areamusic/<SaveID>/*.json`;
-- schema v1 and v2 area JSON, including dimensions, priorities, 1–16 tracks with independent delay/playback parameters, and area-level resume behavior;
+- area JSON field names, defaults, dimensions, priorities, volumes, looping flags, and fade durations;
 - Music IDs, including extensions and nested relative paths.
 
 A user can move the same game directory, config directory, and world between the two supported branches without editing JSON or renaming audio files.

@@ -1,7 +1,5 @@
 # AreaMusic NeoForge 1.21.1 Implementation Plan
 
-> **Historical status (synchronized with the 2026-07-22 extension):** This unchecked plan remains the original NeoForge port plan and is not evidence that the port or its acceptance steps have completed. The [multitrack/resume design](../specs/2026-07-22-area-music-multitrack-resume-design.md) and [implementation plan](./2026-07-22-area-music-multitrack-resume.md) are authoritative for the current extension. The shared schema v2 uses 1–16 `tracks`, per-track `delaySeconds` defaults to `0`, and area-level `resumeOnReenter` defaults to `false`; schema v1 scalar fields remain compatible by mapping to one track. New runtime paths use `<gameDir>/areamusic`, and the former uppercase name is only a safe migration source. Scalar payload/API snippets below are historical; NeoForge continues to use its native custom-payload API rather than Forge `SimpleChannel`.
-
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Preserve the verified Forge 1.20.1 release and produce a feature- and data-compatible native NeoForge 1.21.1 release with raw, unquoted greedy Music ID completion.
@@ -742,7 +740,7 @@ Expected: AreaMusic classes and six decoder/runtime JARs are present under `META
 
 - [ ] **Step 3: Verify existing Forge data without modifying it**
 
-Launch against the existing `run` directory and confirm that `areamusic`, `config/areamusic-client.toml`, and `config/areamusic/<SaveID>/*.json` load without rewritten JSON keys. If the former uppercase audio directory exists, treat it only as the source of the safe one-time migration to `areamusic`. Run `/areamusic reload` and confirm the logged track/area counts match the Forge build.
+Launch against the existing `run` directory and confirm that `AreaMusic`, `config/areamusic-client.toml`, and `config/areamusic/<SaveID>/*.json` load without migration or rewritten keys. Run `/areamusic reload` and confirm the logged track/area counts match the Forge build.
 
 - [ ] **Step 4: Commit any packaging correction before acceptance testing**
 
@@ -757,7 +755,7 @@ If the working tree is already clean, record that no packaging correction commit
 ### Task 8: Perform client and dedicated-server acceptance checks
 
 **Files:**
-- Verify only: `run/areamusic`, `run/config`, existing development save
+- Verify only: `run/AreaMusic`, `run/config`, existing development save
 
 - [ ] **Step 1: Launch the NeoForge client**
 
