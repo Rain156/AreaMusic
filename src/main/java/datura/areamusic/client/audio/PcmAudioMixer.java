@@ -33,6 +33,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     private long pendingRevision = -1L;
     private PlaybackState pendingState;
     private boolean libraryPending;
+    private boolean libraryBoundToState;
     private boolean statePending;
 
     public PcmAudioMixer(MusicLibrary initialLibrary, ErrorListener errorListener) {
@@ -79,9 +80,36 @@ public final class PcmAudioMixer implements ClientAudioMixer {
     }
 
     public void updateMusicLibrary(MusicLibrary musicLibrary) {
+        MusicLibrary checkedLibrary = Objects.requireNonNull(musicLibrary, "musicLibrary");
         synchronized (signal) {
-            pendingLibrary = Objects.requireNonNull(musicLibrary, "musicLibrary");
+            pendingLibrary = checkedLibrary;
             libraryPending = true;
+            pendingRevision = -1L;
+            pendingState = null;
+            statePending = false;
+            libraryBoundToState = false;
+            signal.notifyAll();
+        }
+    }
+
+    @Override
+    public void updateMusicLibraryAndApply(
+            MusicLibrary musicLibrary,
+            long revision,
+            PlaybackState state
+    ) {
+        MusicLibrary checkedLibrary = Objects.requireNonNull(musicLibrary, "musicLibrary");
+        if (revision < 0L) {
+            throw new IllegalArgumentException("Revision must not be negative");
+        }
+        PlaybackState checkedState = Objects.requireNonNull(state, "state");
+        synchronized (signal) {
+            pendingLibrary = checkedLibrary;
+            libraryPending = true;
+            pendingRevision = revision;
+            pendingState = checkedState;
+            statePending = true;
+            libraryBoundToState = true;
             signal.notifyAll();
         }
     }
@@ -441,6 +469,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
             pendingRevision = -1L;
             pendingState = null;
             libraryPending = false;
+            libraryBoundToState = false;
             statePending = false;
             return new PendingUpdate(library, revision, state);
         }
@@ -448,7 +477,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
 
     private MusicLibrary drainPendingLibrary() {
         synchronized (signal) {
-            if (!libraryPending) {
+            if (!libraryPending || libraryBoundToState) {
                 return null;
             }
             MusicLibrary library = pendingLibrary;
@@ -466,7 +495,10 @@ public final class PcmAudioMixer implements ClientAudioMixer {
 
     private void waitForSignal(long timeoutMs, boolean pendingStateCanProgress) {
         synchronized (signal) {
-            if (!running || libraryPending || pendingStateCanProgress && statePending) {
+            boolean standaloneLibraryPending = libraryPending && !libraryBoundToState;
+            if (!running
+                    || standaloneLibraryPending
+                    || pendingStateCanProgress && statePending) {
                 return;
             }
             try {

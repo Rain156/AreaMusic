@@ -67,8 +67,14 @@ public final class ClientPlaybackSession implements AutoCloseable {
                     : null;
         }
         if (mixer != null) {
-            mixer.updateMusicLibrary(library);
-            applyCompatibleUpdate();
+            PlaybackUpdate update = compatibleUpdate;
+            if (update == null) {
+                mixer.updateMusicLibrary(library);
+            } else {
+                mixer.updateMusicLibraryAndApply(
+                        library, update.revision(), update.state()
+                );
+            }
         }
     }
 

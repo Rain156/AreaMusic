@@ -65,6 +65,30 @@ class ClientPlaybackSessionTest {
 
         assertTrue(mixer.libraryUpdated);
         assertEquals(List.of(new AppliedState(7L, state)), mixer.appliedStates);
+        assertEquals(List.of(new AtomicUpdate(newLibrary, 7L, state)), mixer.atomicUpdates);
+        assertEquals(0, mixer.standaloneLibraryUpdates);
+        assertEquals(List.of("library", "apply:7"), mixer.events);
+        session.close();
+    }
+
+    @Test
+    void compatibleReloadFinishesWithOneAtomicMixerUpdate() {
+        MusicLibrary oldLibrary = MusicLibrary.empty(tempDir.resolve("old"));
+        MusicLibrary newLibrary = MusicLibrary.empty(tempDir.resolve("new"));
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(oldLibrary, ignored -> mixer);
+        PlaybackState state = playing("area", "new.mp3", 1.0f, true, 0, 0);
+        session.connect();
+        mixer.appliedStates.clear();
+        mixer.events.clear();
+
+        assertTrue(session.beginReload(7L));
+        session.apply(7L, state);
+        session.finishReload(newLibrary);
+
+        assertEquals(List.of(new AtomicUpdate(newLibrary, 7L, state)), mixer.atomicUpdates);
+        assertEquals(0, mixer.standaloneLibraryUpdates);
+        assertEquals(List.of(new AppliedState(7L, state)), mixer.appliedStates);
         assertEquals(List.of("library", "apply:7"), mixer.events);
         session.close();
     }
@@ -84,6 +108,11 @@ class ClientPlaybackSessionTest {
         session.finishReload(scannedLibrary);
 
         assertEquals(List.of(new AppliedState(5L, state)), mixer.appliedStates);
+        assertEquals(
+                List.of(new AtomicUpdate(scannedLibrary, 5L, state)),
+                mixer.atomicUpdates
+        );
+        assertEquals(0, mixer.standaloneLibraryUpdates);
         assertEquals(List.of("library", "apply:5"), mixer.events);
         session.close();
     }
@@ -106,6 +135,8 @@ class ClientPlaybackSessionTest {
 
         assertTrue(mixer.libraryUpdated);
         assertTrue(mixer.appliedStates.isEmpty());
+        assertTrue(mixer.atomicUpdates.isEmpty());
+        assertEquals(1, mixer.standaloneLibraryUpdates);
         assertEquals(List.of("library"), mixer.events);
 
         session.apply(6L, newState);
@@ -473,7 +504,9 @@ class ClientPlaybackSessionTest {
         private boolean started;
         private boolean closed;
         private boolean libraryUpdated;
+        private int standaloneLibraryUpdates;
         private final List<AppliedState> appliedStates = new ArrayList<>();
+        private final List<AtomicUpdate> atomicUpdates = new ArrayList<>();
         private final List<String> events = new ArrayList<>();
 
         @Override
@@ -490,7 +523,21 @@ class ClientPlaybackSessionTest {
         @Override
         public void updateMusicLibrary(MusicLibrary musicLibrary) {
             libraryUpdated = true;
+            standaloneLibraryUpdates++;
             events.add("library");
+        }
+
+        @Override
+        public void updateMusicLibraryAndApply(
+                MusicLibrary musicLibrary,
+                long revision,
+                PlaybackState state
+        ) {
+            libraryUpdated = true;
+            atomicUpdates.add(new AtomicUpdate(musicLibrary, revision, state));
+            appliedStates.add(new AppliedState(revision, state));
+            events.add("library");
+            events.add("apply:" + revision);
         }
 
         @Override
@@ -508,5 +555,12 @@ class ClientPlaybackSessionTest {
     }
 
     private record AppliedState(long revision, PlaybackState state) {
+    }
+
+    private record AtomicUpdate(
+            MusicLibrary musicLibrary,
+            long revision,
+            PlaybackState state
+    ) {
     }
 }

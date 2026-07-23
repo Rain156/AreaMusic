@@ -10,6 +10,12 @@ public interface ClientAudioMixer extends AutoCloseable {
 
     void updateMusicLibrary(MusicLibrary musicLibrary);
 
+    void updateMusicLibraryAndApply(
+            MusicLibrary musicLibrary,
+            long revision,
+            PlaybackState state
+    );
+
     void setMasterGain(float gain);
 
     void setPaused(boolean paused);

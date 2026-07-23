@@ -326,6 +326,261 @@ class PcmAudioMixerTest {
     }
 
     @Test
+    void standaloneLibraryUpdateDiscardsOlderPendingStateBeforeNewRevisionArrives()
+            throws Exception {
+        SequencedEngine engine = new SequencedEngine(1);
+        NonBlockingOutput output = new NonBlockingOutput();
+        AtomicBoolean outputAvailable = new AtomicBoolean();
+        CountDownLatch failedOpen = new CountDownLatch(1);
+        MusicLibrary updatedLibrary = MusicLibrary.empty(tempDir.resolve("updated-music"));
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("initial-music")),
+                () -> {
+                    if (!outputAvailable.get()) {
+                        failedOpen.countDown();
+                        throw new IllegalStateException("device unavailable");
+                    }
+                    return output;
+                },
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState oldState = playing("old", "old.wav", 1.0f, true, 0, 0);
+        PlaybackState newState = playing("new", "new.wav", 1.0f, true, 0, 0);
+
+        try {
+            mixer.start();
+            mixer.apply(1L, oldState);
+            assertTrue(failedOpen.await(1, TimeUnit.SECONDS));
+
+            outputAvailable.set(true);
+            mixer.updateMusicLibrary(updatedLibrary);
+            assertTrue(engine.libraryUpdated.await(1, TimeUnit.SECONDS));
+
+            assertFalse(output.firstWrite.await(500, TimeUnit.MILLISECONDS));
+            assertEquals(0, engine.applyCalls.get());
+            assertEquals(List.of(new EngineEvent("library", -1L, null, -1)), engine.events);
+
+            mixer.apply(2L, newState);
+
+            assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(List.of(newState), engine.appliedStates);
+            assertEquals(
+                    List.of(
+                            new EngineEvent("library", -1L, null, -1),
+                            new EngineEvent("apply", 2L, newState, -1),
+                            new EngineEvent("render", -1L, null, 1)
+                    ),
+                    engine.events
+            );
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void atomicLibraryStateBatchWaitsForOutputAndRendersOnlyTheNewPair() throws Exception {
+        SequencedEngine engine = new SequencedEngine(1);
+        NonBlockingOutput output = new NonBlockingOutput();
+        AtomicBoolean outputAvailable = new AtomicBoolean();
+        CountDownLatch failedOpen = new CountDownLatch(1);
+        MusicLibrary updatedLibrary = MusicLibrary.empty(tempDir.resolve("updated-music"));
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("initial-music")),
+                () -> {
+                    if (!outputAvailable.get()) {
+                        failedOpen.countDown();
+                        throw new IllegalStateException("device unavailable");
+                    }
+                    return output;
+                },
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState oldState = playing("old", "old.wav", 1.0f, true, 0, 0);
+        PlaybackState newState = playing("new", "new.wav", 1.0f, true, 0, 0);
+
+        try {
+            mixer.start();
+            mixer.apply(1L, oldState);
+            assertTrue(failedOpen.await(1, TimeUnit.SECONDS));
+
+            mixer.updateMusicLibraryAndApply(updatedLibrary, 2L, newState);
+
+            assertFalse(engine.libraryUpdated.await(250, TimeUnit.MILLISECONDS));
+            assertTrue(engine.events.isEmpty());
+            assertEquals(0, engine.applyCalls.get());
+
+            outputAvailable.set(true);
+            mixer.setPaused(false);
+
+            assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(updatedLibrary, engine.musicLibrary.get());
+            assertEquals(List.of(newState), engine.appliedStates);
+            assertEquals(
+                    List.of(
+                            new EngineEvent("library", -1L, null, -1),
+                            new EngineEvent("apply", 2L, newState, -1),
+                            new EngineEvent("render", -1L, null, 1)
+                    ),
+                    engine.events
+            );
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void pausedAtomicBatchKeepsItsLibraryWhileLatestStateOverwritesItsState() throws Exception {
+        SequencedEngine engine = new SequencedEngine(2);
+        PausableDelayOutput output = new PausableDelayOutput();
+        MusicLibrary updatedLibrary = MusicLibrary.empty(tempDir.resolve("updated-music"));
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("initial-music")),
+                () -> output,
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState initial = playing("initial", "initial.wav", 1.0f, true, 0, 0);
+        PlaybackState batched = playing("batched", "batched.wav", 1.0f, true, 0, 0);
+        PlaybackState latest = playing("latest", "latest.wav", 1.0f, true, 0, 0);
+
+        try {
+            mixer.start();
+            mixer.apply(1L, initial);
+            assertTrue(output.firstWriteEntered.await(1, TimeUnit.SECONDS));
+            engine.appliedStates.clear();
+            engine.events.clear();
+
+            mixer.setPaused(true);
+            mixer.updateMusicLibraryAndApply(updatedLibrary, 2L, batched);
+            mixer.apply(3L, latest);
+            output.releaseFirstWrite.countDown();
+
+            assertTrue(output.stopped.await(1, TimeUnit.SECONDS));
+            assertFalse(engine.libraryUpdated.await(250, TimeUnit.MILLISECONDS));
+            assertTrue(engine.events.isEmpty());
+
+            mixer.setPaused(false);
+
+            assertTrue(output.secondWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(updatedLibrary, engine.musicLibrary.get());
+            assertEquals(List.of(latest), engine.appliedStates);
+            assertEquals(
+                    List.of(
+                            new EngineEvent("library", -1L, null, -1),
+                            new EngineEvent("apply", 3L, latest, -1),
+                            new EngineEvent("render", -1L, null, 2)
+                    ),
+                    engine.events
+            );
+        } finally {
+            output.releaseFirstWrite.countDown();
+            mixer.close();
+        }
+    }
+
+    @Test
+    void queueFullAtomicBatchIsDeliveredOnlyAtTheNinthRenderBoundary() throws Exception {
+        SequencedEngine engine = new SequencedEngine(20);
+        StalledPositionOutput output = new StalledPositionOutput();
+        MusicLibrary updatedLibrary = MusicLibrary.empty(tempDir.resolve("updated-music"));
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("initial-music")),
+                () -> output,
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState initial = playing("initial", "initial.wav", 1.0f, true, 0, 0);
+        PlaybackState updated = playing("updated", "updated.wav", 1.0f, true, 0, 0);
+
+        try {
+            mixer.start();
+            mixer.apply(1L, initial);
+            assertTrue(output.eightWrites.await(1, TimeUnit.SECONDS));
+            engine.appliedStates.clear();
+            engine.events.clear();
+
+            mixer.updateMusicLibraryAndApply(updatedLibrary, 2L, updated);
+
+            assertFalse(engine.libraryUpdated.await(250, TimeUnit.MILLISECONDS));
+            assertTrue(engine.events.isEmpty());
+            assertEquals(8, engine.renderCalls.get());
+
+            output.playedFrames.set(BLOCK_FRAMES);
+
+            assertTrue(output.ninthWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(updatedLibrary, engine.musicLibrary.get());
+            assertEquals(List.of(updated), engine.appliedStates);
+            assertEquals(
+                    List.of(
+                            new EngineEvent("library", -1L, null, -1),
+                            new EngineEvent("apply", 2L, updated, -1),
+                            new EngineEvent("render", -1L, null, 9)
+                    ),
+                    engine.events
+            );
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void rejectedAtomicBatchDoesNotCorruptThePreviouslyPendingPair() throws Exception {
+        SequencedEngine engine = new SequencedEngine(1);
+        NonBlockingOutput output = new NonBlockingOutput();
+        MusicLibrary validLibrary = MusicLibrary.empty(tempDir.resolve("valid-music"));
+        MusicLibrary rejectedLibrary = MusicLibrary.empty(tempDir.resolve("rejected-music"));
+        PlaybackState validState = playing("valid", "valid.wav", 1.0f, true, 0, 0);
+        PlaybackState rejectedState = playing("rejected", "rejected.wav", 1.0f, true, 0, 0);
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("initial-music")),
+                () -> output,
+                library -> engine,
+                failure -> {
+                }
+        );
+
+        try {
+            mixer.updateMusicLibraryAndApply(validLibrary, 2L, validState);
+            assertThrows(
+                    NullPointerException.class,
+                    () -> mixer.updateMusicLibraryAndApply(null, 3L, rejectedState)
+            );
+            assertThrows(
+                    NullPointerException.class,
+                    () -> mixer.updateMusicLibraryAndApply(rejectedLibrary, 3L, null)
+            );
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> mixer.updateMusicLibraryAndApply(
+                            rejectedLibrary, -1L, rejectedState
+                    )
+            );
+
+            mixer.start();
+
+            assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(validLibrary, engine.musicLibrary.get());
+            assertEquals(List.of(validState), engine.appliedStates);
+            assertEquals(
+                    List.of(
+                            new EngineEvent("library", -1L, null, -1),
+                            new EngineEvent("apply", 2L, validState, -1),
+                            new EngineEvent("render", -1L, null, 1)
+                    ),
+                    engine.events
+            );
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
     void rendersSubmittedPlaybackStateOnTheOwnedAudioThread() throws Exception {
         Path root = tempDir.resolve("music");
         writeConstantWav(root.resolve("thread.wav"), (short) 1200, 4096);
