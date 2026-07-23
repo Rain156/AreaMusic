@@ -94,6 +94,62 @@ class ClientPlaybackSessionTest {
     }
 
     @Test
+    void successfulReloadAtomicallyAppliesNewerNonLibraryRevisionReceivedWhilePending() {
+        MusicLibrary oldLibrary = MusicLibrary.empty(tempDir.resolve("old"));
+        MusicLibrary scannedLibrary = MusicLibrary.empty(tempDir.resolve("scanned"));
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(oldLibrary, ignored -> mixer);
+        PlaybackState pendingState = playing("pending", "track.mp3", 1.0f, true, 0, 0);
+        PlaybackState newerState = playing("created", "track.mp3", 1.0f, true, 0, 0);
+        session.connect();
+        mixer.appliedStates.clear();
+        mixer.events.clear();
+
+        assertTrue(session.beginReload(7L));
+        session.apply(7L, pendingState);
+        session.apply(8L, newerState);
+
+        assertTrue(mixer.appliedStates.isEmpty());
+        assertTrue(mixer.atomicUpdates.isEmpty());
+
+        session.finishReload(scannedLibrary);
+
+        assertEquals(
+                List.of(new AtomicUpdate(scannedLibrary, 8L, newerState)),
+                mixer.atomicUpdates
+        );
+        assertEquals(List.of(new AppliedState(8L, newerState)), mixer.appliedStates);
+        assertEquals(0, mixer.standaloneLibraryUpdates);
+        assertEquals(List.of("library", "apply:8"), mixer.events);
+        session.close();
+    }
+
+    @Test
+    void failedReloadAppliesNewerNonLibraryRevisionOnceWithoutReplacingLibrary() {
+        MusicLibrary oldLibrary = MusicLibrary.empty(tempDir.resolve("old"));
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(oldLibrary, ignored -> mixer);
+        PlaybackState pendingState = playing("pending", "track.mp3", 1.0f, true, 0, 0);
+        PlaybackState newerState = playing("created", "track.mp3", 1.0f, true, 0, 0);
+        session.connect();
+        mixer.appliedStates.clear();
+        mixer.events.clear();
+
+        assertTrue(session.beginReload(7L));
+        session.apply(7L, pendingState);
+        session.apply(8L, newerState);
+
+        session.failReload();
+
+        assertFalse(mixer.libraryUpdated);
+        assertTrue(mixer.atomicUpdates.isEmpty());
+        assertEquals(0, mixer.standaloneLibraryUpdates);
+        assertEquals(List.of(new AppliedState(8L, newerState)), mixer.appliedStates);
+        assertEquals(List.of("apply:8"), mixer.events);
+        session.close();
+    }
+
+    @Test
     void unversionedLibraryScanReappliesTheCurrentCompatibleUpdate() {
         MusicLibrary oldLibrary = MusicLibrary.empty(tempDir.resolve("old"));
         MusicLibrary scannedLibrary = MusicLibrary.empty(tempDir.resolve("scanned"));

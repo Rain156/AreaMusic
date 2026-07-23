@@ -62,7 +62,7 @@ public final class ClientPlaybackSession implements AutoCloseable {
         pendingReloadRevision = -1L;
         if (completedRevision >= 0L) {
             compatibleUpdate = latestUpdate != null
-                    && latestUpdate.revision() == completedRevision
+                    && latestUpdate.revision() >= completedRevision
                     ? latestUpdate
                     : null;
         }
@@ -83,7 +83,7 @@ public final class ClientPlaybackSession implements AutoCloseable {
         pendingReloadRevision = -1L;
         if (failedRevision >= 0L
                 && latestUpdate != null
-                && latestUpdate.revision() == failedRevision) {
+                && latestUpdate.revision() >= failedRevision) {
             compatibleUpdate = latestUpdate;
         }
         applyCompatibleUpdate();
