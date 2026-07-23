@@ -187,6 +187,20 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     waitForSignal(50L, false);
                     continue;
                 }
+
+                if (!engine.hasWork() && queue.isEmpty()) {
+                    PendingUpdate update = drainIdleStoppedUpdate();
+                    if (update != null) {
+                        if (update.musicLibrary() != null) {
+                            engine.setMusicLibrary(update.musicLibrary());
+                        }
+                        try {
+                            engine.apply(update.revision(), update.playbackState());
+                        } finally {
+                            reportEngineFailures(engine);
+                        }
+                    }
+                }
                 if (!engine.hasWork() && !hasPendingState() && queue.isEmpty()) {
                     if (output != null) {
                         try {
@@ -462,17 +476,30 @@ public final class PcmAudioMixer implements ClientAudioMixer {
 
     private PendingUpdate drainPendingUpdate() {
         synchronized (signal) {
-            MusicLibrary library = libraryPending ? pendingLibrary : null;
-            long revision = statePending ? pendingRevision : -1L;
-            PlaybackState state = statePending ? pendingState : null;
-            pendingLibrary = null;
-            pendingRevision = -1L;
-            pendingState = null;
-            libraryPending = false;
-            libraryBoundToState = false;
-            statePending = false;
-            return new PendingUpdate(library, revision, state);
+            return drainPendingUpdateLocked();
         }
+    }
+
+    private PendingUpdate drainIdleStoppedUpdate() {
+        synchronized (signal) {
+            if (paused || !statePending || pendingState.playing()) {
+                return null;
+            }
+            return drainPendingUpdateLocked();
+        }
+    }
+
+    private PendingUpdate drainPendingUpdateLocked() {
+        MusicLibrary library = libraryPending ? pendingLibrary : null;
+        long revision = statePending ? pendingRevision : -1L;
+        PlaybackState state = statePending ? pendingState : null;
+        pendingLibrary = null;
+        pendingRevision = -1L;
+        pendingState = null;
+        libraryPending = false;
+        libraryBoundToState = false;
+        statePending = false;
+        return new PendingUpdate(library, revision, state);
     }
 
     private MusicLibrary drainPendingLibrary() {

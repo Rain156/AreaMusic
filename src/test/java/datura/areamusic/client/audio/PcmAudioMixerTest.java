@@ -581,6 +581,168 @@ class PcmAudioMixerTest {
     }
 
     @Test
+    void idleStoppedStateAppliesWithoutOpeningOutput() throws Exception {
+        IdleRecordingEngine engine = new IdleRecordingEngine();
+        UnavailableOutputProbe output = new UnavailableOutputProbe();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        PlaybackState stopped = PlaybackState.stopped();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                output::open,
+                library -> engine,
+                failures::add
+        );
+
+        try {
+            mixer.apply(1L, stopped);
+            mixer.start();
+
+            assertTrue(engine.applied.await(1, TimeUnit.SECONDS));
+            assertEquals(
+                    List.of(new IdleEngineEvent("apply", null, 1L, stopped)),
+                    engine.events
+            );
+            assertEquals(0, output.openCalls.get());
+            assertEquals(0, output.startCalls.get());
+            assertEquals(0, output.writeCalls.get());
+            assertEquals(0, output.drainCalls.get());
+            assertEquals(0, engine.renderCalls.get());
+            assertEquals(0, failures.stream()
+                    .filter(failure -> failure.kind() == AudioFailure.Kind.DEVICE)
+                    .count());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void idleAtomicStoppedBatchAppliesLibraryThenStateWithoutOpeningOutput() throws Exception {
+        IdleRecordingEngine engine = new IdleRecordingEngine();
+        UnavailableOutputProbe output = new UnavailableOutputProbe();
+        List<AudioFailure> failures = new CopyOnWriteArrayList<>();
+        MusicLibrary updatedLibrary = MusicLibrary.empty(tempDir.resolve("updated-music"));
+        PlaybackState stopped = PlaybackState.stopped();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("initial-music")),
+                output::open,
+                library -> engine,
+                failures::add
+        );
+
+        try {
+            mixer.updateMusicLibraryAndApply(updatedLibrary, 2L, stopped);
+            mixer.start();
+
+            assertTrue(engine.applied.await(1, TimeUnit.SECONDS));
+            assertEquals(
+                    List.of(
+                            new IdleEngineEvent("library", updatedLibrary, -1L, null),
+                            new IdleEngineEvent("apply", null, 2L, stopped)
+                    ),
+                    engine.events
+            );
+            assertEquals(0, output.openCalls.get());
+            assertEquals(0, output.startCalls.get());
+            assertEquals(0, output.writeCalls.get());
+            assertEquals(0, output.drainCalls.get());
+            assertEquals(0, engine.renderCalls.get());
+            assertEquals(0, failures.stream()
+                    .filter(failure -> failure.kind() == AudioFailure.Kind.DEVICE)
+                    .count());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void playingStateSubmittedAfterIdleStopDrainRemainsPendingForOutputRender() throws Exception {
+        List<String> events = new CopyOnWriteArrayList<>();
+        BlockingStoppedEngine engine = new BlockingStoppedEngine(events);
+        EventRecordingOutput output = new EventRecordingOutput(events);
+        AtomicInteger openCalls = new AtomicInteger();
+        CountDownLatch playingSubmitted = new CountDownLatch(1);
+        PlaybackState playing = playing("next", "next.wav", 1.0f, true, 0, 0);
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> {
+                    openCalls.incrementAndGet();
+                    events.add("open");
+                    return output;
+                },
+                library -> engine,
+                failure -> {
+                }
+        );
+        Thread submitter = new Thread(() -> {
+            mixer.apply(2L, playing);
+            playingSubmitted.countDown();
+        }, "idle-stop-playing-submitter");
+
+        try {
+            mixer.apply(1L, PlaybackState.stopped());
+            mixer.start();
+            assertTrue(engine.stoppedApplyEntered.await(1, TimeUnit.SECONDS));
+
+            submitter.start();
+            assertTrue(playingSubmitted.await(1, TimeUnit.SECONDS));
+            engine.releaseStoppedApply.countDown();
+
+            assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(1, openCalls.get());
+            assertEquals(1, engine.renderCalls.get());
+            assertEquals(
+                    List.of(
+                            "apply:1:stopped",
+                            "open",
+                            "start",
+                            "apply:2:playing",
+                            "render",
+                            "write"
+                    ),
+                    events
+            );
+        } finally {
+            engine.releaseStoppedApply.countDown();
+            mixer.close();
+            submitter.join(1000L);
+        }
+    }
+
+    @Test
+    void initialPlayingStateStillWaitsForAnOutputRenderBoundary() throws Exception {
+        IdleRecordingEngine engine = new IdleRecordingEngine();
+        UnavailableOutputProbe output = new UnavailableOutputProbe();
+        CountDownLatch deviceFailure = new CountDownLatch(1);
+        PlaybackState playing = playing("first", "first.wav", 1.0f, true, 0, 0);
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                output::open,
+                library -> engine,
+                failure -> {
+                    if (failure.kind() == AudioFailure.Kind.DEVICE) {
+                        deviceFailure.countDown();
+                    }
+                }
+        );
+
+        try {
+            mixer.apply(1L, playing);
+            mixer.start();
+
+            assertTrue(output.firstOpen.await(1, TimeUnit.SECONDS));
+            assertTrue(deviceFailure.await(1, TimeUnit.SECONDS));
+            assertFalse(engine.applied.await(250, TimeUnit.MILLISECONDS));
+            assertTrue(engine.events.isEmpty());
+            assertTrue(output.openCalls.get() >= 1);
+            assertEquals(0, output.startCalls.get());
+            assertEquals(0, output.writeCalls.get());
+            assertEquals(0, engine.renderCalls.get());
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
     void rendersSubmittedPlaybackStateOnTheOwnedAudioThread() throws Exception {
         Path root = tempDir.resolve("music");
         writeConstantWav(root.resolve("thread.wav"), (short) 1200, 4096);
@@ -2218,6 +2380,181 @@ class PcmAudioMixerTest {
         @Override
         public void close() {
             closed.countDown();
+        }
+    }
+
+    private static final class IdleRecordingEngine implements PcmAudioMixer.AudioEngine {
+        private final List<IdleEngineEvent> events = new CopyOnWriteArrayList<>();
+        private final AtomicInteger renderCalls = new AtomicInteger();
+        private final CountDownLatch applied = new CountDownLatch(1);
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+            events.add(new IdleEngineEvent("library", musicLibrary, -1L, null));
+        }
+
+        @Override
+        public void apply(long revision, PlaybackState state) {
+            events.add(new IdleEngineEvent("apply", null, revision, state));
+            applied.countDown();
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            renderCalls.incrementAndGet();
+            return constantPcmBlock((short) 1000);
+        }
+
+        @Override
+        public List<AudioFailure> drainFailures() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return false;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private record IdleEngineEvent(
+            String operation,
+            MusicLibrary musicLibrary,
+            long revision,
+            PlaybackState state
+    ) {
+    }
+
+    private static final class UnavailableOutputProbe implements PcmAudioMixer.AudioOutput {
+        private final AtomicInteger openCalls = new AtomicInteger();
+        private final AtomicInteger startCalls = new AtomicInteger();
+        private final AtomicInteger writeCalls = new AtomicInteger();
+        private final AtomicInteger drainCalls = new AtomicInteger();
+        private final CountDownLatch firstOpen = new CountDownLatch(1);
+
+        private PcmAudioMixer.AudioOutput open() {
+            openCalls.incrementAndGet();
+            firstOpen.countDown();
+            throw new IllegalStateException("device unavailable");
+        }
+
+        @Override
+        public void start() {
+            startCalls.incrementAndGet();
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            writeCalls.incrementAndGet();
+            return length;
+        }
+
+        @Override
+        public void drain() {
+            drainCalls.incrementAndGet();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class BlockingStoppedEngine implements PcmAudioMixer.AudioEngine {
+        private final List<String> events;
+        private final AtomicBoolean work = new AtomicBoolean();
+        private final AtomicInteger renderCalls = new AtomicInteger();
+        private final CountDownLatch stoppedApplyEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseStoppedApply = new CountDownLatch(1);
+
+        private BlockingStoppedEngine(List<String> events) {
+            this.events = events;
+        }
+
+        @Override
+        public void setMusicLibrary(MusicLibrary musicLibrary) {
+            events.add("library");
+        }
+
+        @Override
+        public void apply(long revision, PlaybackState state) {
+            events.add("apply:" + revision + ":" + (state.playing() ? "playing" : "stopped"));
+            if (state.playing()) {
+                work.set(true);
+                return;
+            }
+
+            stoppedApplyEntered.countDown();
+            try {
+                if (!releaseStoppedApply.await(2, TimeUnit.SECONDS)) {
+                    throw new AssertionError("timed out waiting to release stopped apply");
+                }
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while waiting to release stopped apply", exception);
+            }
+        }
+
+        @Override
+        public byte[] renderFrames(int frameCount, float masterGain) {
+            renderCalls.incrementAndGet();
+            events.add("render");
+            work.set(false);
+            return constantPcmBlock((short) 1000);
+        }
+
+        @Override
+        public List<AudioFailure> drainFailures() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasWork() {
+            return work.get();
+        }
+
+        @Override
+        public void close() {
+            releaseStoppedApply.countDown();
+        }
+    }
+
+    private static final class EventRecordingOutput implements PcmAudioMixer.AudioOutput {
+        private final List<String> events;
+        private final CountDownLatch firstWrite = new CountDownLatch(1);
+
+        private EventRecordingOutput(List<String> events) {
+            this.events = events;
+        }
+
+        @Override
+        public void start() {
+            events.add("start");
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            events.add("write");
+            firstWrite.countDown();
+            return length;
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
         }
     }
 
