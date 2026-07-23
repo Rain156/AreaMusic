@@ -91,8 +91,12 @@ public final class AreaStorage {
             String areaId = fileName.substring(0, fileName.length() - ".json".length());
             try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
                 AreaDefinition area = codec.read(areaId, reader);
-                if (!musicLibrary.contains(area.musicId())) {
-                    throw new IllegalArgumentException("MusicID is not present in the server library: " + area.musicId());
+                for (AreaTrackDefinition track : area.tracks()) {
+                    if (!musicLibrary.contains(track.musicId())) {
+                        throw new IllegalArgumentException(
+                                "MusicID is not present in the server library: " + track.musicId()
+                        );
+                    }
                 }
                 loaded.add(area);
             } catch (Exception exception) {
@@ -157,8 +161,19 @@ public final class AreaStorage {
 
     private static String rootMessage(Throwable throwable) {
         Throwable current = throwable;
-        while (current.getCause() != null) {
+        String contextualMessage = null;
+        while (true) {
+            String message = current.getMessage();
+            if (contextualMessage == null && message != null && message.contains("tracks[")) {
+                contextualMessage = message;
+            }
+            if (current.getCause() == null) {
+                break;
+            }
             current = current.getCause();
+        }
+        if (contextualMessage != null) {
+            return contextualMessage;
         }
         String message = current.getMessage();
         return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;

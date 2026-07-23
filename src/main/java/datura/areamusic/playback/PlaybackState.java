@@ -1,67 +1,49 @@
 package datura.areamusic.playback;
 
 import datura.areamusic.area.AreaDefinition;
+import datura.areamusic.area.AreaTrackDefinition;
 
+import java.util.List;
 import java.util.Objects;
 
 public record PlaybackState(
         boolean playing,
         String areaId,
-        String musicId,
-        float volume,
-        boolean loop,
-        int fadeInMs,
-        int fadeOutMs
+        List<AreaTrackDefinition> tracks,
+        boolean resumeOnReenter
 ) {
     public PlaybackState {
         Objects.requireNonNull(areaId, "areaId");
-        Objects.requireNonNull(musicId, "musicId");
+        tracks = List.copyOf(Objects.requireNonNull(tracks, "tracks"));
         if (!playing) {
             areaId = "";
-            musicId = "";
-            volume = 0.0f;
-            loop = false;
-            fadeInMs = 0;
-            fadeOutMs = 0;
+            tracks = List.of();
+            resumeOnReenter = false;
         } else {
             if (areaId.isBlank()) {
                 throw new IllegalArgumentException("Area ID must not be blank");
             }
-            if (musicId.isBlank()) {
-                throw new IllegalArgumentException("Music ID must not be blank");
+            if (tracks.isEmpty() || tracks.size() > AreaDefinition.MAX_TRACKS) {
+                throw new IllegalArgumentException(
+                        "Track count must be between 1 and " + AreaDefinition.MAX_TRACKS
+                );
             }
-            if (!Float.isFinite(volume) || volume < 0.0f || volume > 1.0f) {
-                throw new IllegalArgumentException("Volume must be finite and between 0 and 1");
-            }
-            validateFade("fadeInMs", fadeInMs);
-            validateFade("fadeOutMs", fadeOutMs);
         }
     }
 
     public static PlaybackState stopped() {
-        return new PlaybackState(false, "", "", 0.0f, false, 0, 0);
+        return new PlaybackState(false, "", List.of(), false);
     }
 
     public static PlaybackState playing(
             String areaId,
-            String musicId,
-            float volume,
-            boolean loop,
-            int fadeInMs,
-            int fadeOutMs
+            List<AreaTrackDefinition> tracks,
+            boolean resumeOnReenter
     ) {
-        return new PlaybackState(true, areaId, musicId, volume, loop, fadeInMs, fadeOutMs);
+        return new PlaybackState(true, areaId, tracks, resumeOnReenter);
     }
 
     public static PlaybackState fromArea(AreaDefinition area) {
-        return playing(
-                area.id(), area.musicId(), area.volume(), area.loop(), area.fadeInMs(), area.fadeOutMs()
-        );
-    }
-
-    private static void validateFade(String name, int value) {
-        if (value < 0 || value > AreaDefinition.MAX_FADE_MS) {
-            throw new IllegalArgumentException(name + " must be between 0 and " + AreaDefinition.MAX_FADE_MS);
-        }
+        return playing(area.id(), area.tracks(), area.resumeOnReenter());
     }
 }

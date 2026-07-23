@@ -5,6 +5,8 @@ import datura.areamusic.AreaMusic;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaJsonCodec;
 import datura.areamusic.area.AreaStorage;
+import datura.areamusic.area.AreaTrackDefinition;
+import datura.areamusic.music.MusicDirectory;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.network.AreaMusicNetwork;
 import net.minecraft.commands.CommandSourceStack;
@@ -42,11 +44,13 @@ public final class AreaMusicServer {
     private static final Set<String> CREATE_IN_FLIGHT = new HashSet<>();
 
     private static volatile MinecraftServer server;
-    private static volatile MusicLibrary musicLibrary = MusicLibrary.empty(FMLPaths.GAMEDIR.get().resolve("AreaMusic"));
+    private static volatile MusicLibrary musicLibrary = MusicLibrary.empty(
+            MusicDirectory.canonicalPath(FMLPaths.GAMEDIR.get())
+    );
     private static volatile List<AreaDefinition> areas = List.of();
     private static volatile long revision;
     private static volatile ReloadStatus reloadStatus = ReloadStatus.notReady();
-    private static Path musicRoot;
+    private static Path gameDirectory;
     private static AreaStorage storage;
     private static boolean reloadInFlight;
 
@@ -114,8 +118,8 @@ public final class AreaMusicServer {
     public static int requestReload(CommandSourceStack source) {
         MinecraftServer currentServer = server;
         AreaStorage currentStorage = storage;
-        Path currentMusicRoot = musicRoot;
-        if (currentServer == null || currentStorage == null || currentMusicRoot == null) {
+        Path currentGameDirectory = gameDirectory;
+        if (currentServer == null || currentStorage == null || currentGameDirectory == null) {
             if (source != null) {
                 source.sendFailure(Component.translatable("commands.areamusic.not_ready"));
             }
@@ -134,7 +138,7 @@ public final class AreaMusicServer {
             source.sendSuccess(() -> Component.translatable("commands.areamusic.reload.started"), false);
         }
         CompletableFuture
-                .supplyAsync(() -> loadCandidate(currentMusicRoot, currentStorage))
+                .supplyAsync(() -> loadCandidate(currentGameDirectory, currentStorage))
                 .whenComplete((candidate, throwable) -> currentServer.execute(
                         () -> finishReload(currentServer, source, candidate, throwable)
                 ));
@@ -179,12 +183,9 @@ public final class AreaMusicServer {
                     source.getLevel().dimension().location(),
                     pos1,
                     pos2,
-                    musicId,
-                    0,
-                    1.0f,
-                    true,
-                    2000,
-                    2000
+                    List.of(new AreaTrackDefinition(musicId, 0, 1.0f, true, 2000, 2000)),
+                    false,
+                    0
             );
         } catch (IllegalArgumentException exception) {
             source.sendFailure(Component.translatable("commands.areamusic.create.invalid", exception.getMessage()));
@@ -204,13 +205,13 @@ public final class AreaMusicServer {
     private static void start(MinecraftServer startedServer) {
         reloadStatus = ReloadStatus.notReady();
         server = startedServer;
-        musicRoot = FMLPaths.GAMEDIR.get().resolve("AreaMusic").toAbsolutePath().normalize();
+        gameDirectory = FMLPaths.GAMEDIR.get().toAbsolutePath().normalize();
         Path worldRoot = startedServer.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
         Path fileName = worldRoot.getFileName();
         String worldDirectoryName = fileName == null ? "world" : fileName.toString();
         String saveId = AreaStorage.saveId(worldDirectoryName);
         storage = new AreaStorage(AreaStorage.directory(FMLPaths.CONFIGDIR.get(), saveId), new AreaJsonCodec());
-        musicLibrary = MusicLibrary.empty(musicRoot);
+        musicLibrary = MusicLibrary.empty(MusicDirectory.canonicalPath(gameDirectory));
         areas = List.of();
         revision = 0L;
         PLAYER_TRACKERS.clear();
@@ -221,9 +222,9 @@ public final class AreaMusicServer {
 
     private static void stop() {
         server = null;
-        musicRoot = null;
+        gameDirectory = null;
         storage = null;
-        musicLibrary = MusicLibrary.empty(FMLPaths.GAMEDIR.get().resolve("AreaMusic"));
+        musicLibrary = MusicLibrary.empty(MusicDirectory.canonicalPath(FMLPaths.GAMEDIR.get()));
         areas = List.of();
         revision = 0L;
         PLAYER_TRACKERS.clear();
@@ -232,8 +233,9 @@ public final class AreaMusicServer {
         reloadStatus = ReloadStatus.notReady();
     }
 
-    private static ReloadCandidate loadCandidate(Path root, AreaStorage areaStorage) {
+    static ReloadCandidate loadCandidate(Path gameDirectory, AreaStorage areaStorage) {
         try {
+            Path root = MusicDirectory.prepare(gameDirectory);
             MusicLibrary candidateLibrary = MusicLibrary.scan(root);
             List<AreaDefinition> candidateAreas = areaStorage.load(candidateLibrary);
             return new ReloadCandidate(candidateLibrary, candidateAreas);
@@ -358,8 +360,8 @@ public final class AreaMusicServer {
         return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message;
     }
 
-    private record ReloadCandidate(MusicLibrary musicLibrary, List<AreaDefinition> areas) {
-        private ReloadCandidate {
+    record ReloadCandidate(MusicLibrary musicLibrary, List<AreaDefinition> areas) {
+        ReloadCandidate {
             areas = List.copyOf(areas);
         }
     }

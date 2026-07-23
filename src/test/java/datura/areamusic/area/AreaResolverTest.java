@@ -45,6 +45,14 @@ class AreaResolverTest {
     }
 
     private static AreaDefinition area(String id, int priority, BlockPos min, BlockPos max) {
-        return AreaDefinition.create(id, OVERWORLD, min, max, id + ".ogg", priority, 1.0f, true, 2000, 2000);
+        return AreaDefinition.create(
+                id,
+                OVERWORLD,
+                min,
+                max,
+                List.of(new AreaTrackDefinition(id + ".ogg", 0, 1.0f, true, 2000, 2000)),
+                false,
+                priority
+        );
     }
 }

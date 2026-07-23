@@ -9,7 +9,7 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import java.util.Objects;
 
 public final class AreaMusicNetwork {
-    private static final String PROTOCOL_VERSION = "1";
+    private static final String PROTOCOL_VERSION = "2";
     private static final ClientHandler NO_OP_CLIENT_HANDLER = new ClientHandler() {
         @Override
         public void onPlayback(long revision, PlaybackState state) {
