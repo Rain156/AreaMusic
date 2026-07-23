@@ -35,6 +35,7 @@ public final class PcmMixerEngine implements AutoCloseable {
     private PlaybackState currentState = PlaybackState.stopped();
     private AreaSession currentSession;
     private long lastRevision = -1L;
+    private long libraryGeneration;
     private boolean closed;
 
     public PcmMixerEngine(AudioStreamFactory streamFactory, MusicLibrary musicLibrary) {
@@ -69,6 +70,7 @@ public final class PcmMixerEngine implements AutoCloseable {
     public void setMusicLibrary(MusicLibrary musicLibrary) {
         ensureOpen();
         this.musicLibrary = Objects.requireNonNull(musicLibrary, "musicLibrary");
+        libraryGeneration++;
         resumeSnapshots.clear();
         for (AreaSession session : outgoingSessions) {
             session.snapshotInvalidated = true;
@@ -77,11 +79,8 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
         if (currentSession != null) {
             currentSession.snapshotInvalidated = true;
-        }
-        if (currentSession != null && !currentSession.preparations.isEmpty()) {
-            currentSession.close();
-            currentSession = null;
-            currentState = PlaybackState.stopped();
+            currentSession.requiresLibraryRefresh |= !currentSession.preparations.isEmpty();
+            currentSession.discardPreparations();
         }
     }
 
@@ -97,7 +96,9 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
         removeSilentOutgoingSessions();
         if (state.equals(currentState)
-                && (currentSession == null || currentSession.revision == revision)) {
+                && (currentSession == null
+                || currentSession.revision == revision
+                && !currentSession.requiresLibraryRefresh)) {
             return;
         }
 
@@ -249,6 +250,7 @@ public final class PcmMixerEngine implements AutoCloseable {
         while (iterator.hasNext()) {
             AreaSession session = iterator.next();
             if (session.revision != revision
+                    || session.libraryGeneration != libraryGeneration
                     || session.snapshotInvalidated
                     || !session.state.resumeOnReenter()
                     || !session.state.areaId().equals(state.areaId())
@@ -283,7 +285,7 @@ public final class PcmMixerEngine implements AutoCloseable {
     }
 
     private void transferContinuingTracks(AreaSession previous, AreaSession incoming) {
-        if (previous.revision != incoming.revision || previous.snapshotInvalidated) {
+        if (previous.libraryGeneration != incoming.libraryGeneration) {
             return;
         }
         List<TrackIdentity> previousIdentities = trackIdentities(previous.state.tracks());
@@ -371,6 +373,7 @@ public final class PcmMixerEngine implements AutoCloseable {
         if (snapshot != null && snapshot.state().equals(state)) {
             return new AreaSession(
                     revision,
+                    libraryGeneration,
                     state,
                     AreaPlaybackTimeline.restore(
                             snapshot.timeline(), state.tracks(), AudioStreamFactory.SAMPLE_RATE
@@ -380,6 +383,7 @@ public final class PcmMixerEngine implements AutoCloseable {
         }
         return new AreaSession(
                 revision,
+                libraryGeneration,
                 state,
                 AreaPlaybackTimeline.fresh(state.tracks(), AudioStreamFactory.SAMPLE_RATE),
                 false
@@ -746,6 +750,7 @@ public final class PcmMixerEngine implements AutoCloseable {
 
     private final class AreaSession implements AutoCloseable {
         private final long revision;
+        private final long libraryGeneration;
         private final PlaybackState state;
         private final AreaPlaybackTimeline timeline;
         private final List<RuntimeTrack> tracks = new ArrayList<>();
@@ -755,14 +760,17 @@ public final class PcmMixerEngine implements AutoCloseable {
         private boolean snapshotWhenSilent;
         private boolean snapshotInvalidated;
         private boolean expeditedRemoval;
+        private boolean requiresLibraryRefresh;
 
         private AreaSession(
                 long revision,
+                long libraryGeneration,
                 PlaybackState state,
                 AreaPlaybackTimeline timeline,
                 boolean recoverMissingStartedTracks
         ) {
             this.revision = revision;
+            this.libraryGeneration = libraryGeneration;
             this.state = state;
             this.timeline = timeline;
             this.recoverMissingStartedTracks = recoverMissingStartedTracks;

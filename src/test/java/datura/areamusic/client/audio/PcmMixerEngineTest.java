@@ -1768,6 +1768,114 @@ class PcmMixerEngineTest {
     }
 
     @Test
+    void libraryUpdateCancelsPendingRestoreWithoutHardClosingHealthyRuntime()
+            throws Exception {
+        Path oldRoot = tempDir.resolve("old-music-pending");
+        Path newRoot = tempDir.resolve("new-music-pending");
+        writeWav(oldRoot.resolve("restore.wav"), constantFrames(10_000, (short) 100));
+        writeWav(oldRoot.resolve("healthy.wav"), constantFrames(10_000, (short) 1000));
+        writeWav(oldRoot.resolve("between.wav"), constantFrames(10_000, (short) 0));
+        writeWav(newRoot.resolve("restore.wav"), constantFrames(10_000, (short) 4000));
+        writeWav(newRoot.resolve("healthy.wav"), constantFrames(10_000, (short) 8000));
+        Path normalizedOldRoot = oldRoot.toAbsolutePath().normalize();
+        Path normalizedNewRoot = newRoot.toAbsolutePath().normalize();
+        CountDownLatch pendingRestoreEntered = new CountDownLatch(1);
+        CountDownLatch releasePendingRestore = new CountDownLatch(1);
+        CountDownLatch lateRestoreClosed = new CountDownLatch(1);
+        AtomicInteger oldRestoreOpenCount = new AtomicInteger();
+        AtomicInteger oldRestoreCloseCount = new AtomicInteger();
+        AtomicInteger oldHealthyCloseCount = new AtomicInteger();
+        AtomicInteger lateRestoreCloseCount = new AtomicInteger();
+        AtomicInteger newOpenCount = new AtomicInteger();
+        AudioStreamFactory delegate = new AudioStreamFactory();
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path)
+                    throws UnsupportedAudioFileException, IOException {
+                Path normalized = path.toAbsolutePath().normalize();
+                if (normalized.startsWith(normalizedOldRoot)) {
+                    if (path.getFileName().toString().equals("restore.wav")) {
+                        if (oldRestoreOpenCount.incrementAndGet() == 1) {
+                            return new CloseCountingAudioInputStream(
+                                    pcmFrames(constantFrames(10_000, (short) 100)),
+                                    oldRestoreCloseCount
+                            );
+                        }
+                        pendingRestoreEntered.countDown();
+                        awaitLatchIgnoringInterrupt(releasePendingRestore);
+                        return new CloseSignallingAudioInputStream(
+                                pcmFrames(constantFrames(10_000, (short) 100)),
+                                lateRestoreCloseCount,
+                                lateRestoreClosed
+                        );
+                    }
+                    if (path.getFileName().toString().equals("healthy.wav")) {
+                        return new CloseCountingAudioInputStream(
+                                pcmFrames(constantFrames(10_000, (short) 1000)),
+                                oldHealthyCloseCount
+                        );
+                    }
+                    return delegate.open(path);
+                }
+                if (normalized.startsWith(normalizedNewRoot)) {
+                    newOpenCount.incrementAndGet();
+                    short sample = path.getFileName().toString().equals("restore.wav")
+                            ? (short) 4000
+                            : (short) 8000;
+                    return new CloseCountingAudioInputStream(
+                            pcmFrames(constantFrames(10_000, sample)),
+                            new AtomicInteger()
+                    );
+                }
+                return delegate.open(path);
+            }
+        };
+        PlaybackState area = state(
+                "area",
+                true,
+                track("restore.wav", 0, true, 0, 1),
+                track("healthy.wav", 0, true, 0, 100)
+        );
+        PlaybackState between = state(
+                "between", false, track("between.wav", 0, true, 0, 0)
+        );
+
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(factory, 1);
+             PcmMixerEngine engine = new PcmMixerEngine(
+                     factory, MusicLibrary.scan(oldRoot), preparer
+             )) {
+            engine.apply(7L, area);
+            assertEquals(1100, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            engine.apply(7L, between);
+            engine.renderFrames(44, 1.0f);
+            assertEquals(1, oldRestoreCloseCount.get());
+            assertEquals(0, oldHealthyCloseCount.get());
+
+            engine.apply(7L, area);
+            assertTrue(pendingRestoreEntered.await(1, TimeUnit.SECONDS));
+            assertEquals(2, oldRestoreOpenCount.get());
+
+            engine.setMusicLibrary(MusicLibrary.scan(newRoot));
+            assertEquals(0, oldHealthyCloseCount.get());
+            assertTrue(engine.hasWork());
+            engine.apply(7L, area);
+
+            assertEquals(0, oldHealthyCloseCount.get());
+            assertEquals(13000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(2, newOpenCount.get());
+            releasePendingRestore.countDown();
+            assertTrue(lateRestoreClosed.await(1, TimeUnit.SECONDS));
+            assertEquals(1, lateRestoreCloseCount.get());
+            assertTrue(engine.drainFailures().isEmpty());
+
+            engine.renderFrames(4409, 1.0f);
+            assertEquals(1, oldHealthyCloseCount.get());
+        } finally {
+            releasePendingRestore.countDown();
+        }
+    }
+
+    @Test
     void successfulLibraryUpdateDoesNotTransferAnActiveRuntimeIntoTheNewRevision()
             throws Exception {
         Path oldRoot = tempDir.resolve("old-music");
@@ -1813,7 +1921,7 @@ class PcmMixerEngineTest {
     }
 
     @Test
-    void revisionChangeDoesNotTransferTheOldCursorIntoANewRevisionSnapshot() throws Exception {
+    void revisionChangeTransfersCompatibleLiveStreamWithoutReusingOldSnapshot() throws Exception {
         Path root = tempDir.resolve("music");
         writeWav(root.resolve("loop.wav"), new short[]{1000, 2000, 3000});
         AtomicInteger openCount = new AtomicInteger();
@@ -1834,13 +1942,14 @@ class PcmMixerEngineTest {
             assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
 
             engine.apply(7L, state);
-            assertEquals(1000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(2000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+            assertEquals(1, openCount.get());
 
             engine.apply(7L, PlaybackState.stopped());
             engine.apply(7L, state);
 
-            assertEquals(2000, firstNonSilentSample(engine));
-            assertEquals(3, openCount.get());
+            assertEquals(3000, firstNonSilentSample(engine));
+            assertEquals(2, openCount.get());
         }
     }
 
