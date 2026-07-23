@@ -2286,3 +2286,44 @@ git -C '.worktrees/neoforge-1.21.1-multitrack' cherry-pick $verificationCommit
 ~~~
 
 Do not push, merge, or create a pull request until the user chooses the integration path.
+
+---
+
+## Final verification / 最终验证 (2026-07-23)
+
+### Fresh release gates
+
+- NeoForge used Java `21.0.9` and ran `.\gradlew.bat clean test build runGameTestServer --rerun-tasks --console=plain --no-daemon`. Result: `BUILD SUCCESSFUL in 44s`, 17/17 actionable tasks executed. Fresh JUnit XML contains 26 suites, 299 tests, 0 failures, 0 errors, and 1 skipped test. GameTest logged `2 tests are now running`, `[++]`, and `All 2 required tests passed` (2/2).
+- Forge used Java `17.0.12` and ran `.\gradlew.bat clean test build reobfJarJar runGameTestServer --rerun-tasks --console=plain --no-daemon`. Result: `BUILD SUCCESSFUL in 55s`, 19/19 actionable tasks executed. Fresh JUnit XML contains 25 suites, 298 tests, 0 failures, 0 errors, and 1 skipped test. GameTest logged `1 tests are now running`, `[+]`, and `All 1 required tests passed` (1/1). `jarJar` and `reobfJarJar` were normally skipped because no JarJar configuration exists; the executed release route was `syncEmbeddedCodecs -> jar -> reobfJar`.
+- In both suites the sole skip was `MusicDirectoryTest#prepareRejectsDistinctLegacyAndCanonicalDirectoriesWithoutChangingEither`, guarded by the case-sensitive-filesystem assumption and therefore skipped on this Windows filesystem.
+
+### Final artifacts and package audit
+
+| Loader | Final artifact (repository-relative; absolute) | Bytes | SHA-256 | JAR entries / AreaMusic classes |
+| --- | --- | ---: | --- | ---: |
+| Forge 1.20.1 | `build/libs/areamusic-0.0.1.jar`; `F:\Dev\Minecraft Mods\AreaMusic\build\libs\areamusic-0.0.1.jar` | 566,767 | `7ECE762977B27F6980B0C6F0117E8BA3D7D3531DC024648168BC5DFEAEFA406F` | 388 / 83 |
+| NeoForge 1.21.1 | `build/libs/areamusic-neoforge-1.21.1-0.0.1.jar`; `F:\Dev\Minecraft Mods\AreaMusic\.worktrees\neoforge-1.21.1-multitrack\build\libs\areamusic-neoforge-1.21.1-0.0.1.jar` | 566,150 | `795B7151816655C968DFC363AB63D260FC4ADC736276A9091B8623A2352013D4` | 394 / 89 |
+
+The earlier `-all.jar` expectation is superseded by the fresh Forge build evidence above: no `-all.jar` is produced, and `areamusic-0.0.1.jar` is the reobfuscated release artifact. Each final JAR has exactly two Java Sound service descriptors and six non-comment provider lines: MP3, OGG/Vorbis, and FLAC `AudioFileReader` implementations plus their three `FormatConversionProvider` implementations. Every named provider class is present. Both JARs contain `META-INF/AREA_MUSIC_THIRD_PARTY_NOTICES.txt` and `META-INF/licenses/LGPL-2.1.txt`; the LGPL file SHA-256 is `5749785C8BDEFAFCB5D798270ED0A967036FE2CA63DCEDADE1627565DFEF81D2`. Both have zero nested JARs, JOrbis entries, test classes/fixtures, or `run/config` entries. `verifyBundledAudioCodecs` executed in both gates, and the fresh JUnit XML passed the MP3/OGG/FLAC cases in `CompressedAudioFormatsTest`, which hide classpath service resources while opening the bundled codecs.
+
+### Runtime fixtures, protocol, parity, and automated behavior
+
+The Forge and NeoForge worktrees each retain ignored, untracked UTF-8-without-BOM fixtures at `run/config/areamusic/task11-acceptance/legacy-v1.json` and `run/config/areamusic/task11-acceptance/multitrack-v2.json`. Corresponding files are byte-identical: v1 is 172 bytes with SHA-256 `27313F900FA5FCB8188B41D520B3E79795D19574A3AC5E4405E489A514D39338`; v2 is 394 bytes with SHA-256 `7B2C6A185467E6ADB0CB06D9D13FF10EB1DF2C1C9882678C14FFBDF84D60E6E2`. They are absent from both JARs and commits. The existing NeoForge GameTest fixture under `run/config/areamusic/world-723bd584/` was preserved.
+
+Both protocol-v2 codecs were source-audited in the same order: revision, playing, area ID, resume flag, track count, then per-track music ID, delay, volume, loop, fade-in, and fade-out. Both reject counts outside 1-16 before allocation. The passing XML includes `PlaybackStateTest#playingStateRoundTripsThroughTheNetworkCodec` (including an immediate track plus a five-second delayed track), `#rejectsInvalidNetworkTrackCountsBeforeReadingTracks`, the v1/v2 parser tests, and the 16/17-track boundary tests.
+
+The committed blobs for 13 corresponding loader-independent production files and 10 core multitrack tests are byte-identical across branches. Their ordered path/blob manifests have matching SHA-256 values: production `0C35F2D0A46A30ED9981D5AB2BA839B22FA74D52562F426F7E9B7913CC3CE62B`; tests `F4C1ECDADB85EA3D7B06D02CD3C2E3C4DF9001FE951F98AEFB1CE4A9E4D85322`. Loader-specific network/event code remains intentionally distinct. NeoForge's compressed-codec test additionally materializes its ModDev JAR URL resource to a temporary path; the same three codec cases pass in both suites.
+
+| Acceptance behavior | Fresh automated evidence present and passing in both XML result sets |
+| --- | --- |
+| Immediate start, five-second payload, and concurrent overlap | `PlaybackStateTest#playingStateRoundTripsThroughTheNetworkCodec`; `PcmMixerEngineTest#startsDelayedTrackOnTheExactFrameWhileAnotherTrackKeepsPlaying`; `#startsMultipleDueNonLoopTracksOnTheSameFrame` |
+| Exit fade and overlap during transition | `PcmMixerEngineTest#appliesEachOutgoingTrackFadeOutIndependently`; `#crossfadesOldAndNewTracksAtTheSameTime` |
+| Remaining-delay, PCM-cursor, and non-loop-completion resume | `PcmMixerEngineTest#resumeKeepsTheRemainingPendingDelayFrozenWhileOutsideTheArea`; `#resumeEnabledContinuesAtTheNextFrameAfterPreparation`; `#resumeKeepsALoopAtItsCursorWithinTheCurrentPass`; `#resumeKeepsACompletedNonLoopTrackSilentWithoutReopeningIt` |
+| Independent AreaMusic volume and master mute | `AreaMusicVolumeTest#combinesOnlyMasterAndAreaMusicVolume` (including master gain 0); `AreaMusicSoundOptionsTest#createsTheSliderFromTheSavedIndependentVolume` |
+| Lowercase root and safe migration | `MusicDirectoryTest#prepareCreatesOnlyTheExactLowercaseDirectory`; `#prepareMigratesTheLegacyDirectoryWithoutLosingContents`; `ClientAreaMusicTest#scanMigratesTheLegacyDirectoryAndReturnsTheLowercaseRoot` |
+| Reload races and library generation/revision invalidation | `ClientPlaybackSessionTest#successfulReloadAtomicallyAppliesNewerNonLibraryRevisionReceivedWhilePending`; `#newerCompletedReloadDoesNotPromoteAnIntermediateHeldUpdate`; `PcmMixerEngineTest#successfulLibraryUpdateAndNewRevisionDiscardOldResumeSnapshots` |
+| Bounded preparation/work queues | `AudioStreamPreparerTest#boundedQueueRejectsOverflowAndCanceledTaskImmediatelyFreesCapacity`; `#fixedDaemonPoolNeverExceedsItsWorkerCount`; `PcmAudioMixerTest#queueFullAtomicBatchIsDeliveredOnlyAtTheNinthRenderBoundary` |
+
+No interactive Minecraft client movement or device listening was performed in this non-interactive session. Manual device-audition checklist: launch both development clients with the `task11-acceptance` save fixtures; walk through the v1 and v2 regions and listen for immediate ambience plus the voice at five seconds with overlap; exit/re-enter and listen for fade, remaining-delay resume, cursor resume, and completed non-loop silence; adjust vanilla Music, AreaMusic, and Master controls on a real output device to confirm independence and master mute.
+
+Before this documentation-only record, both feature worktrees were clean, `git diff --check` passed, `git ls-files -- build run` returned no tracked generated content, both runtime trees had zero exact-name `AreaMusic` directories and zero `.areamusic-migrate-*` remnants, and the acceptance fixtures were confirmed ignored. The protected `forge-1.20.1-audio-fix` worktree still had exactly its original two modifications (`build.gradle` and `AREA_MUSIC_THIRD_PARTY_NOTICES.txt`); the other worktrees were clean. No push, merge, or pull request was performed.
