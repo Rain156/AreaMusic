@@ -133,16 +133,9 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         long deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
         try (AudioEngine engine = engineFactory.create(initialLibrary)) {
             while (running) {
-                PendingUpdate update = drainPendingUpdate();
-                if (update.musicLibrary() != null) {
-                    engine.setMusicLibrary(update.musicLibrary());
-                }
-                if (update.playbackState() != null) {
-                    try {
-                        engine.apply(update.revision(), update.playbackState());
-                    } finally {
-                        reportEngineFailures(engine);
-                    }
+                MusicLibrary library = drainPendingLibrary();
+                if (library != null) {
+                    engine.setMusicLibrary(library);
                 }
 
                 if (paused) {
@@ -163,10 +156,10 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                             output = null;
                         }
                     }
-                    waitForSignal(50L);
+                    waitForSignal(50L, false);
                     continue;
                 }
-                if (!engine.hasWork() && queue.isEmpty()) {
+                if (!engine.hasWork() && !hasPendingState() && queue.isEmpty()) {
                     if (output != null) {
                         try {
                             if (running) {
@@ -194,7 +187,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     if (!running) {
                         break;
                     }
-                    waitForSignal(50L);
+                    waitForSignal(50L, true);
                     continue;
                 }
 
@@ -208,7 +201,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                             break;
                         }
                         report(AudioFailure.Kind.DEVICE, "", exception);
-                        waitForSignal(deviceRetryMs);
+                        waitForSignal(deviceRetryMs, false);
                         deviceRetryMs = nextRetryDelay(deviceRetryMs);
                         continue;
                     }
@@ -227,7 +220,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                         report(AudioFailure.Kind.DEVICE, "", exception);
                         closeOutputAfterFailure(output, queue);
                         output = null;
-                        waitForSignal(deviceRetryMs);
+                        waitForSignal(deviceRetryMs, false);
                         deviceRetryMs = nextRetryDelay(deviceRetryMs);
                         continue;
                     }
@@ -250,20 +243,34 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     report(AudioFailure.Kind.DEVICE, "", exception);
                     closeOutputAfterFailure(output, queue);
                     output = null;
-                    waitForSignal(deviceRetryMs);
+                    waitForSignal(deviceRetryMs, false);
                     deviceRetryMs = nextRetryDelay(deviceRetryMs);
                     continue;
                 }
 
-                if (slice == null && engine.hasWork() && !queue.hasCapacity()) {
-                    waitForSignal(10L);
+                boolean renderPending = engine.hasWork() || hasPendingState();
+                if (slice == null && renderPending && !queue.hasCapacity()) {
+                    waitForSignal(10L, false);
                     continue;
                 }
-                if (slice == null && engine.hasWork()) {
-                    try {
-                        queue.append(engine.renderFrames(BLOCK_FRAMES, masterGain));
-                    } finally {
-                        reportEngineFailures(engine);
+                if (slice == null && renderPending && queue.hasCapacity()) {
+                    PendingUpdate update = drainPendingUpdate();
+                    if (update.musicLibrary() != null) {
+                        engine.setMusicLibrary(update.musicLibrary());
+                    }
+                    if (update.playbackState() != null) {
+                        try {
+                            engine.apply(update.revision(), update.playbackState());
+                        } finally {
+                            reportEngineFailures(engine);
+                        }
+                    }
+                    if (engine.hasWork()) {
+                        try {
+                            queue.append(engine.renderFrames(BLOCK_FRAMES, masterGain));
+                        } finally {
+                            reportEngineFailures(engine);
+                        }
                     }
                     if (!running) {
                         break;
@@ -307,7 +314,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     output.writePositionBytes = Math.addExact(output.writePositionBytes, written);
                     refreshConfirmedBytes(output, queue);
                     if (written == 0) {
-                        waitForSignal(10L);
+                        waitForSignal(10L, false);
                         continue;
                     }
                     deviceRetryMs = INITIAL_DEVICE_RETRY_MS;
@@ -323,7 +330,7 @@ public final class PcmAudioMixer implements ClientAudioMixer {
                     report(AudioFailure.Kind.DEVICE, "", exception);
                     closeOutputAfterFailure(output, queue);
                     output = null;
-                    waitForSignal(deviceRetryMs);
+                    waitForSignal(deviceRetryMs, false);
                     deviceRetryMs = nextRetryDelay(deviceRetryMs);
                 }
             }
@@ -439,9 +446,27 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         }
     }
 
-    private void waitForSignal(long timeoutMs) {
+    private MusicLibrary drainPendingLibrary() {
         synchronized (signal) {
-            if (!running || libraryPending || statePending) {
+            if (!libraryPending) {
+                return null;
+            }
+            MusicLibrary library = pendingLibrary;
+            pendingLibrary = null;
+            libraryPending = false;
+            return library;
+        }
+    }
+
+    private boolean hasPendingState() {
+        synchronized (signal) {
+            return statePending;
+        }
+    }
+
+    private void waitForSignal(long timeoutMs, boolean pendingStateCanProgress) {
+        synchronized (signal) {
+            if (!running || libraryPending || pendingStateCanProgress && statePending) {
                 return;
             }
             try {

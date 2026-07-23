@@ -177,6 +177,155 @@ class PcmAudioMixerTest {
     }
 
     @Test
+    void pausedMixerCoalescesPlaybackUpdatesUntilTheNextRender() throws Exception {
+        SequencedEngine engine = new SequencedEngine(3);
+        PausableDelayOutput output = new PausableDelayOutput();
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> output,
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState initial = playing("initial", "initial.wav", 1.0f, true, 0, 0);
+        PlaybackState first = playing("first", "first.wav", 1.0f, true, 0, 0);
+        PlaybackState second = playing("second", "second.wav", 1.0f, true, 0, 0);
+        PlaybackState latest = playing("latest", "latest.wav", 1.0f, true, 0, 0);
+
+        try {
+            mixer.start();
+            mixer.apply(1L, initial);
+            assertTrue(output.firstWriteEntered.await(1, TimeUnit.SECONDS));
+
+            mixer.setPaused(true);
+            mixer.apply(2L, first);
+            mixer.apply(3L, second);
+            mixer.apply(4L, latest);
+            output.releaseFirstWrite.countDown();
+
+            assertTrue(output.stopped.await(1, TimeUnit.SECONDS));
+            assertFalse(engine.secondApply.await(250, TimeUnit.MILLISECONDS));
+            assertEquals(1, engine.applyCalls.get());
+            assertEquals(1, engine.renderCalls.get());
+
+            mixer.setPaused(false);
+
+            assertTrue(output.secondWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(List.of(initial, latest), engine.appliedStates);
+            EngineEvent latestApply = new EngineEvent("apply", 4L, latest, -1);
+            int latestApplyIndex = engine.events.indexOf(latestApply);
+            assertTrue(latestApplyIndex >= 0);
+            assertEquals(latestApply, engine.events.get(latestApplyIndex));
+            assertEquals(
+                    new EngineEvent("render", -1L, null, 2),
+                    engine.events.get(latestApplyIndex + 1)
+            );
+        } finally {
+            output.releaseFirstWrite.countDown();
+            mixer.close();
+        }
+    }
+
+    @Test
+    void unavailableOutputCoalescesPlaybackUpdatesUntilRecoveryAndRender() throws Exception {
+        SequencedEngine engine = new SequencedEngine(1);
+        NonBlockingOutput output = new NonBlockingOutput();
+        AtomicBoolean outputAvailable = new AtomicBoolean();
+        CountDownLatch failedOpen = new CountDownLatch(1);
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("music")),
+                () -> {
+                    if (!outputAvailable.get()) {
+                        failedOpen.countDown();
+                        throw new IllegalStateException("device unavailable");
+                    }
+                    return output;
+                },
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState first = playing("first", "first.wav", 1.0f, true, 0, 0);
+        PlaybackState second = playing("second", "second.wav", 1.0f, true, 0, 0);
+        PlaybackState latest = playing("latest", "latest.wav", 1.0f, true, 0, 0);
+
+        try {
+            mixer.apply(2L, first);
+            mixer.apply(3L, second);
+            mixer.apply(4L, latest);
+            mixer.start();
+
+            assertTrue(failedOpen.await(1, TimeUnit.SECONDS));
+            assertEquals(0, engine.applyCalls.get());
+            assertEquals(0, engine.renderCalls.get());
+
+            outputAvailable.set(true);
+            mixer.setPaused(false);
+
+            assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(List.of(latest), engine.appliedStates);
+            assertEquals(
+                    List.of(
+                            new EngineEvent("apply", 4L, latest, -1),
+                            new EngineEvent("render", -1L, null, 1)
+                    ),
+                    engine.events
+            );
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
+    void libraryUpdateDoesNotWaitForOutputAndPrecedesTheCoalescedState() throws Exception {
+        SequencedEngine engine = new SequencedEngine(1);
+        NonBlockingOutput output = new NonBlockingOutput();
+        AtomicBoolean outputAvailable = new AtomicBoolean();
+        CountDownLatch failedOpen = new CountDownLatch(1);
+        MusicLibrary updatedLibrary = MusicLibrary.empty(tempDir.resolve("updated-music"));
+        PcmAudioMixer mixer = new PcmAudioMixer(
+                MusicLibrary.empty(tempDir.resolve("initial-music")),
+                () -> {
+                    if (!outputAvailable.get()) {
+                        failedOpen.countDown();
+                        throw new IllegalStateException("device unavailable");
+                    }
+                    return output;
+                },
+                library -> engine,
+                failure -> {
+                }
+        );
+        PlaybackState latest = playing("latest", "latest.wav", 1.0f, true, 0, 0);
+
+        try {
+            mixer.updateMusicLibrary(updatedLibrary);
+            mixer.apply(4L, latest);
+            mixer.start();
+
+            assertTrue(failedOpen.await(1, TimeUnit.SECONDS));
+            assertTrue(engine.libraryUpdated.await(1, TimeUnit.SECONDS));
+            assertEquals(updatedLibrary, engine.musicLibrary.get());
+            assertEquals(List.of(new EngineEvent("library", -1L, null, -1)), engine.events);
+
+            outputAvailable.set(true);
+            mixer.setPaused(false);
+
+            assertTrue(output.firstWrite.await(1, TimeUnit.SECONDS));
+            assertEquals(
+                    List.of(
+                            new EngineEvent("library", -1L, null, -1),
+                            new EngineEvent("apply", 4L, latest, -1),
+                            new EngineEvent("render", -1L, null, 1)
+                    ),
+                    engine.events
+            );
+        } finally {
+            mixer.close();
+        }
+    }
+
+    @Test
     void rendersSubmittedPlaybackStateOnTheOwnedAudioThread() throws Exception {
         Path root = tempDir.resolve("music");
         writeConstantWav(root.resolve("thread.wav"), (short) 1200, 4096);
@@ -783,35 +932,26 @@ class PcmAudioMixerTest {
     void stoppedStateFinishesOutgoingFadeAfterUnavailableDeviceRecovers() throws Exception {
         Path root = tempDir.resolve("music");
         writeConstantWav(root.resolve("loop.wav"), (short) 1200, 4096);
-        CountDownLatch firstOpenEntered = new CountDownLatch(1);
-        CountDownLatch releaseFirstOpen = new CountDownLatch(1);
-        CapturingClosingOutput workingOutput = new CapturingClosingOutput();
+        SignallingWriteFailingOutput failedOutput = new SignallingWriteFailingOutput();
+        TwoBlockCapturingOutput workingOutput = new TwoBlockCapturingOutput();
         AtomicInteger openAttempts = new AtomicInteger();
         List<AudioFailure> failures = new CopyOnWriteArrayList<>();
         PcmAudioMixer mixer = new PcmAudioMixer(
                 MusicLibrary.scan(root),
-                () -> {
-                    int attempt = openAttempts.incrementAndGet();
-                    if (attempt == 1) {
-                        firstOpenEntered.countDown();
-                        releaseFirstOpen.await(1, TimeUnit.SECONDS);
-                        throw new IllegalStateException("device unavailable");
-                    }
-                    return workingOutput;
-                },
+                () -> openAttempts.getAndIncrement() == 0 ? failedOutput : workingOutput,
                 failures::add
         );
 
         try {
             mixer.start();
             mixer.apply(1L, playing("area", "loop.wav", 1.0f, true, 0, 20));
-            assertTrue(firstOpenEntered.await(1, TimeUnit.SECONDS));
+            assertTrue(failedOutput.writeFailed.await(1, TimeUnit.SECONDS));
 
             mixer.apply(1L, PlaybackState.stopped());
-            releaseFirstOpen.countDown();
 
-            assertTrue(workingOutput.firstWrite.await(2, TimeUnit.SECONDS));
-            byte[] faded = workingOutput.firstBlock.get();
+            assertTrue(workingOutput.secondWrite.await(2, TimeUnit.SECONDS));
+            assertEquals(1200, PcmMath.readLittleEndian(workingOutput.firstBlock.get(), 0));
+            byte[] faded = workingOutput.secondBlock.get();
             assertEquals(1200, PcmMath.readLittleEndian(faded, 0));
             assertEquals(0, PcmMath.readLittleEndian(
                     faded, 900 * AudioStreamFactory.MIX_FORMAT.getFrameSize()
@@ -821,7 +961,6 @@ class PcmAudioMixerTest {
             assertEquals(1, failures.size());
             assertEquals(AudioFailure.Kind.DEVICE, failures.get(0).kind());
         } finally {
-            releaseFirstOpen.countDown();
             mixer.close();
         }
     }
@@ -963,27 +1102,41 @@ class PcmAudioMixerTest {
                 failure -> {
                 }
         );
+        PlaybackState initial = playing("initial", "initial.wav", 1.0f, true, 0, 0);
+        PlaybackState first = playing("first", "first.wav", 1.0f, true, 0, 0);
+        PlaybackState second = playing("second", "second.wav", 1.0f, true, 0, 0);
+        PlaybackState latest = playing("latest", "latest.wav", 1.0f, true, 0, 0);
 
         try {
             mixer.start();
-            mixer.apply(1L, PlaybackState.stopped());
+            mixer.apply(1L, initial);
 
             assertTrue(output.eightWrites.await(1, TimeUnit.SECONDS));
             assertFalse(output.ninthWrite.await(200, TimeUnit.MILLISECONDS));
             assertEquals(8, output.writeCalls.get());
             assertEquals(8, engine.renderCalls.get());
 
-            mixer.apply(1L, PlaybackState.stopped());
-            assertTrue(engine.secondApply.await(1, TimeUnit.SECONDS));
-            mixer.setPaused(true);
-            assertTrue(output.stopped.await(1, TimeUnit.SECONDS));
+            mixer.apply(2L, first);
+            mixer.apply(3L, second);
+            mixer.apply(4L, latest);
+
+            assertFalse(engine.secondApply.await(250, TimeUnit.MILLISECONDS));
+            assertEquals(1, engine.applyCalls.get());
 
             output.playedFrames.set(BLOCK_FRAMES);
-            mixer.setPaused(false);
 
             assertTrue(output.ninthWrite.await(1, TimeUnit.SECONDS));
             assertEquals(9, output.writeCalls.get());
             assertEquals(9, engine.renderCalls.get());
+            assertEquals(2, engine.applyCalls.get());
+            assertEquals(List.of(initial, latest), engine.appliedStates);
+            assertEquals(
+                    List.of(
+                            new EngineEvent("apply", 4L, latest, -1),
+                            new EngineEvent("render", -1L, null, 9)
+                    ),
+                    engine.events.subList(engine.events.size() - 2, engine.events.size())
+            );
         } finally {
             mixer.close();
         }
@@ -1734,6 +1887,48 @@ class PcmAudioMixerTest {
         }
     }
 
+    private static final class TwoBlockCapturingOutput implements PcmAudioMixer.AudioOutput {
+        private final CountDownLatch secondWrite = new CountDownLatch(1);
+        private final CountDownLatch closed = new CountDownLatch(1);
+        private final AtomicReference<byte[]> firstBlock = new AtomicReference<>();
+        private final AtomicReference<byte[]> secondBlock = new AtomicReference<>();
+        private final AtomicLong playedFrames = new AtomicLong();
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void stop() {
+        }
+
+        @Override
+        public int write(byte[] pcm, int offset, int length) {
+            byte[] written = new byte[length];
+            System.arraycopy(pcm, offset, written, 0, length);
+            if (!firstBlock.compareAndSet(null, written)) {
+                secondBlock.compareAndSet(null, written);
+                secondWrite.countDown();
+            }
+            playedFrames.addAndGet(length / AudioStreamFactory.MIX_FORMAT.getFrameSize());
+            return length;
+        }
+
+        @Override
+        public long playedFrames() {
+            return playedFrames.get();
+        }
+
+        @Override
+        public void drain() {
+        }
+
+        @Override
+        public void close() {
+            closed.countDown();
+        }
+    }
+
     private static final class ThrowingRenderEngine implements PcmAudioMixer.AudioEngine {
         private final AtomicBoolean work = new AtomicBoolean();
         private final AtomicInteger renderCalls = new AtomicInteger();
@@ -2025,6 +2220,10 @@ class PcmAudioMixerTest {
         private final AtomicInteger applyCalls = new AtomicInteger();
         private final AtomicInteger renderCalls = new AtomicInteger();
         private final CountDownLatch secondApply = new CountDownLatch(1);
+        private final CountDownLatch libraryUpdated = new CountDownLatch(1);
+        private final AtomicReference<MusicLibrary> musicLibrary = new AtomicReference<>();
+        private final List<PlaybackState> appliedStates = new CopyOnWriteArrayList<>();
+        private final List<EngineEvent> events = new CopyOnWriteArrayList<>();
 
         private SequencedEngine(int blockCount) {
             this.blockCount = blockCount;
@@ -2032,11 +2231,16 @@ class PcmAudioMixerTest {
 
         @Override
         public void setMusicLibrary(MusicLibrary musicLibrary) {
+            this.musicLibrary.set(musicLibrary);
+            events.add(new EngineEvent("library", -1L, null, -1));
+            libraryUpdated.countDown();
         }
 
         @Override
         public void apply(long revision, PlaybackState state) {
             applied.set(true);
+            appliedStates.add(state);
+            events.add(new EngineEvent("apply", revision, state, -1));
             if (applyCalls.incrementAndGet() == 2) {
                 secondApply.countDown();
             }
@@ -2045,6 +2249,7 @@ class PcmAudioMixerTest {
         @Override
         public byte[] renderFrames(int frameCount, float masterGain) {
             int block = renderCalls.getAndIncrement();
+            events.add(new EngineEvent("render", -1L, null, block + 1));
             return constantPcmBlock((short) ((block + 1) * 1000));
         }
 
@@ -2061,6 +2266,14 @@ class PcmAudioMixerTest {
         @Override
         public void close() {
         }
+    }
+
+    private record EngineEvent(
+            String operation,
+            long revision,
+            PlaybackState state,
+            int renderCall
+    ) {
     }
 
     private static final class StalledPositionOutput implements PcmAudioMixer.AudioOutput {

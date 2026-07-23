@@ -73,7 +73,7 @@ public final class PcmMixerEngine implements AutoCloseable {
         for (AreaSession session : outgoingSessions) {
             session.snapshotInvalidated = true;
             session.snapshotWhenSilent = false;
-            session.cancelPreparations();
+            session.discardPreparations();
         }
         if (currentSession != null) {
             currentSession.snapshotInvalidated = true;
@@ -345,7 +345,7 @@ public final class PcmMixerEngine implements AutoCloseable {
         session.outgoing = true;
         session.snapshotWhenSilent = session.state.resumeOnReenter()
                 && !session.snapshotInvalidated;
-        session.cancelPreparations();
+        session.finishPreparationsOnLeave();
         if (!session.snapshotWhenSilent) {
             resumeSnapshots.remove(session.resumeKey());
         }
@@ -390,12 +390,12 @@ public final class PcmMixerEngine implements AutoCloseable {
         resumeSnapshots.clear();
         if (currentSession != null) {
             currentSession.snapshotInvalidated = true;
-            currentSession.cancelPreparations();
+            currentSession.discardPreparations();
         }
         for (AreaSession session : outgoingSessions) {
             session.snapshotInvalidated = true;
             session.snapshotWhenSilent = false;
-            session.cancelPreparations();
+            session.discardPreparations();
         }
     }
 
@@ -781,15 +781,30 @@ public final class PcmMixerEngine implements AutoCloseable {
             return false;
         }
 
-        private void cancelPreparations() {
+        private void finishPreparationsOnLeave() {
+            finishPreparations(true);
+        }
+
+        private void discardPreparations() {
+            finishPreparations(false);
+        }
+
+        private void finishPreparations(boolean reportCompletedFailures) {
             for (PendingPreparation pending : preparations.values()) {
                 CompletableFuture<AudioInputStream> future = pending.future();
-                if (future.cancel(true)) {
+                if (!future.isDone() && future.cancel(true)) {
                     continue;
                 }
                 try {
-                    closeStream(future.getNow(null));
-                } catch (CancellationException | CompletionException ignored) {
+                    closeStream(future.join());
+                } catch (CancellationException ignored) {
+                } catch (CompletionException exception) {
+                    if (reportCompletedFailures) {
+                        Throwable cause = exception.getCause() == null
+                                ? exception
+                                : exception.getCause();
+                        failPreparation(AreaSession.this, pending, cause);
+                    }
                 }
             }
             preparations.clear();
@@ -797,7 +812,7 @@ public final class PcmMixerEngine implements AutoCloseable {
 
         @Override
         public void close() {
-            cancelPreparations();
+            discardPreparations();
             for (RuntimeTrack track : tracks) {
                 track.close();
             }
