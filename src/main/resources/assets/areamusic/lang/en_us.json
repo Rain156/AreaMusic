@@ -1,0 +1,20 @@
+{
+  "commands.areamusic.not_ready": "AreaMusic is not ready yet.",
+  "commands.areamusic.busy": "AreaMusic is already updating. Try again when it finishes.",
+  "commands.areamusic.reload.started": "AreaMusic reload started.",
+  "commands.areamusic.reload.success": "AreaMusic reloaded: %s tracks, %s areas.",
+  "commands.areamusic.reload.failed": "AreaMusic reload failed: %s",
+  "commands.areamusic.create.out_of_bounds": "One or both positions are outside the current dimension's build bounds.",
+  "commands.areamusic.create.unknown_music": "Unknown MusicID: %s",
+  "commands.areamusic.create.exists": "Area ID already exists: %s",
+  "commands.areamusic.create.invalid": "Invalid area settings: %s",
+  "commands.areamusic.create.started": "Creating AreaMusic area %s...",
+  "commands.areamusic.create.success": "Created AreaMusic area %s.",
+  "commands.areamusic.create.failed": "Could not create AreaMusic area %s: %s",
+  "message.areamusic.missing_file": "AreaMusic file not found for MusicID: %s",
+  "message.areamusic.decode_failed": "AreaMusic could not decode MusicID: %s",
+  "message.areamusic.device_failed": "AreaMusic could not open the audio output device.",
+  "message.areamusic.scan_failed": "AreaMusic could not reload the local music folder. The previous index is still active.",
+  "message.areamusic.thread_failed": "AreaMusic audio playback stopped because its worker thread was interrupted.",
+  "options.areamusic.volume": "AreaMusic Volume"
+}
