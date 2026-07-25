@@ -477,6 +477,121 @@ class AudioStreamPreparerTest {
     }
 
     @Test
+    void closeLinearizesBeforePendingPreparationsCanStartOrComplete() throws Exception {
+        Path activePath = Path.of("active-linearization.wav");
+        CountDownLatch activeReadEntered = new CountDownLatch(1);
+        CountDownLatch releaseActiveRead = new CountDownLatch(1);
+        CountDownLatch activeStreamClosed = new CountDownLatch(1);
+        CountDownLatch firstCancellationEntered = new CountDownLatch(1);
+        CountDownLatch allowCloseToContinue = new CountDownLatch(1);
+        CountDownLatch queuedFactoryEntered = new CountDownLatch(1);
+        CountDownLatch releaseQueuedFactory = new CountDownLatch(1);
+        AtomicBoolean firstCancellation = new AtomicBoolean();
+        AtomicInteger activeCloseCount = new AtomicInteger();
+        AtomicInteger openCount = new AtomicInteger();
+        AtomicReference<Thread> worker = new AtomicReference<>();
+        AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+        AudioInputStream activeStream = new BlockingReadAudioInputStream(
+                activeReadEntered,
+                releaseActiveRead,
+                activeCloseCount,
+                activeStreamClosed
+        );
+        AudioStreamFactory factory = new AudioStreamFactory() {
+            @Override
+            public AudioInputStream open(Path path) {
+                worker.compareAndSet(null, Thread.currentThread());
+                openCount.incrementAndGet();
+                if (activePath.equals(path)) {
+                    return activeStream;
+                }
+                queuedFactoryEntered.countDown();
+                awaitIgnoringInterrupt(releaseQueuedFactory);
+                return stream(pcmFrames((short) 200), new AtomicInteger());
+            }
+        };
+        AudioStreamPreparer preparer = new AudioStreamPreparer(factory, 1);
+        List<CompletableFuture<AudioInputStream>> pending = new ArrayList<>();
+        Thread closeThread = null;
+
+        try {
+            CompletableFuture<AudioInputStream> active = preparer.prepare(activePath, 1);
+            pending.add(active);
+            assertTrue(activeReadEntered.await(1, TimeUnit.SECONDS));
+            for (int index = 0; index < 3; index++) {
+                pending.add(preparer.prepare(
+                        Path.of("queued-linearization-" + index + ".wav"), 0
+                ));
+            }
+            for (CompletableFuture<AudioInputStream> future : pending) {
+                future.whenComplete((ignored, failure) -> {
+                    if (future.isCancelled()
+                            && firstCancellation.compareAndSet(false, true)) {
+                        firstCancellationEntered.countDown();
+                        awaitIgnoringInterrupt(allowCloseToContinue);
+                    }
+                });
+            }
+
+            Thread startedCloseThread = new Thread(() -> {
+                try {
+                    preparer.close();
+                } catch (Throwable failure) {
+                    closeFailure.set(failure);
+                }
+            }, "AudioStreamPreparer close linearization test");
+            closeThread = startedCloseThread;
+            startedCloseThread.setDaemon(true);
+            startedCloseThread.start();
+
+            assertTrue(firstCancellationEntered.await(1, TimeUnit.SECONDS));
+            releaseActiveRead.countDown();
+            assertTrue(awaitCondition(
+                    () -> queuedFactoryEntered.getCount() == 0L
+                            || !worker.get().isAlive(),
+                    Duration.ofSeconds(2)
+            ));
+            assertEquals(
+                    1L,
+                    queuedFactoryEntered.getCount(),
+                    "a preparation queued when close began must not open its stream"
+            );
+
+            allowCloseToContinue.countDown();
+            assertTrue(awaitCondition(
+                    () -> !startedCloseThread.isAlive(), Duration.ofSeconds(2)
+            ));
+            if (closeFailure.get() != null) {
+                throw new AssertionError("close failed", closeFailure.get());
+            }
+            assertTrue(pending.stream().allMatch(CompletableFuture::isCancelled));
+            assertTrue(activeStreamClosed.await(1, TimeUnit.SECONDS));
+            assertEquals(1, activeCloseCount.get());
+            assertEquals(1, openCount.get());
+
+            preparer.close();
+            assertThrows(RejectedExecutionException.class,
+                    () -> preparer.prepare(Path.of("late-linearization.wav"), 0));
+        } finally {
+            releaseActiveRead.countDown();
+            allowCloseToContinue.countDown();
+            releaseQueuedFactory.countDown();
+            preparer.close();
+            if (closeThread != null) {
+                closeThread.join(TimeUnit.SECONDS.toMillis(2));
+            }
+            for (CompletableFuture<AudioInputStream> future : pending) {
+                if (future.isDone() && !future.isCompletedExceptionally()) {
+                    AudioInputStream completed = future.getNow(null);
+                    if (completed != null) {
+                        completed.close();
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     void realWavOffsetTwoStartsAtTheThirdFrame() throws Exception {
         Path wav = tempDir.resolve("offset.wav");
         writeWav(wav, new short[]{100, 200, 300});

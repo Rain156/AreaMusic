@@ -9,7 +9,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
@@ -86,22 +88,37 @@ public final class AudioStreamPreparer implements AudioStreamPreparation {
     @Override
     public void close() {
         List<Preparation> toCancel;
+        List<Preparation> completing;
         synchronized (lifecycleLock) {
             if (closed) {
                 return;
             }
             closed = true;
-            toCancel = new ArrayList<>(pending);
+            toCancel = new ArrayList<>();
+            completing = new ArrayList<>();
+            for (Preparation preparation : pending) {
+                if (preparation.completionClaimed) {
+                    completing.add(preparation);
+                } else {
+                    toCancel.add(preparation);
+                }
+            }
         }
+        executor.shutdownNow();
         for (Preparation preparation : toCancel) {
             preparation.future.cancel(true);
         }
-        executor.shutdownNow();
+        for (Preparation preparation : completing) {
+            try {
+                preparation.future.join();
+            } catch (CancellationException | CompletionException ignored) {
+            }
+        }
     }
 
     private void runPreparation(Preparation preparation) {
         try {
-            if (preparation.future.isCancelled()) {
+            if (!tryStartPreparation(preparation)) {
                 return;
             }
             AudioInputStream stream = streamFactory.open(preparation.path);
@@ -109,15 +126,31 @@ public final class AudioStreamPreparer implements AudioStreamPreparation {
                 return;
             }
             discardExactly(stream, preparation.offsetBytes, preparation.future);
-            if (preparation.future.complete(stream)) {
+            if (tryClaimCompletion(preparation) && preparation.future.complete(stream)) {
                 preparation.transferOwnership(stream);
             }
         } catch (Throwable failure) {
-            if (!preparation.future.isCancelled()) {
+            if (tryClaimCompletion(preparation)) {
                 preparation.future.completeExceptionally(failure);
             }
         } finally {
             preparation.closeOpenedStream();
+        }
+    }
+
+    private boolean tryStartPreparation(Preparation preparation) {
+        synchronized (lifecycleLock) {
+            return !closed && !preparation.future.isCancelled();
+        }
+    }
+
+    private boolean tryClaimCompletion(Preparation preparation) {
+        synchronized (lifecycleLock) {
+            if (closed || preparation.future.isDone()) {
+                return false;
+            }
+            preparation.completionClaimed = true;
+            return true;
         }
     }
 
@@ -186,6 +219,7 @@ public final class AudioStreamPreparer implements AudioStreamPreparation {
         private final AtomicReference<AudioInputStream> openedStream = new AtomicReference<>();
         private final AtomicBoolean interruptRequested = new AtomicBoolean();
         private final PreparationFuture future = new PreparationFuture(this);
+        private boolean completionClaimed;
 
         private Preparation(Path path, long offsetBytes) {
             this.path = path;
