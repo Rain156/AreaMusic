@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-public final class AudioStreamPreparer implements AutoCloseable {
+public final class AudioStreamPreparer implements AudioStreamPreparation {
     private static final int FRAME_SIZE = AudioStreamFactory.MIX_FORMAT.getFrameSize();
     private static final int MAX_CONSECUTIVE_ZERO_READS = 64;
     private static final int DISCARD_BUFFER_BYTES = 8192;
