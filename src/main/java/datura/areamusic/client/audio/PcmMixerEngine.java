@@ -18,7 +18,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
-public final class PcmMixerEngine implements AutoCloseable {
+public final class PcmMixerEngine implements PcmPlaybackEngine {
     private static final int CHANNELS = AudioStreamFactory.MIX_FORMAT.getChannels();
     private static final int FRAME_SIZE = AudioStreamFactory.MIX_FORMAT.getFrameSize();
     private static final int MAX_LIVE_SESSIONS = 4;

@@ -17,7 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class PlaylistPcmEngine implements AutoCloseable {
+public final class PlaylistPcmEngine implements PcmPlaybackEngine {
     private static final int CHANNELS = AudioStreamFactory.MIX_FORMAT.getChannels();
     private static final int FRAME_SIZE = AudioStreamFactory.MIX_FORMAT.getFrameSize();
     private static final int MAX_CONSECUTIVE_ZERO_READS = 64;
@@ -852,7 +852,7 @@ public final class PlaylistPcmEngine implements AutoCloseable {
         }
 
         private AudioInputStream claim() {
-            AudioInputStream stream = future.join();
+            AudioInputStream stream = completedStream();
             if (!streamClaimed.compareAndSet(false, true)) {
                 throw new CancellationException("Prepared stream is no longer available");
             }
@@ -860,7 +860,17 @@ public final class PlaylistPcmEngine implements AutoCloseable {
         }
 
         private AudioInputStream peek() {
-            return future.join();
+            return completedStream();
+        }
+
+        private AudioInputStream completedStream() {
+            AudioInputStream stream = future.join();
+            if (stream == null) {
+                throw new CompletionException(
+                        new IOException("Preparation completed without an audio stream")
+                );
+            }
+            return stream;
         }
 
         private void abandon() {

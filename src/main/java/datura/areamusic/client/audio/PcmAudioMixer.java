@@ -675,11 +675,11 @@ public final class PcmAudioMixer implements ClientAudioMixer {
         }
     }
 
-    private static AudioEngine createEngine(MusicLibrary musicLibrary) {
-        return new PcmAudioEngine(new PcmMixerEngine(new AudioStreamFactory(), musicLibrary));
+    static AudioEngine createEngine(MusicLibrary musicLibrary) {
+        return new PcmAudioEngine(new PcmPlaybackDispatcher(musicLibrary));
     }
 
-    private record PcmAudioEngine(PcmMixerEngine delegate) implements AudioEngine {
+    private record PcmAudioEngine(PcmPlaybackEngine delegate) implements AudioEngine {
         private PcmAudioEngine {
             Objects.requireNonNull(delegate, "delegate");
         }

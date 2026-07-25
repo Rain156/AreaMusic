@@ -149,6 +149,34 @@ class PlaylistPcmEngineTest {
     }
 
     @Test
+    void successfulNullPreparationIsDecodeAndSkipsToTheNextIndex() throws Exception {
+        Path first = createMusicFile("first.ogg");
+        Path second = createMusicFile("second.ogg");
+        ManualPreparer preparer = new ManualPreparer();
+        try (PlaylistPcmEngine engine = new PlaylistPcmEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root), preparer
+        )) {
+            engine.apply(5L, playlistState("area", List.of("first.ogg", "second.ogg")));
+            preparer.complete(0, null);
+
+            assertDoesNotThrow(() -> engine.renderFrames(0, 1.0f));
+
+            List<AudioFailure> failures = engine.drainFailures();
+            assertEquals(1, failures.size());
+            assertEquals(AudioFailure.Kind.DECODE, failures.get(0).kind());
+            assertEquals("first.ogg", failures.get(0).musicId());
+            assertEquals(
+                    List.of(new Request(first, 0L), new Request(second, 0L)),
+                    preparer.requests()
+            );
+
+            preparer.complete(1, streamWithSamples(543, 543));
+            assertEquals(List.of(543), leftSamples(engine.renderFrames(1, 1.0f)));
+            assertTrue(engine.drainFailures().isEmpty());
+        }
+    }
+
+    @Test
     void preservesCompletePrefixBeforeReadFailureAndContinuesWithoutGap() throws Exception {
         createMusicFile("bad.ogg");
         createMusicFile("good.ogg");
@@ -530,6 +558,31 @@ class PlaylistPcmEngineTest {
 
             assertTrue(engine.drainFailures().isEmpty());
             engine.renderFrames(0, 1.0f);
+
+            List<AudioFailure> failures = engine.drainFailures();
+            assertEquals(1, failures.size());
+            assertEquals("second.ogg", failures.get(0).musicId());
+            assertEquals(AudioFailure.Kind.DECODE, failures.get(0).kind());
+            assertEquals(new Request(first, 0L), preparer.requests().get(2));
+        }
+    }
+
+    @Test
+    void ownerThreadTreatsNullPrefetchAsDecodeAndAdvancesPrefetchOrder()
+            throws Exception {
+        Path first = createMusicFile("first.ogg");
+        createMusicFile("second.ogg");
+        ManualPreparer preparer = new ManualPreparer();
+        try (PlaylistPcmEngine engine = new PlaylistPcmEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root), preparer
+        )) {
+            engine.apply(92L, playlistState("area", List.of("first.ogg", "second.ogg")));
+            preparer.complete(0, constantStream(100, 20));
+            engine.renderFrames(0, 1.0f);
+            preparer.complete(1, null);
+
+            assertTrue(engine.drainFailures().isEmpty());
+            assertDoesNotThrow(() -> engine.renderFrames(0, 1.0f));
 
             List<AudioFailure> failures = engine.drainFailures();
             assertEquals(1, failures.size());
