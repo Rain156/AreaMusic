@@ -1,6 +1,7 @@
 package datura.areamusic.area;
 
 import datura.areamusic.music.MusicLibrary;
+import datura.areamusic.playback.PlaybackMode;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -91,10 +92,15 @@ public final class AreaStorage {
             String areaId = fileName.substring(0, fileName.length() - ".json".length());
             try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
                 AreaDefinition area = codec.read(areaId, reader);
-                for (AreaTrackDefinition track : area.tracks()) {
-                    if (!musicLibrary.contains(track.musicId())) {
+                List<String> musicIds = area.musicIds();
+                for (int index = 0; index < musicIds.size(); index++) {
+                    String musicId = musicIds.get(index);
+                    if (!musicLibrary.contains(musicId)) {
+                        String context = area.playbackMode() == PlaybackMode.PLAYLIST_LOOP
+                                ? "playlist[" + index + "]: "
+                                : "";
                         throw new IllegalArgumentException(
-                                "MusicID is not present in the server library: " + track.musicId()
+                                context + "MusicID is not present in the server library: " + musicId
                         );
                     }
                 }

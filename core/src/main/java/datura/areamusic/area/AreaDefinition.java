@@ -1,5 +1,10 @@
 package datura.areamusic.area;
 
+import datura.areamusic.playback.ParallelPlayback;
+import datura.areamusic.playback.PlaybackDefinition;
+import datura.areamusic.playback.PlaybackMode;
+import datura.areamusic.playback.PlaylistLoopPlayback;
+
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -9,7 +14,7 @@ public record AreaDefinition(
         String dimension,
         AreaPosition pos1,
         AreaPosition pos2,
-        List<AreaTrackDefinition> tracks,
+        PlaybackDefinition playback,
         boolean resumeOnReenter,
         int priority
 ) {
@@ -23,16 +28,12 @@ public record AreaDefinition(
         dimension = canonicalizeDimension(Objects.requireNonNull(dimension, "dimension"));
         Objects.requireNonNull(pos1, "pos1");
         Objects.requireNonNull(pos2, "pos2");
-        Objects.requireNonNull(tracks, "tracks");
+        Objects.requireNonNull(playback, "playback");
 
         if (!ID_PATTERN.matcher(id).matches()) {
             throw new IllegalArgumentException("Invalid area ID: " + id);
         }
 
-        tracks = List.copyOf(tracks);
-        if (tracks.isEmpty() || tracks.size() > MAX_TRACKS) {
-            throw new IllegalArgumentException("Area must contain between 1 and " + MAX_TRACKS + " tracks");
-        }
     }
 
     public static AreaDefinition create(
@@ -44,7 +45,41 @@ public record AreaDefinition(
             boolean resumeOnReenter,
             int priority
     ) {
-        return new AreaDefinition(id, dimension, pos1, pos2, tracks, resumeOnReenter, priority);
+        return new AreaDefinition(
+                id, dimension, pos1, pos2,
+                new ParallelPlayback(tracks), resumeOnReenter, priority
+        );
+    }
+
+    public static AreaDefinition createPlaylistLoop(
+            String id,
+            String dimension,
+            AreaPosition pos1,
+            AreaPosition pos2,
+            List<String> playlist,
+            float volume,
+            int fadeInMs,
+            int fadeOutMs,
+            boolean resumeOnReenter,
+            int priority
+    ) {
+        return new AreaDefinition(
+                id, dimension, pos1, pos2,
+                new PlaylistLoopPlayback(playlist, volume, fadeInMs, fadeOutMs),
+                resumeOnReenter, priority
+        );
+    }
+
+    public PlaybackMode playbackMode() {
+        return playback.mode();
+    }
+
+    public List<AreaTrackDefinition> tracks() {
+        return playback instanceof ParallelPlayback parallel ? parallel.tracks() : List.of();
+    }
+
+    public List<String> musicIds() {
+        return playback.musicIds();
     }
 
     public AreaPosition min() {

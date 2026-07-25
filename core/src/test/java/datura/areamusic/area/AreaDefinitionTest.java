@@ -1,5 +1,8 @@
 package datura.areamusic.area;
 
+import datura.areamusic.playback.ParallelPlayback;
+import datura.areamusic.playback.PlaybackMode;
+import datura.areamusic.playback.PlaylistLoopPlayback;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -105,6 +108,33 @@ class AreaDefinitionTest {
 
         assertEquals(List.of(track("first.ogg")), area.tracks());
         assertThrows(UnsupportedOperationException.class, () -> area.tracks().add(track("third.ogg")));
+    }
+
+    @Test
+    void parallelAreaExposesPlaybackDefinitionAndOrderedMusicIds() {
+        AreaDefinition area = AreaDefinition.create(
+                "square", OVERWORLD, ZERO, ZERO,
+                List.of(track("first.ogg"), track("second.ogg")), false, 0);
+
+        assertEquals(PlaybackMode.PARALLEL, area.playback().mode());
+        assertTrue(area.playback() instanceof ParallelPlayback);
+        assertEquals(List.of("first.ogg", "second.ogg"), area.musicIds());
+    }
+
+    @Test
+    void playlistAreaDefensivelyCopiesPlaylistAndExposesEmptyTracks() {
+        List<String> source = new ArrayList<>(List.of("first.ogg", "second.ogg"));
+        AreaDefinition area = AreaDefinition.createPlaylistLoop(
+                "playlist", OVERWORLD, ZERO, ZERO,
+                source, 0.75f, 250, 900, true, 4);
+        source.clear();
+
+        PlaylistLoopPlayback playback = (PlaylistLoopPlayback) area.playback();
+        assertEquals(PlaybackMode.PLAYLIST_LOOP, playback.mode());
+        assertEquals(List.of("first.ogg", "second.ogg"), playback.playlist());
+        assertEquals(playback.playlist(), area.musicIds());
+        assertEquals(List.of(), area.tracks());
+        assertThrows(UnsupportedOperationException.class, () -> area.musicIds().clear());
     }
 
     @Test

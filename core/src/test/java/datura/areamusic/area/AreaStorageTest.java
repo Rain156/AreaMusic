@@ -87,6 +87,44 @@ class AreaStorageTest {
     }
 
     @Test
+    void rejectsPlaylistWhenAnIndexedEntryIsMissingFromCandidateLibrary() throws Exception {
+        Path areaDirectory = tempDir.resolve("areas");
+        Path musicRoot = tempDir.resolve("music");
+        Files.createDirectories(areaDirectory);
+        Files.createDirectories(musicRoot);
+        Files.writeString(musicRoot.resolve("present.ogg"), "fixture");
+        Files.writeString(areaDirectory.resolve("playlist.json"), playlistJson(
+                "[\"present.ogg\", \"missing.ogg\", \"present.ogg\"]"
+        ));
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+
+        AreaStorage.LoadException error = assertThrows(AreaStorage.LoadException.class,
+                () -> storage.load(MusicLibrary.scan(musicRoot)));
+
+        assertTrue(error.getMessage().contains("missing.ogg"));
+        assertTrue(error.getMessage().contains("playlist[1]"));
+    }
+
+    @Test
+    void loadsPlaylistWhenEveryEntryExistsInCandidateLibrary() throws Exception {
+        Path areaDirectory = tempDir.resolve("areas");
+        Path musicRoot = tempDir.resolve("music");
+        Files.createDirectories(areaDirectory);
+        Files.createDirectories(musicRoot);
+        Files.writeString(musicRoot.resolve("first.ogg"), "fixture");
+        Files.writeString(musicRoot.resolve("second.ogg"), "fixture");
+        Files.writeString(areaDirectory.resolve("playlist.json"), playlistJson(
+                "[\"first.ogg\", \"second.ogg\", \"first.ogg\"]"
+        ));
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+
+        List<AreaDefinition> loaded = storage.load(MusicLibrary.scan(musicRoot));
+
+        assertEquals(List.of("first.ogg", "second.ogg", "first.ogg"),
+                loaded.get(0).musicIds());
+    }
+
+    @Test
     void preservesIndexedKnownTrackFieldErrorsFromTheCodec() throws Exception {
         Path areaDirectory = tempDir.resolve("areas");
         Path musicRoot = tempDir.resolve("music");
@@ -157,5 +195,18 @@ class AreaStorageTest {
                   "tracks": %s
                 }
                 """.formatted(tracks);
+    }
+
+    private static String playlistJson(String playlist) {
+        return """
+                {
+                  "schemaVersion": 3,
+                  "dimension": "minecraft:overworld",
+                  "pos1": { "x": 0, "y": 64, "z": 0 },
+                  "pos2": { "x": 10, "y": 80, "z": 10 },
+                  "playbackMode": "playlist_loop",
+                  "playlist": %s
+                }
+                """.formatted(playlist);
     }
 }

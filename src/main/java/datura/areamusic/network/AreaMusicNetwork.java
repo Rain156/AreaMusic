@@ -13,7 +13,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class AreaMusicNetwork {
-    private static final String PROTOCOL_VERSION = "2";
+    private static final String PROTOCOL_VERSION = "3";
     private static final ClientHandler NO_OP_CLIENT_HANDLER = new ClientHandler() {
         @Override
         public void onPlayback(long revision, PlaybackState state) {

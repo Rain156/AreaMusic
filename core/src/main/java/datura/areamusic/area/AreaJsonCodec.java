@@ -10,6 +10,10 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonPrimitive;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
+import datura.areamusic.playback.ParallelPlayback;
+import datura.areamusic.playback.PlaybackDefinition;
+import datura.areamusic.playback.PlaybackMode;
+import datura.areamusic.playback.PlaylistLoopPlayback;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -36,9 +40,13 @@ public final class AreaJsonCodec {
     private static final Set<String> V2_ROOT_FIELDS = Set.of(
             "schemaVersion", "dimension", "pos1", "pos2", "tracks", "resumeOnReenter", "priority"
     );
-    private static final Set<String> V3_ROOT_FIELDS = Set.of(
+    private static final Set<String> V3_PARALLEL_ROOT_FIELDS = Set.of(
             "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "tracks",
             "resumeOnReenter", "priority"
+    );
+    private static final Set<String> V3_PLAYLIST_LOOP_ROOT_FIELDS = Set.of(
+            "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "playlist",
+            "volume", "fadeInMs", "fadeOutMs", "resumeOnReenter", "priority"
     );
     private static final Set<String> TRACK_FIELDS = Set.of(
             "musicId", "delaySeconds", "volume", "loop", "fadeInMs", "fadeOutMs"
@@ -53,19 +61,24 @@ public final class AreaJsonCodec {
                 && schemaVersion != CURRENT_SCHEMA_VERSION) {
             throw new JsonParseException("Unsupported schemaVersion: " + schemaVersion);
         }
+        PlaybackMode playbackMode = PlaybackMode.PARALLEL;
+        if (schemaVersion == CURRENT_SCHEMA_VERSION) {
+            String playbackModeId = requireString(root, "playbackMode");
+            try {
+                playbackMode = PlaybackMode.fromJsonId(playbackModeId);
+            } catch (IllegalArgumentException exception) {
+                throw new JsonParseException("Unsupported playbackMode: " + playbackModeId, exception);
+            }
+        }
         Set<String> rootFields = switch (schemaVersion) {
             case LEGACY_SCHEMA_VERSION -> V1_ROOT_FIELDS;
             case MULTI_TRACK_SCHEMA_VERSION -> V2_ROOT_FIELDS;
-            case CURRENT_SCHEMA_VERSION -> V3_ROOT_FIELDS;
+            case CURRENT_SCHEMA_VERSION -> playbackMode == PlaybackMode.PARALLEL
+                    ? V3_PARALLEL_ROOT_FIELDS
+                    : V3_PLAYLIST_LOOP_ROOT_FIELDS;
             default -> throw new AssertionError("Validated schemaVersion: " + schemaVersion);
         };
         rejectUnknownFields(root, rootFields, "root");
-        if (schemaVersion == CURRENT_SCHEMA_VERSION) {
-            String playbackMode = requireString(root, "playbackMode");
-            if (!"parallel".equals(playbackMode)) {
-                throw new JsonParseException("Unsupported playbackMode: " + playbackMode);
-            }
-        }
 
         String dimension = requireString(root, "dimension");
         AreaPosition pos1 = requirePosition(root, "pos1");
@@ -73,24 +86,33 @@ public final class AreaJsonCodec {
         int priority = optionalInt(root, "priority", 0);
 
         try {
-            List<AreaTrackDefinition> tracks;
+            PlaybackDefinition playback;
             boolean resumeOnReenter;
             if (schemaVersion == LEGACY_SCHEMA_VERSION) {
-                tracks = List.of(new AreaTrackDefinition(
+                playback = new ParallelPlayback(List.of(new AreaTrackDefinition(
                         requireString(root, "musicId"),
                         0,
                         optionalVolume(root, "volume", 1.0f),
                         optionalBoolean(root, "loop", true),
                         optionalInt(root, "fadeInMs", 2000),
                         optionalInt(root, "fadeOutMs", 2000)
-                ));
+                )));
                 resumeOnReenter = false;
+            } else if (schemaVersion == MULTI_TRACK_SCHEMA_VERSION
+                    || playbackMode == PlaybackMode.PARALLEL) {
+                playback = new ParallelPlayback(requireTracks(root));
+                resumeOnReenter = optionalBoolean(root, "resumeOnReenter", false);
             } else {
-                tracks = requireTracks(root);
+                playback = new PlaylistLoopPlayback(
+                        requirePlaylist(root),
+                        optionalVolume(root, "volume", PlaylistLoopPlayback.DEFAULT_VOLUME),
+                        optionalInt(root, "fadeInMs", PlaylistLoopPlayback.DEFAULT_FADE_IN_MS),
+                        optionalInt(root, "fadeOutMs", PlaylistLoopPlayback.DEFAULT_FADE_OUT_MS)
+                );
                 resumeOnReenter = optionalBoolean(root, "resumeOnReenter", false);
             }
-            return AreaDefinition.create(
-                    areaId, dimension, pos1, pos2, tracks, resumeOnReenter, priority
+            return new AreaDefinition(
+                    areaId, dimension, pos1, pos2, playback, resumeOnReenter, priority
             );
         } catch (IllegalArgumentException exception) {
             throw new JsonParseException("Invalid area '" + areaId + "': " + exception.getMessage(), exception);
@@ -103,20 +125,31 @@ public final class AreaJsonCodec {
         root.addProperty("dimension", area.dimension());
         root.add("pos1", position(area.pos1()));
         root.add("pos2", position(area.pos2()));
-        root.addProperty("playbackMode", "parallel");
+        root.addProperty("playbackMode", area.playbackMode().jsonId());
 
-        JsonArray tracks = new JsonArray();
-        for (AreaTrackDefinition track : area.tracks()) {
-            JsonObject trackJson = new JsonObject();
-            trackJson.addProperty("musicId", track.musicId());
-            trackJson.addProperty("delaySeconds", track.delaySeconds());
-            trackJson.addProperty("volume", track.volume());
-            trackJson.addProperty("loop", track.loop());
-            trackJson.addProperty("fadeInMs", track.fadeInMs());
-            trackJson.addProperty("fadeOutMs", track.fadeOutMs());
-            tracks.add(trackJson);
+        if (area.playback() instanceof ParallelPlayback parallel) {
+            JsonArray tracks = new JsonArray();
+            for (AreaTrackDefinition track : parallel.tracks()) {
+                JsonObject trackJson = new JsonObject();
+                trackJson.addProperty("musicId", track.musicId());
+                trackJson.addProperty("delaySeconds", track.delaySeconds());
+                trackJson.addProperty("volume", track.volume());
+                trackJson.addProperty("loop", track.loop());
+                trackJson.addProperty("fadeInMs", track.fadeInMs());
+                trackJson.addProperty("fadeOutMs", track.fadeOutMs());
+                tracks.add(trackJson);
+            }
+            root.add("tracks", tracks);
+        } else if (area.playback() instanceof PlaylistLoopPlayback playlistLoop) {
+            JsonArray playlist = new JsonArray();
+            playlistLoop.playlist().forEach(playlist::add);
+            root.add("playlist", playlist);
+            root.addProperty("volume", playlistLoop.volume());
+            root.addProperty("fadeInMs", playlistLoop.fadeInMs());
+            root.addProperty("fadeOutMs", playlistLoop.fadeOutMs());
+        } else {
+            throw new AssertionError("Unknown playback definition: " + area.playback().getClass());
         }
-        root.add("tracks", tracks);
         root.addProperty("resumeOnReenter", area.resumeOnReenter());
         root.addProperty("priority", area.priority());
         return GSON.toJson(root) + System.lineSeparator();
@@ -138,6 +171,28 @@ public final class AreaJsonCodec {
             tracks.add(requireTrack(track, location));
         }
         return List.copyOf(tracks);
+    }
+
+    private static List<String> requirePlaylist(JsonObject root) {
+        JsonArray array = requireArray(root, "playlist");
+        if (array.isEmpty() || array.size() > PlaylistLoopPlayback.MAX_ENTRIES) {
+            throw new JsonParseException(
+                    "playlist must contain between 1 and "
+                            + PlaylistLoopPlayback.MAX_ENTRIES + " entries"
+            );
+        }
+
+        List<String> playlist = new ArrayList<>(array.size());
+        for (int index = 0; index < array.size(); index++) {
+            String location = "playlist[" + index + "]";
+            JsonElement entry = array.get(index);
+            if (entry == null || entry.isJsonNull()
+                    || !entry.isJsonPrimitive() || !entry.getAsJsonPrimitive().isString()) {
+                throw new JsonParseException(location + " must be a string");
+            }
+            playlist.add(entry.getAsString());
+        }
+        return List.copyOf(playlist);
     }
 
     private static AreaTrackDefinition requireTrack(JsonObject track, String location) {
