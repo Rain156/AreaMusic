@@ -1,6 +1,7 @@
 package datura.areamusic.server;
 
 import datura.areamusic.area.AreaDefinition;
+import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaResolver;
 import datura.areamusic.playback.PlaybackState;
 import net.minecraft.core.BlockPos;
@@ -37,7 +38,11 @@ public final class PlayerAreaTracker {
         lastPosition = position.immutable();
         lastRevision = revision;
 
-        PlaybackState resolved = AreaResolver.resolve(areas, dimension, position)
+        PlaybackState resolved = AreaResolver.resolve(
+                        areas,
+                        dimension.toString(),
+                        new AreaPosition(position.getX(), position.getY(), position.getZ())
+                )
                 .map(PlaybackState::fromArea)
                 .orElseGet(PlaybackState::stopped);
         if (resolved.equals(lastSentState)) {

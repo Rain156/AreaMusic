@@ -3,8 +3,6 @@ package datura.areamusic.area;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import datura.areamusic.music.MusicLibrary;
-import net.minecraft.core.BlockPos;
-import net.minecraft.resources.ResourceLocation;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -113,12 +111,12 @@ class AreaStorageTest {
     }
 
     @Test
-    void createsAFormattedV2FileAndRefusesToOverwriteIt() throws Exception {
+    void createsAFormattedV3ParallelFileAndRefusesToOverwriteIt() throws Exception {
         Path areaDirectory = tempDir.resolve("areas");
         AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
         AreaDefinition area = AreaDefinition.create(
-                "spawn", ResourceLocation.tryParse("minecraft:overworld"),
-                BlockPos.ZERO, new BlockPos(4, 4, 4),
+                "spawn", "minecraft:overworld",
+                new AreaPosition(0, 0, 0), new AreaPosition(4, 4, 4),
                 List.of(new AreaTrackDefinition("track.ogg", 0, 1.0f, true, 2000, 2000)),
                 false,
                 0);
@@ -128,9 +126,10 @@ class AreaStorageTest {
         Path saved = areaDirectory.resolve("spawn.json");
         String json = Files.readString(saved);
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-        assertTrue(json.startsWith("{\n  \"schemaVersion\": 2,"));
+        assertTrue(json.startsWith("{\n  \"schemaVersion\": 3,"));
         assertTrue(json.contains("\n  \"tracks\": [\n    {"));
-        assertEquals(2, root.get("schemaVersion").getAsInt());
+        assertEquals(3, root.get("schemaVersion").getAsInt());
+        assertEquals("parallel", root.get("playbackMode").getAsString());
         assertEquals(1, root.getAsJsonArray("tracks").size());
         assertFalse(root.has("musicId"));
         assertThrows(AreaStorage.AreaAlreadyExistsException.class, () -> storage.create(area));

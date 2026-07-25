@@ -1,6 +1,7 @@
 package datura.areamusic.server;
 
 import datura.areamusic.area.AreaDefinition;
+import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.playback.PlaybackState;
 import net.minecraft.core.BlockPos;
@@ -93,7 +94,8 @@ class PlayerAreaTrackerTest {
 
     private static AreaDefinition area(float secondaryVolume, boolean resumeOnReenter) {
         return AreaDefinition.create(
-                "area", OVERWORLD, new BlockPos(0, 60, 0), new BlockPos(10, 80, 10),
+                "area", OVERWORLD.toString(),
+                new AreaPosition(0, 60, 0), new AreaPosition(10, 80, 10),
                 List.of(
                         new AreaTrackDefinition("track.ogg", 0, 1.0f, true, 2000, 2000),
                         new AreaTrackDefinition("second.ogg", 4, secondaryVolume, false, 300, 700)

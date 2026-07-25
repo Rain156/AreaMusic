@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import datura.areamusic.AreaMusic;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaJsonCodec;
+import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaStorage;
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.music.MusicDirectory;
@@ -173,9 +174,9 @@ public final class AreaMusicServer {
         try {
             area = AreaDefinition.create(
                     areaId,
-                    source.getLevel().dimension().location(),
-                    pos1,
-                    pos2,
+                    source.getLevel().dimension().location().toString(),
+                    new AreaPosition(pos1.getX(), pos1.getY(), pos1.getZ()),
+                    new AreaPosition(pos2.getX(), pos2.getY(), pos2.getZ()),
                     List.of(new AreaTrackDefinition(musicId, 0, 1.0f, true, 2000, 2000)),
                     false,
                     0

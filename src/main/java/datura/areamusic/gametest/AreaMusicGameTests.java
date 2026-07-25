@@ -2,13 +2,12 @@ package datura.areamusic.gametest;
 
 import datura.areamusic.AreaMusic;
 import datura.areamusic.area.AreaDefinition;
+import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.music.MusicDirectory;
 import datura.areamusic.playback.PlaybackState;
-import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.gametest.GameTestHolder;
 import net.minecraftforge.gametest.PrefixGameTestTemplate;
 
@@ -28,9 +27,9 @@ public final class AreaMusicGameTests {
         );
         AreaDefinition area = AreaDefinition.create(
                 "smoke",
-                ResourceLocation.tryParse("minecraft:overworld"),
-                BlockPos.ZERO,
-                BlockPos.ZERO,
+                "minecraft:overworld",
+                new AreaPosition(0, 0, 0),
+                new AreaPosition(0, 0, 0),
                 tracks,
                 true,
                 0

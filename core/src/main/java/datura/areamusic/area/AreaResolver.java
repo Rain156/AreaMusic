@@ -1,8 +1,5 @@
 package datura.areamusic.area;
 
-import net.minecraft.core.BlockPos;
-import net.minecraft.resources.ResourceLocation;
-
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.Objects;
@@ -19,15 +16,16 @@ public final class AreaResolver {
 
     public static Optional<AreaDefinition> resolve(
             Collection<AreaDefinition> areas,
-            ResourceLocation dimension,
-            BlockPos position
+            String dimension,
+            AreaPosition position
     ) {
         Objects.requireNonNull(areas, "areas");
         Objects.requireNonNull(dimension, "dimension");
         Objects.requireNonNull(position, "position");
+        String canonicalDimension = AreaDefinition.canonicalizeDimension(dimension);
 
         return areas.stream()
-                .filter(area -> area.contains(dimension, position))
+                .filter(area -> area.containsCanonical(canonicalDimension, position))
                 .min(PRECEDENCE);
     }
 }
