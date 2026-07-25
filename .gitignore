@@ -20,8 +20,8 @@ hs_err_pid*
 # Common working directory
 run
 
-# Runtime logs created outside the configured run directory
-/logs/
+# Runtime logs created outside configured run directories
+logs/
 
 # Local Git worktrees
 .worktrees/

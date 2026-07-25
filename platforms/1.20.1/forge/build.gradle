@@ -1,0 +1,255 @@
+import datura.gradle.VerifyProductionJar
+
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'net.neoforged.moddev.legacyforge' version '2.0.142'
+}
+
+group = rootProject.group
+version = rootProject.version
+
+base {
+    archivesName = "${mod_id}-forge-${minecraft_version}"
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
+
+configurations {
+    embeddedCodecs {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    compileOnly.extendsFrom embeddedCodecs
+}
+
+legacyForge {
+    version = "${minecraft_version}-${forge_version}"
+    addModdingDependenciesTo sourceSets.test
+
+    runs {
+        configureEach {
+            gameDirectory = project.file('run')
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            systemProperty 'forge.logging.console.level', 'debug'
+        }
+
+        client {
+            client()
+            systemProperty 'forge.enabledGameTestNamespaces', "${mod_id},minecraft"
+        }
+
+        server {
+            server()
+            systemProperty 'forge.enabledGameTestNamespaces', "${mod_id},minecraft"
+            programArgument '--nogui'
+        }
+
+        gameTestServer {
+            type = 'gameTestServer'
+            systemProperty 'forge.enabledGameTestNamespaces', "${mod_id},minecraft"
+        }
+
+        data {
+            data()
+            gameDirectory = project.file('run-data')
+            programArguments = [
+                    '--mod', mod_id,
+                    '--all',
+                    '--output', file('src/generated/resources/').absolutePath,
+                    '--existing', file('src/main/resources/').absolutePath
+            ]
+        }
+    }
+
+    mods {
+        register(mod_id) {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+sourceSets.main.resources {
+    srcDir 'src/generated/resources'
+}
+sourceSets.test.resources {
+    srcDir project(':core').file('src/test/resources')
+}
+
+def coreSourceSets = project(':core').sourceSets
+def coreMainOutput = coreSourceSets.main.output
+def coreTestOutput = coreSourceSets.test.output
+def forgeMainOutput = sourceSets.main.output
+def forgeTestOutput = sourceSets.test.output
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation(project(':core')) {
+        transitive = false
+    }
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // Unit tests run without Minecraft's runtime libraries, so mirror its JOrbis version here.
+    testRuntimeOnly 'org.jcraft:jorbis:0.0.17'
+
+    embeddedCodecs 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+    embeddedCodecs 'com.googlecode.soundlibs:jlayer:1.0.1.4'
+    embeddedCodecs 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
+    embeddedCodecs 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
+    embeddedCodecs 'org.jflac:jflac-codec:1.5.2'
+}
+
+def embeddedCodecsDir = layout.buildDirectory.dir('generated/embeddedCodecs')
+def syncEmbeddedCodecs = tasks.register('syncEmbeddedCodecs', Sync) {
+    into embeddedCodecsDir
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from({
+        configurations.embeddedCodecs.collect { zipTree(it) }
+    }) {
+        exclude 'META-INF/MANIFEST.MF'
+        exclude 'META-INF/*.SF'
+        exclude 'META-INF/*.RSA'
+        exclude 'META-INF/*.DSA'
+        exclude 'META-INF/services/**'
+        exclude 'module-info.class'
+        exclude 'META-INF/versions/**/module-info.class'
+    }
+}
+
+sourceSets.main.output.dir([builtBy: syncEmbeddedCodecs], embeddedCodecsDir)
+
+tasks.named('processResources', ProcessResources).configure {
+    def replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            forge_version          : forge_version,
+            forge_version_range    : forge_version_range,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description
+    ]
+
+    inputs.properties replaceProperties
+
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    dependsOn ':core:classes'
+    from coreMainOutput
+
+    manifest {
+        attributes([
+                'Specification-Title'       : mod_id,
+                'Specification-Vendor'      : mod_authors,
+                'Specification-Version'     : '1',
+                'Implementation-Title'      : rootProject.name,
+                'Implementation-Version'    : archiveVersion,
+                'Implementation-Vendor'     : mod_authors
+        ])
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+}
+
+def bundledAudioProviderEntries = [
+        'javazoom/spi/mpeg/sampled/file/MpegAudioFileReader.class',
+        'javazoom/spi/mpeg/sampled/convert/MpegFormatConversionProvider.class',
+        'javazoom/spi/vorbis/sampled/file/VorbisAudioFileReader.class',
+        'javazoom/spi/vorbis/sampled/convert/VorbisFormatConversionProvider.class',
+        'org/jflac/sound/spi/FlacAudioFileReader.class',
+        'org/jflac/sound/spi/FlacFormatConversionProvider.class'
+]
+
+def verifyBundledAudioCodecs = tasks.register('verifyBundledAudioCodecs') {
+    dependsOn syncEmbeddedCodecs
+    inputs.dir embeddedCodecsDir
+
+    doLast {
+        File codecRoot = embeddedCodecsDir.get().asFile
+        List<String> missingEntries = bundledAudioProviderEntries.findAll {
+            !new File(codecRoot, it).isFile()
+        }
+        boolean bundlesJorbis = new File(codecRoot, 'com/jcraft/jorbis').exists()
+        List<File> nestedJars = []
+        codecRoot.eachFileRecurse(groovy.io.FileType.FILES) { candidate ->
+            if (candidate.name.toLowerCase(Locale.ROOT).endsWith('.jar')) {
+                nestedJars.add(candidate)
+            }
+        }
+        nestedJars.sort { it.absolutePath }
+        if (!missingEntries.isEmpty() || bundlesJorbis || !nestedJars.isEmpty()) {
+            throw new GradleException(
+                    "Bundled audio codec verification failed for ${codecRoot}. " +
+                            "Missing provider classes: ${missingEntries}; " +
+                            "bundles JOrbis: ${bundlesJorbis}; nested JARs: ${nestedJars}"
+            )
+        }
+    }
+}
+
+def reobfJarTask = tasks.named('reobfJar', Jar)
+def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProductionJar) {
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    description = 'Audits the final reobfuscated production JAR.'
+
+    productionJar.set(reobfJarTask.flatMap { it.archiveFile })
+    codecDirectory.set(embeddedCodecsDir)
+    coreMainClassRoots.from(coreMainOutput.classesDirs)
+    forgeMainClassRoots.from(forgeMainOutput.classesDirs)
+    testOutputRoots.from(coreTestOutput, forgeTestOutput)
+    serviceSourceFiles.from(
+            layout.projectDirectory.file('src/main/resources/META-INF/services/javax.sound.sampled.spi.AudioFileReader'),
+            layout.projectDirectory.file('src/main/resources/META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')
+    )
+
+    expectedFileName.set("${mod_id}-forge-${minecraft_version}-${mod_version}.jar")
+    expectedModId.set(mod_id)
+    expectedModVersion.set(mod_version)
+    expectedImplementationTitle.set(rootProject.name)
+    expectedPackFormat.set(15)
+    requiredProviderEntries.set(bundledAudioProviderEntries)
+    requiredResourceEntries.set([
+            'META-INF/MANIFEST.MF',
+            'META-INF/mods.toml',
+            'pack.mcmeta',
+            'assets/areamusic/lang/en_us.json',
+            'assets/areamusic/lang/zh_cn.json',
+            'META-INF/AREA_MUSIC_THIRD_PARTY_NOTICES.txt',
+            'META-INF/licenses/LGPL-2.1.txt',
+            'META-INF/services/javax.sound.sampled.spi.AudioFileReader',
+            'META-INF/services/javax.sound.sampled.spi.FormatConversionProvider'
+    ])
+    reobfuscationEvidenceEntry.set('datura/areamusic/client/ClientAreaMusic.class')
+    expectedSrgName.set('m_91087_')
+    forbiddenMojangName.set('getInstance')
+
+    dependsOn reobfJarTask
+    dependsOn syncEmbeddedCodecs
+    dependsOn ':core:classes', ':core:testClasses', 'classes', 'testClasses'
+    mustRunAfter reobfJarTask
+}
+
+tasks.named('check') {
+    dependsOn verifyBundledAudioCodecs, verifyProductionJar
+}
