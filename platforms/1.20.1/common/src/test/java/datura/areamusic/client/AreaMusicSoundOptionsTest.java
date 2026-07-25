@@ -1,12 +1,14 @@
 package datura.areamusic.client;
 
 import net.minecraft.client.OptionInstance;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.contents.TranslatableContents;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -14,6 +16,27 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 class AreaMusicSoundOptionsTest {
+    @Test
+    void ignoresNonSoundScreensWithoutReadingOrUpdatingTheLoaderConfig() {
+        AtomicInteger reads = new AtomicInteger();
+        AtomicInteger writes = new AtomicInteger();
+        Screen otherScreen = new Screen(Component.literal("other")) {
+        };
+
+        AreaMusicSoundOptions.onScreenInit(
+                otherScreen,
+                List.of(),
+                () -> {
+                    reads.incrementAndGet();
+                    return 0.5;
+                },
+                ignored -> writes.incrementAndGet()
+        );
+
+        assertEquals(0, reads.get());
+        assertEquals(0, writes.get());
+    }
+
     @Test
     void selectsOnlyOneMatchingSoundOptionsList() {
         assertEquals("sound", AreaMusicSoundOptions.findUnique(

@@ -72,16 +72,19 @@ legacyForge {
     }
 }
 
+def sharedAudioCodecResources = rootProject.layout.projectDirectory.dir('platforms/shared/audio-codecs')
+
 sourceSets.main.resources {
     srcDir 'src/generated/resources'
 }
-sourceSets.test.resources {
-    srcDir project(':core').file('src/test/resources')
-}
+sourceSets.main.resources.srcDir(sharedAudioCodecResources)
 
 def coreSourceSets = project(':core').sourceSets
+def commonSourceSets = project(':platforms:mc1_20_1:common').sourceSets
 def coreMainOutput = coreSourceSets.main.output
 def coreTestOutput = coreSourceSets.test.output
+def commonMainOutput = commonSourceSets.main.output
+def commonTestOutput = commonSourceSets.test.output
 def forgeMainOutput = sourceSets.main.output
 def forgeTestOutput = sourceSets.test.output
 
@@ -93,9 +96,13 @@ dependencies {
     implementation(project(':core')) {
         transitive = false
     }
+    implementation(project(':platforms:mc1_20_1:common')) {
+        transitive = false
+    }
 
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.ow2.asm:asm:9.7.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     // Unit tests run without Minecraft's runtime libraries, so mirror its JOrbis version here.
     testRuntimeOnly 'org.jcraft:jorbis:0.0.17'
@@ -143,14 +150,15 @@ tasks.named('processResources', ProcessResources).configure {
 
     inputs.properties replaceProperties
 
-    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+    filesMatching('META-INF/mods.toml') {
         expand replaceProperties
     }
 }
 
 tasks.named('jar', Jar).configure {
-    dependsOn ':core:classes'
+    dependsOn ':core:classes', ':platforms:mc1_20_1:common:classes'
     from coreMainOutput
+    from commonMainOutput
 
     manifest {
         attributes([
@@ -216,11 +224,12 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
     productionJar.set(reobfJarTask.flatMap { it.archiveFile })
     codecDirectory.set(embeddedCodecsDir)
     coreMainClassRoots.from(coreMainOutput.classesDirs)
+    commonMainClassRoots.from(commonMainOutput.classesDirs)
     forgeMainClassRoots.from(forgeMainOutput.classesDirs)
-    testOutputRoots.from(coreTestOutput, forgeTestOutput)
+    testOutputRoots.from(coreTestOutput, commonTestOutput, forgeTestOutput)
     serviceSourceFiles.from(
-            layout.projectDirectory.file('src/main/resources/META-INF/services/javax.sound.sampled.spi.AudioFileReader'),
-            layout.projectDirectory.file('src/main/resources/META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')
+            sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.AudioFileReader'),
+            sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')
     )
 
     expectedFileName.set("${mod_id}-forge-${minecraft_version}-${mod_version}.jar")
@@ -240,13 +249,15 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
             'META-INF/services/javax.sound.sampled.spi.AudioFileReader',
             'META-INF/services/javax.sound.sampled.spi.FormatConversionProvider'
     ])
-    reobfuscationEvidenceEntry.set('datura/areamusic/client/ClientAreaMusic.class')
-    expectedSrgName.set('m_91087_')
-    forbiddenMojangName.set('getInstance')
+    reobfuscationEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')
+    expectedSrgName.set('m_123341_')
+    forbiddenMojangName.set('getX')
 
     dependsOn reobfJarTask
     dependsOn syncEmbeddedCodecs
-    dependsOn ':core:classes', ':core:testClasses', 'classes', 'testClasses'
+    dependsOn ':core:classes', ':core:testClasses'
+    dependsOn ':platforms:mc1_20_1:common:classes', ':platforms:mc1_20_1:common:testClasses'
+    dependsOn 'classes', 'testClasses'
     mustRunAfter reobfJarTask
 }
 

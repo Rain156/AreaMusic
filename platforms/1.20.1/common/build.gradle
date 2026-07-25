@@ -1,9 +1,9 @@
-import datura.gradle.VerifyArchiveEntriesAbsent
 import datura.gradle.VerifyClassBoundaries
 import datura.gradle.VerifySourceBoundaries
 
 plugins {
     id 'java-library'
+    id 'net.neoforged.moddev.legacyforge' version '2.0.142'
 }
 
 group = rootProject.group
@@ -13,34 +13,23 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(17)
 }
 
+legacyForge {
+    mcpVersion = minecraft_version
+    addModdingDependenciesTo sourceSets.test
+}
+
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    compileOnlyApi 'com.google.code.gson:gson:2.10'
-
-    implementation('com.googlecode.soundlibs:mp3spi:1.9.5.4') {
-        transitive = false
-    }
-    implementation('com.googlecode.soundlibs:jlayer:1.0.1.4') {
-        transitive = false
-    }
-    implementation('com.googlecode.soundlibs:vorbisspi:1.0.3.3') {
-        transitive = false
-    }
-    implementation('com.googlecode.soundlibs:tritonus-share:0.3.7.4') {
-        transitive = false
-    }
-    implementation('org.jflac:jflac-codec:1.5.2') {
+    implementation(project(':core')) {
         transitive = false
     }
 
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    testImplementation 'com.google.code.gson:gson:2.10'
-    testRuntimeOnly 'org.jcraft:jorbis:0.0.17'
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -51,8 +40,7 @@ tasks.named('test', Test).configure {
     useJUnitPlatform()
 }
 
-def forbiddenPlatformImports = [
-        'net.minecraft',
+def forbiddenLoaderImports = [
         'net.minecraftforge',
         'net.neoforged',
         'net.fabricmc',
@@ -64,16 +52,15 @@ def forbiddenPlatformImports = [
 def verifySourceBoundaries = tasks.register('verifySourceBoundaries', VerifySourceBoundaries) {
     sourceFiles.from(sourceSets.main.allJava)
     sourceRoot.set(layout.projectDirectory.dir('src/main/java'))
-    boundaryName.set('core')
-    forbiddenImportPrefixes.set(forbiddenPlatformImports)
+    boundaryName.set('common')
+    forbiddenImportPrefixes.set(forbiddenLoaderImports)
     sourceLanguageVersion.set(java.toolchain.languageVersion.map { it.asInt() })
 }
 
 def verifyClassBoundaries = tasks.register('verifyClassBoundaries', VerifyClassBoundaries) {
     classRoots.from(sourceSets.main.output.classesDirs)
-    boundaryName.set('core')
+    boundaryName.set('common')
     forbiddenInternalNamePrefixes.set([
-            'net/minecraft',
             'net/minecraftforge',
             'net/neoforged',
             'net/fabricmc',
@@ -84,19 +71,6 @@ def verifyClassBoundaries = tasks.register('verifyClassBoundaries', VerifyClassB
     dependsOn tasks.named('classes')
 }
 
-def audioCodecPackagingEntries = [
-        'META-INF/AREA_MUSIC_THIRD_PARTY_NOTICES.txt',
-        'META-INF/licenses/LGPL-2.1.txt',
-        'META-INF/services/javax.sound.sampled.spi.AudioFileReader',
-        'META-INF/services/javax.sound.sampled.spi.FormatConversionProvider'
-]
-
-def verifyPackagingResourcesAbsent = tasks.register('verifyPackagingResourcesAbsent', VerifyArchiveEntriesAbsent) {
-    archiveFile.set(tasks.named('jar', Jar).flatMap { it.archiveFile })
-    forbiddenEntries.set(audioCodecPackagingEntries)
-    dependsOn tasks.named('jar')
-}
-
 tasks.named('check') {
-    dependsOn verifySourceBoundaries, verifyClassBoundaries, verifyPackagingResourcesAbsent
+    dependsOn verifySourceBoundaries, verifyClassBoundaries
 }

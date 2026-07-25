@@ -1,22 +1,18 @@
 package datura.areamusic.client;
 
 import com.mojang.logging.LogUtils;
-import datura.areamusic.AreaMusic;
-import datura.areamusic.config.AreaMusicClientConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.OptionsList;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.SoundOptionsScreen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundSource;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.ScreenEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
 import org.slf4j.Logger;
 
 import java.util.List;
@@ -24,7 +20,6 @@ import java.util.function.DoubleConsumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Predicate;
 
-@Mod.EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT)
 public final class AreaMusicSoundOptions {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final String VOLUME_TRANSLATION_KEY = "options.areamusic.volume";
@@ -32,16 +27,29 @@ public final class AreaMusicSoundOptions {
     private AreaMusicSoundOptions() {
     }
 
-    @SubscribeEvent
-    public static void onScreenInit(ScreenEvent.Init.Post event) {
-        if (!(event.getScreen() instanceof SoundOptionsScreen)) {
+    public static void onScreenInit(
+            Screen screen,
+            List<? extends GuiEventListener> listeners,
+            DoubleSupplier initialVolume,
+            DoubleConsumer updateVolume
+    ) {
+        if (!(screen instanceof SoundOptionsScreen)) {
             return;
         }
 
         Options options = Minecraft.getInstance().options;
+        install(listeners, options, initialVolume, updateVolume);
+    }
+
+    public static void install(
+            List<? extends GuiEventListener> listeners,
+            Options options,
+            DoubleSupplier initialVolume,
+            DoubleConsumer updateVolume
+    ) {
         OptionInstance<Double> masterVolume = options.getSoundSourceOptionInstance(SoundSource.MASTER);
         OptionInstance<Double> voiceVolume = options.getSoundSourceOptionInstance(SoundSource.VOICE);
-        List<OptionsList> optionLists = event.getListenersList().stream()
+        List<OptionsList> optionLists = listeners.stream()
                 .filter(OptionsList.class::isInstance)
                 .map(OptionsList.class::cast)
                 .toList();
@@ -55,10 +63,9 @@ public final class AreaMusicSoundOptions {
             return;
         }
 
-        AreaMusicClientConfig config = AreaMusicClientConfig.INSTANCE;
         OptionInstance<Double> areaMusicVolume = createVolumeOption(
-                config::volume,
-                config::setVolume
+                initialVolume,
+                updateVolume
         );
         insertVolumeOption(list, options, areaMusicVolume);
     }

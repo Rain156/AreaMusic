@@ -35,6 +35,10 @@ abstract class VerifyProductionJar extends DefaultTask {
 
     @InputFiles
     @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getCommonMainClassRoots()
+
+    @InputFiles
+    @PathSensitive(PathSensitivity.RELATIVE)
     abstract ConfigurableFileCollection getForgeMainClassRoots()
 
     @InputFiles
@@ -145,6 +149,12 @@ abstract class VerifyProductionJar extends DefaultTask {
             }
             VerifyProductionJar.requireExactlyOnce('core main class', coreClassEntries, counts, errors)
 
+            Set<String> commonClassEntries = VerifyProductionJar.relativeFileNames(commonMainClassRoots.files, true)
+            if (commonClassEntries.isEmpty()) {
+                errors << "no common main classes were found in ${commonMainClassRoots.files}"
+            }
+            VerifyProductionJar.requireExactlyOnce('common main class', commonClassEntries, counts, errors)
+
             Set<String> forgeClassEntries = VerifyProductionJar.relativeFileNames(forgeMainClassRoots.files, true)
             if (forgeClassEntries.isEmpty()) {
                 errors << "no Forge main classes were found in ${forgeMainClassRoots.files}"
@@ -154,17 +164,35 @@ abstract class VerifyProductionJar extends DefaultTask {
             Set<String> coreForgeOverlap = VerifyProductionJar.intersection(
                     coreClassEntries, forgeClassEntries
             )
+            Set<String> coreCommonOverlap = VerifyProductionJar.intersection(
+                    coreClassEntries, commonClassEntries
+            )
             Set<String> coreCodecOverlap = VerifyProductionJar.intersection(
                     coreClassEntries, codecClassEntries
+            )
+            Set<String> commonForgeOverlap = VerifyProductionJar.intersection(
+                    commonClassEntries, forgeClassEntries
+            )
+            Set<String> commonCodecOverlap = VerifyProductionJar.intersection(
+                    commonClassEntries, codecClassEntries
             )
             Set<String> forgeCodecOverlap = VerifyProductionJar.intersection(
                     forgeClassEntries, codecClassEntries
             )
+            if (!coreCommonOverlap.isEmpty()) {
+                errors << "core/common class overlap: ${coreCommonOverlap}"
+            }
             if (!coreForgeOverlap.isEmpty()) {
                 errors << "core/Forge class overlap: ${coreForgeOverlap}"
             }
             if (!coreCodecOverlap.isEmpty()) {
                 errors << "core/codec class overlap: ${coreCodecOverlap}"
+            }
+            if (!commonForgeOverlap.isEmpty()) {
+                errors << "common/Forge class overlap: ${commonForgeOverlap}"
+            }
+            if (!commonCodecOverlap.isEmpty()) {
+                errors << "common/codec class overlap: ${commonCodecOverlap}"
             }
             if (!forgeCodecOverlap.isEmpty()) {
                 errors << "Forge/codec class overlap: ${forgeCodecOverlap}"
@@ -172,6 +200,7 @@ abstract class VerifyProductionJar extends DefaultTask {
 
             Set<String> expectedClassEntries = new TreeSet<>()
             expectedClassEntries.addAll(coreClassEntries)
+            expectedClassEntries.addAll(commonClassEntries)
             expectedClassEntries.addAll(forgeClassEntries)
             expectedClassEntries.addAll(codecClassEntries)
             Set<String> missingClassEntries = new TreeSet<>(expectedClassEntries)
@@ -233,6 +262,24 @@ abstract class VerifyProductionJar extends DefaultTask {
                 if (bytes != null && bytes.length == 0) {
                     errors << "required resource '${entryName}' is empty"
                 }
+            }
+
+            Set<String> expectedResourceEntries = new TreeSet<>(codecEntries.findAll {
+                !it.endsWith('.class')
+            })
+            expectedResourceEntries.addAll(requiredResources)
+            Set<String> actualResourceEntries = new TreeSet<>(entries.findAll {
+                !it.directory && !it.name.endsWith('.class')
+            }.collect { it.name })
+            Set<String> missingResourceEntries = new TreeSet<>(expectedResourceEntries)
+            missingResourceEntries.removeAll(actualResourceEntries)
+            Set<String> unexpectedResourceEntries = new TreeSet<>(actualResourceEntries)
+            unexpectedResourceEntries.removeAll(expectedResourceEntries)
+            if (!missingResourceEntries.isEmpty()) {
+                errors << "missing production resources: ${missingResourceEntries}"
+            }
+            if (!unexpectedResourceEntries.isEmpty()) {
+                errors << "unexpected production resources: ${unexpectedResourceEntries}"
             }
 
             Set<String> projectTextResources = requiredResources.findAll {
@@ -328,12 +375,12 @@ abstract class VerifyProductionJar extends DefaultTask {
             String evidenceEntry = reobfuscationEvidenceEntry.get()
             byte[] productionClass = VerifyProductionJar.readEntry(zip, evidenceEntry)
             File developmentClass = VerifyProductionJar.findRelativeFile(
-                    forgeMainClassRoots.files, evidenceEntry
+                    commonMainClassRoots.files, evidenceEntry
             )
             if (productionClass == null) {
                 errors << "reobfuscation evidence class is missing: ${evidenceEntry}"
             } else if (developmentClass == null) {
-                errors << "development class for reobfuscation comparison is missing: ${evidenceEntry}"
+                errors << "common development class for reobfuscation comparison is missing: ${evidenceEntry}"
             } else {
                 byte[] developmentBytes = java.nio.file.Files.readAllBytes(developmentClass.toPath())
                 if (java.util.Arrays.equals(productionClass, developmentBytes)) {
@@ -353,12 +400,13 @@ abstract class VerifyProductionJar extends DefaultTask {
             }
 
             logger.lifecycle(
-                    'Verified production JAR {}: {} entries, {} staged codec entries ({} codec classes), {} core classes, {} Forge classes, {} production classes',
+                    'Verified production JAR {}: {} entries, {} staged codec entries ({} codec classes), {} core classes, {} common classes, {} Forge classes, {} production classes',
                     archive.name,
                     entries.size(),
                     codecEntries.size(),
                     codecClassEntries.size(),
                     coreClassEntries.size(),
+                    commonClassEntries.size(),
                     forgeClassEntries.size(),
                     actualClassEntries.size()
             )

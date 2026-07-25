@@ -8,12 +8,10 @@ import datura.areamusic.playback.PlaybackMode;
 import datura.areamusic.playback.PlaybackState;
 import datura.areamusic.playback.PlaylistLoopPlayback;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Supplier;
 
 public record ClientboundPlaybackState(long revision, PlaybackState state) {
     private static final int MAX_AREA_ID_LENGTH = 64;
@@ -110,9 +108,4 @@ public record ClientboundPlaybackState(long revision, PlaybackState state) {
         return new PlaylistLoopPlayback(playlist, volume, fadeInMs, fadeOutMs);
     }
 
-    public static void handle(ClientboundPlaybackState message, Supplier<NetworkEvent.Context> contextSupplier) {
-        NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> AreaMusicNetwork.handleClientPlayback(message));
-        context.setPacketHandled(true);
-    }
 }

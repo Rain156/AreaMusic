@@ -40,6 +40,28 @@ import java.util.concurrent.CompletableFuture;
 @Mod.EventBusSubscriber(modid = AreaMusic.MOD_ID)
 public final class AreaMusicServer {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final AreaMusicCommands.Operations COMMAND_OPERATIONS = new AreaMusicCommands.Operations() {
+        @Override
+        public Iterable<String> musicIds() {
+            return AreaMusicServer.musicIds();
+        }
+
+        @Override
+        public int createArea(
+                CommandSourceStack source,
+                String areaId,
+                BlockPos pos1,
+                BlockPos pos2,
+                String musicId
+        ) {
+            return AreaMusicServer.createArea(source, areaId, pos1, pos2, musicId);
+        }
+
+        @Override
+        public int requestReload(CommandSourceStack source) {
+            return AreaMusicServer.requestReload(source);
+        }
+    };
     private static final Map<UUID, PlayerAreaTracker> PLAYER_TRACKERS = new HashMap<>();
     private static final Set<String> CREATE_IN_FLIGHT = new HashSet<>();
 
@@ -58,7 +80,7 @@ public final class AreaMusicServer {
 
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
-        AreaMusicCommands.register(event.getDispatcher());
+        AreaMusicCommands.register(event.getDispatcher(), COMMAND_OPERATIONS);
     }
 
     @SubscribeEvent

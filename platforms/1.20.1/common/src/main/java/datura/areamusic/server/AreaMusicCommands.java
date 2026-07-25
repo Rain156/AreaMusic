@@ -9,14 +9,21 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
+import net.minecraft.core.BlockPos;
 
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 public final class AreaMusicCommands {
     private AreaMusicCommands() {
     }
 
-    public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+    public static void register(
+            CommandDispatcher<CommandSourceStack> dispatcher,
+            Operations operations
+    ) {
+        Objects.requireNonNull(dispatcher, "dispatcher");
+        Objects.requireNonNull(operations, "operations");
         dispatcher.register(Commands.literal("areamusic")
                 .requires(source -> source.hasPermission(2))
                 .then(Commands.literal("create")
@@ -25,14 +32,17 @@ public final class AreaMusicCommands {
                                         .then(Commands.argument("pos2", BlockPosArgument.blockPos())
                                                 .then(Commands.argument("musicId", StringArgumentType.greedyString())
                                                         .suggests((context, builder) -> suggestMusicIds(
-                                                                AreaMusicServer.musicIds(), builder))
-                                                        .executes(AreaMusicCommands::createArea))))))
+                                                                operations.musicIds(), builder))
+                                                        .executes(context -> createArea(context, operations)))))))
                 .then(Commands.literal("reload")
-                        .executes(context -> AreaMusicServer.requestReload(context.getSource()))));
+                        .executes(context -> operations.requestReload(context.getSource()))));
     }
 
-    private static int createArea(CommandContext<CommandSourceStack> context) {
-        return AreaMusicServer.createArea(
+    private static int createArea(
+            CommandContext<CommandSourceStack> context,
+            Operations operations
+    ) {
+        return operations.createArea(
                 context.getSource(),
                 StringArgumentType.getString(context, "areaId"),
                 BlockPosArgument.getBlockPos(context, "pos1"),
@@ -46,5 +56,19 @@ public final class AreaMusicCommands {
             SuggestionsBuilder builder
     ) {
         return SharedSuggestionProvider.suggest(musicIds, builder);
+    }
+
+    public interface Operations {
+        Iterable<String> musicIds();
+
+        int createArea(
+                CommandSourceStack source,
+                String areaId,
+                BlockPos pos1,
+                BlockPos pos2,
+                String musicId
+        );
+
+        int requestReload(CommandSourceStack source);
     }
 }

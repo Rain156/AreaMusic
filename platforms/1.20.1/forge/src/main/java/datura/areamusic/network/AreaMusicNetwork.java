@@ -5,12 +5,14 @@ import datura.areamusic.playback.PlaybackState;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.network.simple.SimpleChannel;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 public final class AreaMusicNetwork {
     private static final String PROTOCOL_VERSION = "3";
@@ -47,7 +49,7 @@ public final class AreaMusicNetwork {
                 ClientboundPlaybackState.class,
                 ClientboundPlaybackState::encode,
                 ClientboundPlaybackState::decode,
-                ClientboundPlaybackState::handle,
+                AreaMusicNetwork::handlePlaybackPacket,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         channel.registerMessage(
@@ -55,7 +57,7 @@ public final class AreaMusicNetwork {
                 ClientboundReloadMusic.class,
                 ClientboundReloadMusic::encode,
                 ClientboundReloadMusic::decode,
-                ClientboundReloadMusic::handle,
+                AreaMusicNetwork::handleReloadPacket,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
     }
@@ -88,6 +90,24 @@ public final class AreaMusicNetwork {
 
     static void handleClientReload(ClientboundReloadMusic message) {
         clientHandler.onReload(message.revision());
+    }
+
+    private static void handlePlaybackPacket(
+            ClientboundPlaybackState message,
+            Supplier<NetworkEvent.Context> contextSupplier
+    ) {
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> handleClientPlayback(message));
+        context.setPacketHandled(true);
+    }
+
+    private static void handleReloadPacket(
+            ClientboundReloadMusic message,
+            Supplier<NetworkEvent.Context> contextSupplier
+    ) {
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> handleClientReload(message));
+        context.setPacketHandled(true);
     }
 
     private static SimpleChannel requireChannel() {

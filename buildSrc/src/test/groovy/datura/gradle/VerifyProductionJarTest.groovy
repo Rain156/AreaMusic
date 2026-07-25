@@ -27,6 +27,23 @@ class VerifyProductionJarTest {
     }
 
     @Test
+    void rejectsAForgeOnlyClassAsTheCommonReobfuscationEvidence() {
+        Fixture fixture = newFixture()
+        Files.delete(fixture.commonClasses.resolve(Fixture.EVIDENCE_ENTRY))
+        fixture.writeRelative(
+                fixture.forgeClasses,
+                Fixture.EVIDENCE_ENTRY,
+                'development getInstance'.bytes
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                'common development class for reobfuscation comparison is missing: ' + Fixture.EVIDENCE_ENTRY
+        ))
+    }
+
+    @Test
     void rejectsAMisnamedArtifact() {
         Fixture fixture = newFixture()
         fixture.archive = fixture.root.resolve('wrong-name.jar').toFile()
@@ -47,6 +64,37 @@ class VerifyProductionJarTest {
     }
 
     @Test
+    void rejectsAnUnexpectedProductionResource() {
+        Fixture fixture = newFixture()
+        fixture.addArchiveEntry('rogue/unexpected.txt', 'rogue'.bytes)
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains('unexpected production resources: [rogue/unexpected.txt]'))
+    }
+
+    @Test
+    void rejectsAMissingCommonProductionClass() {
+        Fixture fixture = newFixture()
+        fixture.removeArchiveEntry('example/Common.class')
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains("common main class 'example/Common.class' must occur exactly once, found 0"))
+        assertTrue(failure.message.contains('missing production classes: [example/Common.class]'))
+    }
+
+    @Test
+    void rejectsAnArchivedClassThatIsNotInTheCommonOutput() {
+        Fixture fixture = newFixture()
+        Files.delete(fixture.commonClasses.resolve('example/Common.class'))
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains('unexpected production classes: [example/Common.class]'))
+    }
+
+    @Test
     void rejectsOverlappingCoreAndForgeClassCategories() {
         Fixture fixture = newFixture()
         fixture.writeRelative(fixture.coreClasses, 'shared/Overlap.class', 'core overlap'.bytes)
@@ -56,6 +104,42 @@ class VerifyProductionJarTest {
         GradleException failure = assertAuditFails(fixture)
 
         assertTrue(failure.message.contains('core/Forge class overlap: [shared/Overlap.class]'))
+    }
+
+    @Test
+    void rejectsOverlappingCoreAndCommonClassCategories() {
+        Fixture fixture = newFixture()
+        fixture.writeRelative(fixture.coreClasses, 'shared/Overlap.class', 'core overlap'.bytes)
+        fixture.writeRelative(fixture.commonClasses, 'shared/Overlap.class', 'common overlap'.bytes)
+        fixture.addArchiveEntry('shared/Overlap.class', 'production overlap'.bytes)
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains('core/common class overlap: [shared/Overlap.class]'))
+    }
+
+    @Test
+    void rejectsOverlappingCommonAndForgeClassCategories() {
+        Fixture fixture = newFixture()
+        fixture.writeRelative(fixture.commonClasses, 'shared/Overlap.class', 'common overlap'.bytes)
+        fixture.writeRelative(fixture.forgeClasses, 'shared/Overlap.class', 'forge overlap'.bytes)
+        fixture.addArchiveEntry('shared/Overlap.class', 'production overlap'.bytes)
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains('common/Forge class overlap: [shared/Overlap.class]'))
+    }
+
+    @Test
+    void rejectsOverlappingCommonAndCodecClassCategories() {
+        Fixture fixture = newFixture()
+        fixture.writeRelative(fixture.commonClasses, 'shared/Overlap.class', 'common overlap'.bytes)
+        fixture.writeRelative(fixture.codecFiles, 'shared/Overlap.class', 'codec overlap'.bytes)
+        fixture.addArchiveEntry('shared/Overlap.class', 'production overlap'.bytes)
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains('common/codec class overlap: [shared/Overlap.class]'))
     }
 
     @Test
@@ -219,7 +303,7 @@ class VerifyProductionJarTest {
     void rejectsBadRemappingEvidence() {
         Fixture fixture = newFixture()
         byte[] developmentBytes = Files.readAllBytes(
-                fixture.forgeClasses.resolve(Fixture.EVIDENCE_ENTRY)
+                fixture.commonClasses.resolve(Fixture.EVIDENCE_ENTRY)
         )
         fixture.replaceArchiveEntry(Fixture.EVIDENCE_ENTRY, developmentBytes)
 
@@ -255,6 +339,7 @@ class VerifyProductionJarTest {
 
         final Path root
         final Path coreClasses
+        final Path commonClasses
         final Path forgeClasses
         final Path codecFiles
         final Path testOutputs
@@ -266,16 +351,19 @@ class VerifyProductionJarTest {
             this.root = root
             Path projectDirectory = root.resolve('project')
             coreClasses = root.resolve('core-classes')
+            commonClasses = root.resolve('common-classes')
             forgeClasses = root.resolve('forge-classes')
             codecFiles = root.resolve('codec-files')
             testOutputs = root.resolve('test-outputs')
             Path serviceSources = root.resolve('service-sources')
-            [projectDirectory, coreClasses, forgeClasses, codecFiles, testOutputs, serviceSources].each {
+            [projectDirectory, coreClasses, commonClasses, forgeClasses, codecFiles, testOutputs, serviceSources].each {
                 Files.createDirectories(it)
             }
 
             writeRelative(coreClasses, 'example/Core.class', 'development core'.bytes)
-            writeRelative(forgeClasses, EVIDENCE_ENTRY, 'development getInstance'.bytes)
+            writeRelative(commonClasses, 'example/Common.class', 'development common'.bytes)
+            writeRelative(commonClasses, EVIDENCE_ENTRY, 'development getInstance'.bytes)
+            writeRelative(forgeClasses, 'example/Forge.class', 'development forge'.bytes)
             writeRelative(codecFiles, 'example/Codec.class', 'staged codec'.bytes)
             writeRelative(codecFiles, 'META-INF/codec.properties', 'codec metadata'.bytes)
             writeRelative(testOutputs, 'example/TestOnly.class', 'test class'.bytes)
@@ -287,7 +375,9 @@ class VerifyProductionJarTest {
             Files.writeString(conversionService, 'example.FormatConverter\n', StandardCharsets.UTF_8)
 
             addArchiveEntry('example/Core.class', 'production core'.bytes)
+            addArchiveEntry('example/Common.class', 'production common'.bytes)
             addArchiveEntry(EVIDENCE_ENTRY, 'production m_91087_'.bytes)
+            addArchiveEntry('example/Forge.class', 'production forge'.bytes)
             addArchiveEntry('example/Codec.class', 'staged codec'.bytes)
             addArchiveEntry('META-INF/codec.properties', 'codec metadata'.bytes)
             addArchiveEntry('META-INF/MANIFEST.MF', manifest().bytes)
@@ -321,6 +411,7 @@ class VerifyProductionJarTest {
             task.productionJar.set(archive)
             task.codecDirectory.set(codecFiles.toFile())
             task.coreMainClassRoots.from(coreClasses.toFile())
+            task.commonMainClassRoots.from(commonClasses.toFile())
             task.forgeMainClassRoots.from(forgeClasses.toFile())
             task.testOutputRoots.from(testOutputs.toFile())
             task.serviceSourceFiles.from(audioReaderService.toFile(), conversionService.toFile())
