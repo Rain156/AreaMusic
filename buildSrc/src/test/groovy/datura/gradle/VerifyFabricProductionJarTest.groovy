@@ -6,6 +6,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFiles
 import org.gradle.testfixtures.ProjectBuilder
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -37,6 +38,27 @@ class VerifyFabricProductionJarTest {
                 getter.genericReturnType.typeName
         )
         assertNotNull(getter.getAnnotation(Input), 'expectedFabricApiVersion must be a task input')
+    }
+
+    @Test
+    void supportsAnExactJava21RuntimeConstraintAsATypedTaskInput() {
+        Method getter = VerifyFabricProductionJar.declaredMethods.find {
+            it.name == 'getExpectedJavaVersion'
+        }
+        assertNotNull(getter, 'expectedJavaVersion must be a declared typed task input')
+        assertEquals(
+                'org.gradle.api.provider.Property<java.lang.Integer>',
+                getter.genericReturnType.typeName
+        )
+        assertNotNull(getter.getAnnotation(Input), 'expectedJavaVersion must be a task input')
+
+        Fixture java21 = newFixture()
+        java21.task.expectedJavaVersion.set(21)
+        java21.replaceArchiveEntry(
+                'fabric.mod.json',
+                java21.fabricMetadata().replace('"java":">=17"', '"java":">=21"').bytes
+        )
+        java21.verify()
     }
 
     @Test
@@ -104,6 +126,31 @@ class VerifyFabricProductionJarTest {
                 emptyTests,
                 'no compiled test outputs/resources were found; leakage detection would be vacuous'
         )
+    }
+
+    @Test
+    void rejectsEachEmptyTestOutputCategoryEvenWhenTheOthersArePopulated() {
+        for (String category : ['Core', 'Common', 'Fabric']) {
+            Method getter = VerifyFabricProductionJar.declaredMethods.find {
+                it.name == "get${category}TestOutputRoots"
+            }
+            assertNotNull(getter, "${category} test output roots must be a typed task input")
+            assertNotNull(getter.getAnnotation(InputFiles),
+                    "${category} test output roots must be input files")
+
+            Fixture fixture = newFixture()
+            Path empty = fixture.root.resolve("empty-${category.toLowerCase(Locale.ROOT)}-tests")
+            Files.createDirectories(empty)
+            switch (category) {
+                case 'Core' -> fixture.task.coreTestOutputRoots.setFrom(empty.toFile())
+                case 'Common' -> fixture.task.commonTestOutputRoots.setFrom(empty.toFile())
+                case 'Fabric' -> fixture.task.fabricTestOutputRoots.setFrom(empty.toFile())
+            }
+            assertAuditMessage(
+                    fixture,
+                    "no ${category.toLowerCase(Locale.ROOT)} compiled test outputs/resources were found"
+            )
+        }
     }
 
     @Test
@@ -216,9 +263,46 @@ class VerifyFabricProductionJarTest {
     }
 
     @Test
+    void acceptsATestOutputShadowWhenTheJarContainsThatExpectedProductionClass() {
+        Fixture shadow = newFixture()
+        shadow.writeRelative(
+                shadow.testOutputs,
+                'example/Core.class',
+                classBytes(61, 'test shadow')
+        )
+
+        shadow.verify()
+    }
+
+    @Test
+    void acceptsATestOutputShadowWhenTheJarContainsThatExpectedCodecClass() {
+        Fixture shadow = newFixture()
+        shadow.writeRelative(
+                shadow.testOutputs,
+                'example/Codec.class',
+                classBytes(61, 'test shadow')
+        )
+
+        shadow.verify()
+    }
+
+    @Test
+    void acceptsATestOutputShadowWhenTheJarContainsThatExpectedProductionResource() {
+        Fixture shadow = newFixture()
+        shadow.writeRelative(
+                shadow.testOutputs,
+                'META-INF/codec.properties',
+                'test shadow'.bytes
+        )
+
+        shadow.verify()
+    }
+
+    @Test
     void rejectsLoaderOrArchitecturyClasses() {
         for (String forbidden : [
                 'net/fabricmc/loader/api/FabricLoader.class',
+                'net/fabricmc/fabric/api/networking/v1/ServerPlayNetworking.class',
                 'net/minecraftforge/fml/common/Mod.class',
                 'net/neoforged/fml/common/Mod.class',
                 'dev/architectury/platform/Platform.class'
@@ -475,6 +559,11 @@ class VerifyFabricProductionJarTest {
                         "manifest Implementation-Version must be '1.2.3'"
                 ],
                 [
+                        'Fabric-Minecraft-Version: 1.20.1',
+                        'Fabric-Minecraft-Version: 1.21.1',
+                        "manifest Fabric-Minecraft-Version must be '1.20.1'"
+                ],
+                [
                         '\r\n\r\n',
                         '\r\nImplementation-Timestamp: now\r\n\r\n',
                         'manifest must not contain wall-clock Implementation-Timestamp'
@@ -658,6 +747,9 @@ class VerifyFabricProductionJarTest {
             task.commonMainClassRoots.from(commonClasses.toFile())
             task.fabricMainClassRoots.from(fabricClasses.toFile())
             task.testOutputRoots.from(testOutputs.toFile())
+            task.coreTestOutputRoots.from(testOutputs.toFile())
+            task.commonTestOutputRoots.from(testOutputs.toFile())
+            task.fabricTestOutputRoots.from(testOutputs.toFile())
             task.serviceSourceFiles.from(audioReaderService.toFile(), conversionService.toFile())
             task.expectedFileName.set(EXPECTED_FILE_NAME)
             task.expectedModId.set('areamusic')
@@ -669,6 +761,7 @@ class VerifyFabricProductionJarTest {
             task.expectedMinecraftVersion.set('1.20.1')
             task.expectedLoaderVersion.set('0.19.3')
             task.expectedFabricApiVersion.set(EXPECTED_FABRIC_API_VERSION)
+            task.expectedJavaVersion.set(17)
             task.expectedMainEntrypoint.set(MAIN_ENTRYPOINT)
             task.expectedClientEntrypoint.set(CLIENT_ENTRYPOINT)
             task.expectedImplementationTitle.set('AreaMusic')
@@ -774,6 +867,7 @@ class VerifyFabricProductionJarTest {
                     'Specification-Title: areamusic\r\n' +
                     'Implementation-Title: AreaMusic\r\n' +
                     'Implementation-Version: 1.2.3\r\n' +
+                    'Fabric-Minecraft-Version: 1.20.1\r\n' +
                     '\r\n'
         }
     }

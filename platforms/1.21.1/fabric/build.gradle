@@ -1,21 +1,23 @@
 import datura.gradle.VerifyClassBoundaries
 import datura.gradle.VerifyFabricProductionJar
 import datura.gradle.VerifySourceBoundaries
+import datura.gradle.ProductionRootsJvmArgumentProvider
 import net.fabricmc.loom.task.RemapJarTask
+import org.gradle.api.tasks.PathSensitivity
 
 plugins {
-    id 'fabric-loom' version '1.17.17'
+    id 'fabric-loom' version "${mc1_21_1_loom_version}"
 }
 
 group = rootProject.group
 version = rootProject.version
 
 base {
-    archivesName = "${mod_id}-fabric-${mc1_20_1_minecraft_version}"
+    archivesName = "${mod_id}-fabric-${mc1_21_1_minecraft_version}"
 }
 
 java {
-    toolchain.languageVersion = JavaLanguageVersion.of(17)
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
 }
 
 configurations {
@@ -30,14 +32,32 @@ configurations {
 def sharedAudioCodecResources = rootProject.layout.projectDirectory.dir('platforms/shared/audio-codecs')
 sourceSets.main.resources.srcDir(sharedAudioCodecResources)
 
+evaluationDependsOn(':core')
+evaluationDependsOn(':platforms:mc1_21_1:common')
 def coreSourceSets = project(':core').sourceSets
-def commonSourceSets = project(':platforms:mc1_20_1:common').sourceSets
-def coreMainOutput = coreSourceSets.main.output
+def commonSourceSets = project(':platforms:mc1_21_1:common').sourceSets
+def coreMainJava21ClassesDir = layout.buildDirectory.dir('classes/java/coreMainJava21')
+def compileCoreMainJava21 = tasks.register('compileCoreMainJava21', JavaCompile) {
+    source(coreSourceSets.main.allJava)
+    classpath = coreSourceSets.main.compileClasspath
+    destinationDirectory.set(coreMainJava21ClassesDir)
+    javaCompiler.set(javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    })
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+def coreMainOutput = files(coreMainJava21ClassesDir).builtBy(compileCoreMainJava21)
 def coreTestOutput = coreSourceSets.test.output
 def commonMainOutput = commonSourceSets.main.output
 def commonTestOutput = commonSourceSets.test.output
 def fabricMainOutput = sourceSets.main.output
 def fabricTestOutput = sourceSets.test.output
+def dedicatedServerProductionRoots = files(
+        coreMainOutput,
+        commonMainOutput.classesDirs,
+        fabricMainOutput.classesDirs
+)
 
 def forbiddenFabricPlatformImports = [
         'net.minecraftforge',
@@ -55,14 +75,14 @@ def forbiddenFabricPlatformInternalNames = [
 def verifySourceBoundaries = tasks.register('verifySourceBoundaries', VerifySourceBoundaries) {
     sourceFiles.from(sourceSets.main.allJava)
     sourceRoot.set(layout.projectDirectory.dir('src/main/java'))
-    boundaryName.set('Fabric')
+    boundaryName.set('Fabric 1.21.1')
     forbiddenImportPrefixes.set(forbiddenFabricPlatformImports)
     sourceLanguageVersion.set(java.toolchain.languageVersion.map { it.asInt() })
 }
 
 def verifyClassBoundaries = tasks.register('verifyClassBoundaries', VerifyClassBoundaries) {
     classRoots.from(sourceSets.main.output.classesDirs)
-    boundaryName.set('Fabric')
+    boundaryName.set('Fabric 1.21.1')
     forbiddenInternalNamePrefixes.set(forbiddenFabricPlatformInternalNames)
     dependsOn tasks.named('classes')
 }
@@ -76,15 +96,15 @@ repositories {
 }
 
 dependencies {
-    minecraft "com.mojang:minecraft:${mc1_20_1_minecraft_version}"
+    minecraft "com.mojang:minecraft:${mc1_21_1_minecraft_version}"
     mappings loom.officialMojangMappings()
-    modImplementation "net.fabricmc:fabric-loader:${mc1_20_1_fabric_loader_version}"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${mc1_20_1_fabric_api_version}"
+    modImplementation "net.fabricmc:fabric-loader:${mc1_21_1_fabric_loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${mc1_21_1_fabric_api_version}"
 
     implementation(project(':core')) {
         transitive = false
     }
-    implementation(project(':platforms:mc1_20_1:common')) {
+    implementation(project(':platforms:mc1_21_1:common')) {
         transitive = false
     }
 
@@ -122,9 +142,9 @@ sourceSets.main.output.dir([builtBy: syncEmbeddedCodecs], embeddedCodecsDir)
 
 tasks.named('processResources', ProcessResources).configure {
     def replaceProperties = [
-            mc1_20_1_minecraft_version: mc1_20_1_minecraft_version,
-            mc1_20_1_fabric_loader_version: mc1_20_1_fabric_loader_version,
-            mc1_20_1_fabric_api_version: mc1_20_1_fabric_api_version,
+            mc1_21_1_minecraft_version: mc1_21_1_minecraft_version,
+            mc1_21_1_fabric_loader_version: mc1_21_1_fabric_loader_version,
+            mc1_21_1_fabric_api_version: mc1_21_1_fabric_api_version,
             mod_id: mod_id,
             mod_name: mod_name,
             mod_license: mod_license,
@@ -141,7 +161,7 @@ tasks.named('processResources', ProcessResources).configure {
 }
 
 tasks.named('jar', Jar).configure {
-    dependsOn ':core:classes', ':platforms:mc1_20_1:common:classes'
+    dependsOn ':core:classes', ':platforms:mc1_21_1:common:classes'
     from coreMainOutput
     from commonMainOutput
 
@@ -171,7 +191,7 @@ def bundledAudioProviderEntries = [
 def verifyProductionJar = tasks.register('verifyProductionJar', VerifyFabricProductionJar) {
     productionJar.set(remapJarTask.flatMap { it.archiveFile })
     codecDirectory.set(embeddedCodecsDir)
-    coreMainClassRoots.from(coreMainOutput.classesDirs)
+    coreMainClassRoots.from(coreMainOutput)
     commonMainClassRoots.from(commonMainOutput.classesDirs)
     fabricMainClassRoots.from(fabricMainOutput.classesDirs)
     testOutputRoots.from(coreTestOutput, commonTestOutput, fabricTestOutput)
@@ -183,22 +203,22 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyFabricProd
             sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')
     )
 
-    expectedFileName.set("${mod_id}-fabric-${mc1_20_1_minecraft_version}-${mod_version}.jar")
+    expectedFileName.set("${mod_id}-fabric-${mc1_21_1_minecraft_version}-${mod_version}.jar")
     expectedModId.set(mod_id)
     expectedModVersion.set(mod_version)
     expectedModName.set(mod_name)
     expectedModDescription.set(mod_description)
     expectedModLicense.set(mod_license)
     expectedModAuthors.set(mod_authors)
-    expectedMinecraftVersion.set(mc1_20_1_minecraft_version)
-    expectedLoaderVersion.set(mc1_20_1_fabric_loader_version)
-    expectedFabricApiVersion.set(mc1_20_1_fabric_api_version)
-    expectedJavaVersion.set(17)
+    expectedMinecraftVersion.set(mc1_21_1_minecraft_version)
+    expectedLoaderVersion.set(mc1_21_1_fabric_loader_version)
+    expectedFabricApiVersion.set(mc1_21_1_fabric_api_version)
+    expectedJavaVersion.set(21)
     expectedMainEntrypoint.set('datura.areamusic.fabric.AreaMusicFabric')
     expectedClientEntrypoint.set('datura.areamusic.fabric.client.FabricClientAreaMusic')
     expectedImplementationTitle.set(rootProject.name)
-    expectedPackFormat.set(15)
-    expectedProjectClassMajor.set(61)
+    expectedPackFormat.set(34)
+    expectedProjectClassMajor.set(65)
     requiredProviderEntries.set(bundledAudioProviderEntries)
     requiredResourceEntries.set([
             'META-INF/MANIFEST.MF',
@@ -217,8 +237,9 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyFabricProd
 
     dependsOn remapJarTask
     dependsOn syncEmbeddedCodecs
+    dependsOn compileCoreMainJava21
     dependsOn ':core:classes', ':core:testClasses'
-    dependsOn ':platforms:mc1_20_1:common:classes', ':platforms:mc1_20_1:common:testClasses'
+    dependsOn ':platforms:mc1_21_1:common:classes', ':platforms:mc1_21_1:common:testClasses'
     dependsOn tasks.named('classes'), tasks.named('testClasses')
 }
 
@@ -228,8 +249,26 @@ tasks.named('check') {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    options.release = 21
 }
 
 tasks.named('test', Test).configure {
     useJUnitPlatform()
+    inputs.files(dedicatedServerProductionRoots)
+            .withPropertyName('dedicatedServerProductionClassRoots')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    dependsOn compileCoreMainJava21
+    dependsOn ':platforms:mc1_21_1:common:classes'
+    dependsOn tasks.named('classes')
+
+    def productionRootsArgumentProvider = objects.newInstance(
+            ProductionRootsJvmArgumentProvider
+    )
+    productionRootsArgumentProvider.propertyName.set(
+            'areamusic.fabric.dedicatedServerProductionRoots'
+    )
+    productionRootsArgumentProvider.productionRoots.from(
+            dedicatedServerProductionRoots
+    )
+    jvmArgumentProviders.add(productionRootsArgumentProvider)
 }

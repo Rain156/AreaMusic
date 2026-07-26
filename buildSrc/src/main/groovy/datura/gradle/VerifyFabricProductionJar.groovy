@@ -43,6 +43,18 @@ abstract class VerifyFabricProductionJar extends DefaultTask {
 
     @InputFiles
     @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getCoreTestOutputRoots()
+
+    @InputFiles
+    @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getCommonTestOutputRoots()
+
+    @InputFiles
+    @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getFabricTestOutputRoots()
+
+    @InputFiles
+    @PathSensitive(PathSensitivity.RELATIVE)
     abstract ConfigurableFileCollection getServiceSourceFiles()
 
     @Input
@@ -74,6 +86,9 @@ abstract class VerifyFabricProductionJar extends DefaultTask {
 
     @Input
     abstract Property<String> getExpectedFabricApiVersion()
+
+    @Input
+    abstract Property<Integer> getExpectedJavaVersion()
 
     @Input
     abstract Property<String> getExpectedMainEntrypoint()
@@ -234,7 +249,7 @@ abstract class VerifyFabricProductionJar extends DefaultTask {
                     }
                     [
                             minecraft   : expectedMinecraftVersion.get(),
-                            java        : '>=17',
+                            java        : ">=${expectedJavaVersion.get()}",
                             'fabric-api': expectedFabricApiConstraint
                     ].each { dependency, expectedConstraint ->
                         if (depends.get(dependency) != expectedConstraint) {
@@ -312,6 +327,12 @@ abstract class VerifyFabricProductionJar extends DefaultTask {
                         expectedModVersion.get(),
                         errors
                 )
+                VerifyProductionJar.requireAttribute(
+                        attributes,
+                        'Fabric-Minecraft-Version',
+                        expectedMinecraftVersion.get(),
+                        errors
+                )
                 if (attributes.getValue('Implementation-Timestamp') != null) {
                     errors << 'manifest must not contain wall-clock Implementation-Timestamp'
                 }
@@ -362,6 +383,7 @@ abstract class VerifyFabricProductionJar extends DefaultTask {
             }
             Set<String> forbiddenPlatformClasses = new TreeSet<>(actualClassEntries.findAll {
                 it.startsWith('net/fabricmc/loader/') ||
+                        it.startsWith('net/fabricmc/fabric/') ||
                         it.startsWith('net/minecraftforge/') ||
                         it.startsWith('net/neoforged/') ||
                         it.startsWith('dev/architectury/')
@@ -375,11 +397,14 @@ abstract class VerifyFabricProductionJar extends DefaultTask {
             if (testOutputEntries.isEmpty()) {
                 errors << 'no compiled test outputs/resources were found; leakage detection would be vacuous'
             }
-            Set<String> leakedTestOutputs = VerifyProductionJar.intersection(
-                    testOutputEntries, archiveEntryNames
-            )
-            if (!leakedTestOutputs.isEmpty()) {
-                errors << "test outputs/resources leaked into the production JAR: ${leakedTestOutputs}"
+            [
+                    core  : coreTestOutputRoots,
+                    common: commonTestOutputRoots,
+                    fabric: fabricTestOutputRoots
+            ].each { category, roots ->
+                if (VerifyProductionJar.relativeFileNames(roots.files, false).isEmpty()) {
+                    errors << "no ${category} compiled test outputs/resources were found; leakage detection would be vacuous"
+                }
             }
             Set<String> coreClassEntries = VerifyProductionJar.relativeFileNames(
                     coreMainClassRoots.files, true
@@ -433,6 +458,8 @@ abstract class VerifyFabricProductionJar extends DefaultTask {
             expectedClassEntries.addAll(commonClassEntries)
             expectedClassEntries.addAll(fabricClassEntries)
             expectedClassEntries.addAll(codecClassEntries)
+            Set<String> expectedProductionEntries = new TreeSet<>(expectedClassEntries)
+            expectedProductionEntries.addAll(expectedResourceEntries)
 
             Set<String> missingClassEntries = new TreeSet<>(expectedClassEntries)
             missingClassEntries.removeAll(actualClassEntries)
@@ -448,6 +475,14 @@ abstract class VerifyFabricProductionJar extends DefaultTask {
             projectClassEntries.addAll(coreClassEntries)
             projectClassEntries.addAll(commonClassEntries)
             projectClassEntries.addAll(fabricClassEntries)
+            Set<String> exclusivelyTestOutputEntries = new TreeSet<>(testOutputEntries)
+            exclusivelyTestOutputEntries.removeAll(expectedProductionEntries)
+            Set<String> leakedTestOutputs = VerifyProductionJar.intersection(
+                    exclusivelyTestOutputEntries, archiveEntryNames
+            )
+            if (!leakedTestOutputs.isEmpty()) {
+                errors << "test outputs/resources leaked into the production JAR: ${leakedTestOutputs}"
+            }
             projectClassEntries.each { entryName ->
                 byte[] classBytes = VerifyProductionJar.readEntry(zip, entryName)
                 if (classBytes != null) {
