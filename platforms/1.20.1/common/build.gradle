@@ -14,7 +14,7 @@ java {
 }
 
 legacyForge {
-    mcpVersion = minecraft_version
+    mcpVersion = mc1_20_1_minecraft_version
     addModdingDependenciesTo sourceSets.test
 }
 

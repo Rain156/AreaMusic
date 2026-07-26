@@ -22,9 +22,12 @@ include ':core'
 include ':platforms:mc1_20_1:common'
 include ':platforms:mc1_20_1:fabric'
 include ':platforms:mc1_20_1:forge'
+include ':platforms:mc1_21_1:common'
 
 project(':platforms').projectDir = file('platforms')
 project(':platforms:mc1_20_1').projectDir = file('platforms/1.20.1')
 project(':platforms:mc1_20_1:common').projectDir = file('platforms/1.20.1/common')
 project(':platforms:mc1_20_1:fabric').projectDir = file('platforms/1.20.1/fabric')
 project(':platforms:mc1_20_1:forge').projectDir = file('platforms/1.20.1/forge')
+project(':platforms:mc1_21_1').projectDir = file('platforms/1.21.1')
+project(':platforms:mc1_21_1:common').projectDir = file('platforms/1.21.1/common')

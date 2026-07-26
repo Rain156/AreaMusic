@@ -10,7 +10,7 @@ group = rootProject.group
 version = rootProject.version
 
 base {
-    archivesName = "${mod_id}-forge-${minecraft_version}"
+    archivesName = "${mod_id}-forge-${mc1_20_1_minecraft_version}"
 }
 
 java {
@@ -27,7 +27,7 @@ configurations {
 }
 
 legacyForge {
-    version = "${minecraft_version}-${forge_version}"
+    version = "${mc1_20_1_minecraft_version}-${mc1_20_1_forge_version}"
     addModdingDependenciesTo sourceSets.test
 
     runs {
@@ -135,11 +135,11 @@ sourceSets.main.output.dir([builtBy: syncEmbeddedCodecs], embeddedCodecsDir)
 
 tasks.named('processResources', ProcessResources).configure {
     def replaceProperties = [
-            minecraft_version      : minecraft_version,
-            minecraft_version_range: minecraft_version_range,
-            forge_version          : forge_version,
-            forge_version_range    : forge_version_range,
-            loader_version_range   : loader_version_range,
+            mc1_20_1_minecraft_version      : mc1_20_1_minecraft_version,
+            mc1_20_1_minecraft_version_range: mc1_20_1_minecraft_version_range,
+            mc1_20_1_forge_version          : mc1_20_1_forge_version,
+            mc1_20_1_forge_version_range    : mc1_20_1_forge_version_range,
+            mc1_20_1_loader_version_range   : mc1_20_1_loader_version_range,
             mod_id                 : mod_id,
             mod_name               : mod_name,
             mod_license            : mod_license,
@@ -232,7 +232,7 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
             sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')
     )
 
-    expectedFileName.set("${mod_id}-forge-${minecraft_version}-${mod_version}.jar")
+    expectedFileName.set("${mod_id}-forge-${mc1_20_1_minecraft_version}-${mod_version}.jar")
     expectedModId.set(mod_id)
     expectedModVersion.set(mod_version)
     expectedImplementationTitle.set(rootProject.name)

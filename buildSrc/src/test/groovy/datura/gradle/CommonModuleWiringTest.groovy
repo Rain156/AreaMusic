@@ -50,11 +50,11 @@ class CommonModuleWiringTest {
         )
 
         assertTrue(commonBuild.contains("id 'net.neoforged.moddev.legacyforge' version '2.0.142'"))
-        assertTrue(commonBuild.contains('mcpVersion = minecraft_version'))
+        assertTrue(commonBuild.contains('mcpVersion = mc1_20_1_minecraft_version'))
         assertTrue(commonBuild.contains('addModdingDependenciesTo sourceSets.test'))
         assertTrue(commonBuild.contains("implementation(project(':core'))"))
         assertTrue(commonBuild.contains('transitive = false'))
-        assertFalse(commonBuild.contains('version = "${minecraft_version}-${forge_version}"'))
+        assertFalse(commonBuild.contains('version = "${mc1_20_1_minecraft_version}-${mc1_20_1_forge_version}"'))
         assertFalse(commonBuild.contains("implementation 'net.minecraftforge"))
         assertFalse(commonBuild.contains('net.neoforged:neoforge'))
         assertFalse(commonBuild.contains("id 'fabric"))

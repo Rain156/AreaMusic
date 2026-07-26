@@ -39,14 +39,14 @@ class FabricModuleWiringTest {
         String fabricBuild = Files.readString(fabricBuildFile)
 
         assertTrue(settings.contains("url = 'https://maven.fabricmc.net/'"))
-        assertTrue(properties.contains('fabric_loader_version=0.19.3'))
-        assertTrue(properties.contains('fabric_api_version=0.92.11+1.20.1'))
+        assertTrue(properties.contains('mc1_20_1_fabric_loader_version=0.19.3'))
+        assertTrue(properties.contains('mc1_20_1_fabric_api_version=0.92.11+1.20.1'))
         assertTrue(fabricBuild.contains("id 'fabric-loom' version '1.17.17'"))
         assertTrue(fabricBuild.contains('toolchain.languageVersion = JavaLanguageVersion.of(17)'))
-        assertTrue(fabricBuild.contains('minecraft "com.mojang:minecraft:${minecraft_version}"'))
+        assertTrue(fabricBuild.contains('minecraft "com.mojang:minecraft:${mc1_20_1_minecraft_version}"'))
         assertTrue(fabricBuild.contains('mappings loom.officialMojangMappings()'))
-        assertTrue(fabricBuild.contains('modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"'))
-        assertTrue(fabricBuild.contains('modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"'))
+        assertTrue(fabricBuild.contains('modImplementation "net.fabricmc:fabric-loader:${mc1_20_1_fabric_loader_version}"'))
+        assertTrue(fabricBuild.contains('modImplementation "net.fabricmc.fabric-api:fabric-api:${mc1_20_1_fabric_api_version}"'))
         assertTrue(fabricBuild.contains("implementation(project(':core'))"))
         assertTrue(fabricBuild.contains("implementation(project(':platforms:mc1_20_1:common'))"))
         assertTrue(fabricBuild.contains('transitive = false'))
@@ -142,10 +142,10 @@ class FabricModuleWiringTest {
         )
         assertEquals(
                 [
-                        fabricloader: '>=${fabric_loader_version}',
-                        minecraft   : '${minecraft_version}',
+                        fabricloader: '>=${mc1_20_1_fabric_loader_version}',
+                        minecraft   : '${mc1_20_1_minecraft_version}',
                         java        : '>=17',
-                        'fabric-api': '>=${fabric_api_version}'
+                        'fabric-api': '>=${mc1_20_1_fabric_api_version}'
                 ],
                 metadata.depends
         )
@@ -157,9 +157,9 @@ class FabricModuleWiringTest {
         assertTrue(fabricBuild.contains("filesMatching('fabric.mod.json')"))
         assertTrue(fabricBuild.contains('inputs.properties replaceProperties'))
         for (String propertyName : [
-                'minecraft_version',
-                'fabric_loader_version',
-                'fabric_api_version',
+                'mc1_20_1_minecraft_version',
+                'mc1_20_1_fabric_loader_version',
+                'mc1_20_1_fabric_api_version',
                 'mod_id',
                 'mod_name',
                 'mod_license',
@@ -201,7 +201,7 @@ class FabricModuleWiringTest {
                 'testOutputRoots.from(coreTestOutput, commonTestOutput, fabricTestOutput)'
         ))
         assertTrue(fabricBuild.contains('expectedProjectClassMajor.set(61)'))
-        assertTrue(fabricBuild.contains('expectedFabricApiVersion.set(fabric_api_version)'))
+        assertTrue(fabricBuild.contains('expectedFabricApiVersion.set(mc1_20_1_fabric_api_version)'))
         assertTrue(fabricBuild.contains('codecDirectory.set(embeddedCodecsDir)'))
         assertTrue(fabricBuild.contains(
                 "sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.AudioFileReader')"
@@ -210,7 +210,7 @@ class FabricModuleWiringTest {
                 "sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')"
         ))
         assertTrue(fabricBuild.contains(
-                'expectedFileName.set("${mod_id}-fabric-${minecraft_version}-${mod_version}.jar")'
+                'expectedFileName.set("${mod_id}-fabric-${mc1_20_1_minecraft_version}-${mod_version}.jar")'
         ))
         assertTrue(fabricBuild.contains("expectedMainEntrypoint.set('datura.areamusic.fabric.AreaMusicFabric')"))
         assertTrue(fabricBuild.contains(

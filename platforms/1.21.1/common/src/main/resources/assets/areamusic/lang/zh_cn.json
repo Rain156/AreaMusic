@@ -1,0 +1,20 @@
+{
+  "commands.areamusic.not_ready": "AreaMusic 尚未准备完成。",
+  "commands.areamusic.busy": "AreaMusic 正在更新，请等待当前操作完成后重试。",
+  "commands.areamusic.reload.started": "已开始重载 AreaMusic。",
+  "commands.areamusic.reload.success": "AreaMusic 重载完成：已索引 %s 个音频，加载 %s 个区域。",
+  "commands.areamusic.reload.failed": "AreaMusic 重载失败：%s",
+  "commands.areamusic.create.out_of_bounds": "一个或两个位置超出了当前维度的可建造范围。",
+  "commands.areamusic.create.unknown_music": "未找到 MusicID：%s",
+  "commands.areamusic.create.exists": "区域 ID 已存在：%s",
+  "commands.areamusic.create.invalid": "区域参数无效：%s",
+  "commands.areamusic.create.started": "正在创建音乐区域 %s……",
+  "commands.areamusic.create.success": "已创建音乐区域 %s。",
+  "commands.areamusic.create.failed": "创建音乐区域 %s 失败：%s",
+  "message.areamusic.missing_file": "未找到 MusicID 对应的本地音频文件：%s",
+  "message.areamusic.decode_failed": "无法解码 MusicID 对应的音频：%s",
+  "message.areamusic.device_failed": "无法打开音频输出设备。",
+  "message.areamusic.scan_failed": "无法重载本地音乐文件夹，仍使用上次成功加载的索引。",
+  "message.areamusic.thread_failed": "音频播放线程意外中断。",
+  "options.areamusic.volume": "AreaMusic 音量"
+}

@@ -27,7 +27,7 @@ class ForgeAuditWiringTest {
 
         assertTrue(buildScript.contains("def reobfJarTask = tasks.named('reobfJar', Jar)"))
         assertTrue(buildScript.contains('productionJar.set(reobfJarTask.flatMap { it.archiveFile })'))
-        assertFalse(buildScript.contains('layout.buildDirectory.file("libs/${mod_id}-forge-${minecraft_version}-${mod_version}.jar")'))
+        assertFalse(buildScript.contains('layout.buildDirectory.file("libs/${mod_id}-forge-${mc1_20_1_minecraft_version}-${mod_version}.jar")'))
     }
 
     @Test

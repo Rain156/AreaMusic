@@ -11,7 +11,7 @@ group = rootProject.group
 version = rootProject.version
 
 base {
-    archivesName = "${mod_id}-fabric-${minecraft_version}"
+    archivesName = "${mod_id}-fabric-${mc1_20_1_minecraft_version}"
 }
 
 java {
@@ -76,10 +76,10 @@ repositories {
 }
 
 dependencies {
-    minecraft "com.mojang:minecraft:${minecraft_version}"
+    minecraft "com.mojang:minecraft:${mc1_20_1_minecraft_version}"
     mappings loom.officialMojangMappings()
-    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+    modImplementation "net.fabricmc:fabric-loader:${mc1_20_1_fabric_loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${mc1_20_1_fabric_api_version}"
 
     implementation(project(':core')) {
         transitive = false
@@ -122,9 +122,9 @@ sourceSets.main.output.dir([builtBy: syncEmbeddedCodecs], embeddedCodecsDir)
 
 tasks.named('processResources', ProcessResources).configure {
     def replaceProperties = [
-            minecraft_version: minecraft_version,
-            fabric_loader_version: fabric_loader_version,
-            fabric_api_version: fabric_api_version,
+            mc1_20_1_minecraft_version: mc1_20_1_minecraft_version,
+            mc1_20_1_fabric_loader_version: mc1_20_1_fabric_loader_version,
+            mc1_20_1_fabric_api_version: mc1_20_1_fabric_api_version,
             mod_id: mod_id,
             mod_name: mod_name,
             mod_license: mod_license,
@@ -180,16 +180,16 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyFabricProd
             sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')
     )
 
-    expectedFileName.set("${mod_id}-fabric-${minecraft_version}-${mod_version}.jar")
+    expectedFileName.set("${mod_id}-fabric-${mc1_20_1_minecraft_version}-${mod_version}.jar")
     expectedModId.set(mod_id)
     expectedModVersion.set(mod_version)
     expectedModName.set(mod_name)
     expectedModDescription.set(mod_description)
     expectedModLicense.set(mod_license)
     expectedModAuthors.set(mod_authors)
-    expectedMinecraftVersion.set(minecraft_version)
-    expectedLoaderVersion.set(fabric_loader_version)
-    expectedFabricApiVersion.set(fabric_api_version)
+    expectedMinecraftVersion.set(mc1_20_1_minecraft_version)
+    expectedLoaderVersion.set(mc1_20_1_fabric_loader_version)
+    expectedFabricApiVersion.set(mc1_20_1_fabric_api_version)
     expectedMainEntrypoint.set('datura.areamusic.fabric.AreaMusicFabric')
     expectedClientEntrypoint.set('datura.areamusic.fabric.client.FabricClientAreaMusic')
     expectedImplementationTitle.set(rootProject.name)

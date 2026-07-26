@@ -14,6 +14,7 @@ import java.util.zip.ZipOutputStream
 
 import static org.junit.jupiter.api.Assertions.assertThrows
 import static org.junit.jupiter.api.Assertions.assertTrue
+import static org.junit.jupiter.api.Assertions.fail
 
 class VerifyArchiveEntriesAbsentTest {
     private static final String FORBIDDEN_ENTRY = 'META-INF/services/javax.sound.sampled.spi.AudioFileReader'
@@ -39,6 +40,21 @@ class VerifyArchiveEntriesAbsentTest {
         task.verifyArchive()
     }
 
+    @Test
+    void rejectsAnArchiveEntryOwnedByAForbiddenContentRoot() {
+        Path forbiddenRoot = temporaryDirectory.resolve('test-classes')
+        Path forbiddenClass = forbiddenRoot.resolve('example/AreaMusicServerTest.class')
+        Files.createDirectories(forbiddenClass.parent)
+        Files.writeString(forbiddenClass, 'test output')
+        Path archive = writeArchive('test-output.jar', ['example/AreaMusicServerTest.class'])
+        def task = newTask(archive)
+        requireForbiddenContentRoots(task).from(forbiddenRoot.toFile())
+
+        GradleException failure = assertThrows(GradleException, task::verifyArchive)
+
+        assertTrue(failure.message.contains('example/AreaMusicServerTest.class'))
+    }
+
     private DefaultTask newTask(Path archive) {
         Class<? extends DefaultTask> taskType
         try {
@@ -53,6 +69,14 @@ class VerifyArchiveEntriesAbsentTest {
         task.archiveFile.set(archive.toFile())
         task.forbiddenEntries.set([FORBIDDEN_ENTRY])
         return task
+    }
+
+    private static Object requireForbiddenContentRoots(DefaultTask task) {
+        def property = task.metaClass.hasProperty(task, 'forbiddenContentRoots')
+        if (property == null) {
+            fail('VerifyArchiveEntriesAbsent must expose forbiddenContentRoots')
+        }
+        return task.forbiddenContentRoots
     }
 
     private Path writeArchive(String fileName, List<String> entries) {

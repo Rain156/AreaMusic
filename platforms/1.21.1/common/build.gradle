@@ -1,0 +1,100 @@
+import datura.gradle.VerifyClassBoundaries
+import datura.gradle.VerifyExactArchiveContents
+import datura.gradle.VerifySourceBoundaries
+
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.142'
+}
+
+group = rootProject.group
+version = rootProject.version
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+neoForge {
+    neoFormVersion = mc1_21_1_neoform_version
+    addModdingDependenciesTo sourceSets.test
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation(project(':core')) {
+        transitive = false
+    }
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+}
+
+def forbiddenLoaderImports = [
+        'net.minecraftforge',
+        'net.neoforged',
+        'net.fabricmc',
+        'org.quiltmc',
+        'dev.architectury',
+        'architectury'
+]
+def forbiddenLoaderInternalNames = [
+        'net/minecraftforge',
+        'net/neoforged',
+        'net/fabricmc',
+        'org/quiltmc',
+        'dev/architectury',
+        'architectury'
+]
+
+def verifySourceBoundaries = tasks.register('verifySourceBoundaries', VerifySourceBoundaries) {
+    sourceFiles.from(sourceSets.main.allJava)
+    sourceRoot.set(layout.projectDirectory.dir('src/main/java'))
+    boundaryName.set('1.21.1 common')
+    forbiddenImportPrefixes.set(forbiddenLoaderImports)
+    sourceLanguageVersion.set(java.toolchain.languageVersion.map { it.asInt() })
+}
+
+def verifyClassBoundaries = tasks.register('verifyClassBoundaries', VerifyClassBoundaries) {
+    productionSourceFiles.from(sourceSets.main.allJava)
+    testSourceFiles.from(sourceSets.test.allJava)
+    productionClassRoots.from(sourceSets.main.output.classesDirs)
+    testClassRoots.from(sourceSets.test.output.classesDirs)
+    separatedMode.set(true)
+    boundaryName.set('1.21.1 common')
+    forbiddenInternalNamePrefixes.set(forbiddenLoaderInternalNames)
+    expectedClassMajor.set(65)
+    dependsOn tasks.named('classes'), tasks.named('testClasses')
+}
+
+def expectedCommonResourceEntries = [
+        'pack.mcmeta',
+        'assets/areamusic/lang/en_us.json',
+        'assets/areamusic/lang/zh_cn.json'
+]
+
+def verifyExactArchiveContents = tasks.register('verifyExactArchiveContents', VerifyExactArchiveContents) {
+    archiveFile.set(tasks.named('jar', Jar).flatMap { it.archiveFile })
+    productionClassRoots.from(sourceSets.main.output.classesDirs)
+    productionResourceRoot.set(sourceSets.main.output.resourcesDir)
+    testOutputRoots.from(sourceSets.test.output)
+    expectedProductionResourceEntries.set(expectedCommonResourceEntries)
+    generatedArchiveEntries.set(['META-INF/MANIFEST.MF'])
+    dependsOn tasks.named('jar'), tasks.named('testClasses')
+}
+
+tasks.named('check') {
+    dependsOn verifySourceBoundaries, verifyClassBoundaries, verifyExactArchiveContents
+}
