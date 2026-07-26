@@ -10,6 +10,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue
 
 class CommonModuleWiringTest {
     @Test
+    void commonOwnsTheSharedLifecycleServicesAndTheirTests() {
+        Path root = findRepositoryRoot()
+        List<String> sharedPaths = [
+                'src/main/java/datura/areamusic/client/ClientAreaMusic.java',
+                'src/main/java/datura/areamusic/server/AreaMusicServer.java',
+                'src/test/java/datura/areamusic/client/ClientAreaMusicTest.java',
+                'src/test/java/datura/areamusic/server/AreaMusicServerTest.java'
+        ]
+        Path common = root.resolve('platforms/1.20.1/common')
+        Path forge = root.resolve('platforms/1.20.1/forge')
+
+        sharedPaths.each { relative ->
+            assertTrue(Files.isRegularFile(common.resolve(relative)),
+                    "common must own ${relative}")
+            assertFalse(Files.exists(forge.resolve(relative)),
+                    "Forge must not retain ${relative}")
+        }
+    }
+
+    @Test
     void settingsAndRootLifecycleTasksIncludeTheCommonModule() {
         Path root = findRepositoryRoot()
         String settings = Files.readString(root.resolve('settings.gradle'))

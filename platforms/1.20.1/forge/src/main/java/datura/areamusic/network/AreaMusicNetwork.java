@@ -12,11 +12,12 @@ import net.minecraftforge.network.simple.SimpleChannel;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 public final class AreaMusicNetwork {
     private static final String PROTOCOL_VERSION = "3";
-    private static final ClientHandler NO_OP_CLIENT_HANDLER = new ClientHandler() {
+    private static final ClientPacketHandler NO_OP_CLIENT_HANDLER = new ClientPacketHandler() {
         @Override
         public void onPlayback(long revision, PlaybackState state) {
         }
@@ -27,7 +28,8 @@ public final class AreaMusicNetwork {
     };
 
     private static SimpleChannel channel;
-    private static volatile ClientHandler clientHandler = NO_OP_CLIENT_HANDLER;
+    private static final AtomicReference<ClientPacketHandler> CLIENT_HANDLER =
+            new AtomicReference<>(NO_OP_CLIENT_HANDLER);
 
     private AreaMusicNetwork() {
     }
@@ -62,12 +64,15 @@ public final class AreaMusicNetwork {
         );
     }
 
-    public static void setClientHandler(ClientHandler handler) {
-        clientHandler = Objects.requireNonNull(handler, "handler");
+    public static void setClientHandler(ClientPacketHandler handler) {
+        CLIENT_HANDLER.set(Objects.requireNonNull(handler, "handler"));
     }
 
-    public static void clearClientHandler() {
-        clientHandler = NO_OP_CLIENT_HANDLER;
+    public static void clearClientHandler(ClientPacketHandler expected) {
+        CLIENT_HANDLER.compareAndSet(
+                Objects.requireNonNull(expected, "expected"),
+                NO_OP_CLIENT_HANDLER
+        );
     }
 
     public static void sendPlayback(ServerPlayer player, long revision, PlaybackState state) {
@@ -85,11 +90,11 @@ public final class AreaMusicNetwork {
     }
 
     static void handleClientPlayback(ClientboundPlaybackState message) {
-        clientHandler.onPlayback(message.revision(), message.state());
+        CLIENT_HANDLER.get().onPlayback(message.revision(), message.state());
     }
 
     static void handleClientReload(ClientboundReloadMusic message) {
-        clientHandler.onReload(message.revision());
+        CLIENT_HANDLER.get().onReload(message.revision());
     }
 
     private static void handlePlaybackPacket(
@@ -117,9 +122,4 @@ public final class AreaMusicNetwork {
         return channel;
     }
 
-    public interface ClientHandler {
-        void onPlayback(long revision, PlaybackState state);
-
-        void onReload(long revision);
-    }
 }
