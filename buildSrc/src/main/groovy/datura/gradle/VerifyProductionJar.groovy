@@ -50,6 +50,10 @@ abstract class VerifyProductionJar extends DefaultTask {
 
     @InputFiles
     @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getNeoforgeMainClassRoots()
+
+    @InputFiles
+    @PathSensitive(PathSensitivity.RELATIVE)
     abstract ConfigurableFileCollection getTestOutputRoots()
 
     @InputFiles
@@ -73,6 +77,9 @@ abstract class VerifyProductionJar extends DefaultTask {
 
     @Input
     abstract Property<Integer> getExpectedProjectClassMajor()
+
+    @Input
+    abstract Property<String> getMetadataEntry()
 
     @Input
     abstract ListProperty<String> getRequiredResourceEntries()
@@ -110,6 +117,10 @@ abstract class VerifyProductionJar extends DefaultTask {
     @Input
     @Optional
     abstract Property<String> getNamingEvidenceMethodDescriptor()
+
+    VerifyProductionJar() {
+        metadataEntry.convention('META-INF/mods.toml')
+    }
 
     @TaskAction
     void verifyArchive() {
@@ -192,10 +203,18 @@ abstract class VerifyProductionJar extends DefaultTask {
             VerifyProductionJar.requireExactlyOnce('common main class', commonClassEntries, counts, errors)
 
             Set<String> forgeClassEntries = VerifyProductionJar.relativeFileNames(forgeMainClassRoots.files, true)
-            if (forgeClassEntries.isEmpty()) {
+            Set<String> neoforgeClassEntries = VerifyProductionJar.relativeFileNames(
+                    neoforgeMainClassRoots.files,
+                    true
+            )
+            if (forgeClassEntries.isEmpty() && neoforgeClassEntries.isEmpty()) {
                 errors << "no Forge main classes were found in ${forgeMainClassRoots.files}"
             }
             VerifyProductionJar.requireExactlyOnce('Forge main class', forgeClassEntries, counts, errors)
+            VerifyProductionJar.requireExactlyOnce('NeoForge main class', neoforgeClassEntries, counts, errors)
+
+            Set<String> platformClassEntries = new TreeSet<>(forgeClassEntries)
+            platformClassEntries.addAll(neoforgeClassEntries)
 
             Set<String> coreForgeOverlap = VerifyProductionJar.intersection(
                     coreClassEntries, forgeClassEntries
@@ -215,6 +234,18 @@ abstract class VerifyProductionJar extends DefaultTask {
             Set<String> forgeCodecOverlap = VerifyProductionJar.intersection(
                     forgeClassEntries, codecClassEntries
             )
+            Set<String> neoforgeCommonOverlap = VerifyProductionJar.intersection(
+                    neoforgeClassEntries, commonClassEntries
+            )
+            Set<String> neoforgeCoreOverlap = VerifyProductionJar.intersection(
+                    neoforgeClassEntries, coreClassEntries
+            )
+            Set<String> neoforgeCodecOverlap = VerifyProductionJar.intersection(
+                    neoforgeClassEntries, codecClassEntries
+            )
+            Set<String> forgeNeoforgeOverlap = VerifyProductionJar.intersection(
+                    forgeClassEntries, neoforgeClassEntries
+            )
             if (!coreCommonOverlap.isEmpty()) {
                 errors << "core/common class overlap: ${coreCommonOverlap}"
             }
@@ -233,11 +264,23 @@ abstract class VerifyProductionJar extends DefaultTask {
             if (!forgeCodecOverlap.isEmpty()) {
                 errors << "Forge/codec class overlap: ${forgeCodecOverlap}"
             }
+            if (!neoforgeCommonOverlap.isEmpty()) {
+                errors << "NeoForge/common class overlap: ${neoforgeCommonOverlap}"
+            }
+            if (!neoforgeCoreOverlap.isEmpty()) {
+                errors << "NeoForge/core class overlap: ${neoforgeCoreOverlap}"
+            }
+            if (!neoforgeCodecOverlap.isEmpty()) {
+                errors << "NeoForge/codec class overlap: ${neoforgeCodecOverlap}"
+            }
+            if (!forgeNeoforgeOverlap.isEmpty()) {
+                errors << "Forge/NeoForge class overlap: ${forgeNeoforgeOverlap}"
+            }
 
             Set<String> expectedClassEntries = new TreeSet<>()
             expectedClassEntries.addAll(coreClassEntries)
             expectedClassEntries.addAll(commonClassEntries)
-            expectedClassEntries.addAll(forgeClassEntries)
+            expectedClassEntries.addAll(platformClassEntries)
             expectedClassEntries.addAll(codecClassEntries)
             Set<String> missingClassEntries = new TreeSet<>(expectedClassEntries)
             missingClassEntries.removeAll(actualClassEntries)
@@ -329,6 +372,7 @@ abstract class VerifyProductionJar extends DefaultTask {
             projectClassEntries.addAll(coreClassEntries)
             projectClassEntries.addAll(commonClassEntries)
             projectClassEntries.addAll(forgeClassEntries)
+            projectClassEntries.addAll(neoforgeClassEntries)
             projectClassEntries.each { entryName ->
                 byte[] classBytes = VerifyProductionJar.readEntry(zip, entryName)
                 if (classBytes != null) {
@@ -374,17 +418,17 @@ abstract class VerifyProductionJar extends DefaultTask {
                 }
             }
 
-            String modsToml = VerifyProductionJar.readUtf8Entry(zip, 'META-INF/mods.toml')
+            String modsToml = VerifyProductionJar.readUtf8Entry(zip, metadataEntry.get())
             if (modsToml != null) {
                 String quotedModId = java.util.regex.Pattern.quote(expectedModId.get())
                 String quotedVersion = java.util.regex.Pattern.quote(expectedModVersion.get())
                 String modIdPattern = '(?m)^\\s*modId\\s*=\\s*"' + quotedModId + '"\\s*$'
                 if (VerifyProductionJar.matchCount(modsToml, modIdPattern) != 1) {
-                    errors << "mods.toml must contain exactly one primary modId = '${expectedModId.get()}'"
+                    errors << "${metadataEntry.get()} must contain exactly one primary modId = '${expectedModId.get()}'"
                 }
                 String versionPattern = '(?m)^\\s*version\\s*=\\s*"' + quotedVersion + '"\\s*$'
                 if (VerifyProductionJar.matchCount(modsToml, versionPattern) != 1) {
-                    errors << "mods.toml must contain exactly one version = '${expectedModVersion.get()}'"
+                    errors << "${metadataEntry.get()} must contain exactly one version = '${expectedModVersion.get()}'"
                 }
             }
 
@@ -560,7 +604,7 @@ abstract class VerifyProductionJar extends DefaultTask {
                     verifiedForbiddenName
             )
             logger.lifecycle(
-                    'Verified production JAR {}: {} entries, {} staged codec entries ({} codec classes), {} core classes, {} common classes, {} Forge classes, {} production classes',
+                    'Verified production JAR {}: {} entries, {} staged codec entries ({} codec classes), {} core classes, {} common classes, {} Forge classes, {} NeoForge classes, {} production classes',
                     archive.name,
                     entries.size(),
                     codecEntries.size(),
@@ -568,6 +612,7 @@ abstract class VerifyProductionJar extends DefaultTask {
                     coreClassEntries.size(),
                     commonClassEntries.size(),
                     forgeClassEntries.size(),
+                    neoforgeClassEntries.size(),
                     actualClassEntries.size()
             )
         } finally {
