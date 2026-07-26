@@ -38,9 +38,9 @@ class CommonModuleWiringTest {
         assertTrue(settings.contains("include ':platforms:mc1_20_1:common'"))
         assertTrue(settings.contains("project(':platforms:mc1_20_1:common').projectDir = file('platforms/1.20.1/common')"))
         assertTrue(rootBuild.contains("def commonProjectPath = ':platforms:mc1_20_1:common'"))
-        assertTrue(rootBuild.contains("dependsOn ':core:test', \"\${commonProjectPath}:test\", \"\${forgeProjectPath}:test\""))
-        assertTrue(rootBuild.contains("dependsOn ':core:check', \"\${commonProjectPath}:check\", \"\${forgeProjectPath}:check\""))
-        assertTrue(rootBuild.contains("dependsOn ':core:assemble', \"\${commonProjectPath}:assemble\", \"\${forgeProjectPath}:assemble\""))
+        assertTrue(rootBuild.contains("dependsOn ':core:test', \"\${commonProjectPath}:test\", \"\${fabricProjectPath}:test\", \"\${forgeProjectPath}:test\""))
+        assertTrue(rootBuild.contains("dependsOn ':core:check', \"\${commonProjectPath}:check\", \"\${fabricProjectPath}:check\", \"\${forgeProjectPath}:check\""))
+        assertTrue(rootBuild.contains("dependsOn ':core:assemble', \"\${commonProjectPath}:assemble\", \"\${fabricProjectPath}:assemble\", \"\${forgeProjectPath}:assemble\""))
     }
 
     @Test

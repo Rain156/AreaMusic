@@ -13,18 +13,19 @@ allprojects {
 }
 
 def commonProjectPath = ':platforms:mc1_20_1:common'
+def fabricProjectPath = ':platforms:mc1_20_1:fabric'
 def forgeProjectPath = ':platforms:mc1_20_1:forge'
 
 tasks.register('test') {
     group = LifecycleBasePlugin.VERIFICATION_GROUP
     description = 'Runs all unit tests.'
-    dependsOn ':core:test', "${commonProjectPath}:test", "${forgeProjectPath}:test"
+    dependsOn ':core:test', "${commonProjectPath}:test", "${fabricProjectPath}:test", "${forgeProjectPath}:test"
 }
 
 tasks.named('check') {
-    dependsOn ':core:check', "${commonProjectPath}:check", "${forgeProjectPath}:check"
+    dependsOn ':core:check', "${commonProjectPath}:check", "${fabricProjectPath}:check", "${forgeProjectPath}:check"
 }
 
 tasks.named('assemble') {
-    dependsOn ':core:assemble', "${commonProjectPath}:assemble", "${forgeProjectPath}:assemble"
+    dependsOn ':core:assemble', "${commonProjectPath}:assemble", "${fabricProjectPath}:assemble", "${forgeProjectPath}:assemble"
 }

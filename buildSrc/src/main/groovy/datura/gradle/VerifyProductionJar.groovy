@@ -415,7 +415,7 @@ abstract class VerifyProductionJar extends DefaultTask {
         }
     }
 
-    private static Set<String> relativeFileNames(Set<File> roots, boolean classesOnly) {
+    static Set<String> relativeFileNames(Set<File> roots, boolean classesOnly) {
         Set<String> names = new TreeSet<>()
         roots.findAll { it.isDirectory() }.sort { it.absolutePath }.each { root ->
             root.eachFileRecurse(groovy.io.FileType.FILES) { candidate ->
@@ -428,20 +428,20 @@ abstract class VerifyProductionJar extends DefaultTask {
         return names
     }
 
-    private static File findRelativeFile(Set<File> roots, String relativeName) {
+    static File findRelativeFile(Set<File> roots, String relativeName) {
         return roots.findResult { root ->
             File candidate = new File(root, relativeName.replace('/', File.separator))
             candidate.isFile() ? candidate : null
         }
     }
 
-    private static Set<String> intersection(Set<String> left, Set<String> right) {
+    static Set<String> intersection(Set<String> left, Set<String> right) {
         Set<String> result = new TreeSet<>(left)
         result.retainAll(right)
         return result
     }
 
-    private static boolean isIntegralNumberEqualTo(Object actual, int expected) {
+    static boolean isIntegralNumberEqualTo(Object actual, int expected) {
         if (!(actual instanceof Number)) {
             return false
         }
@@ -454,7 +454,7 @@ abstract class VerifyProductionJar extends DefaultTask {
         }
     }
 
-    private static void validateStrictJson(String json) {
+    static void validateStrictJson(String json) {
         JsonFactory jsonFactory = JsonFactory.builder()
                 .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
                 .build()
@@ -473,7 +473,7 @@ abstract class VerifyProductionJar extends DefaultTask {
         }
     }
 
-    private static void requireExactlyOnce(
+    static void requireExactlyOnce(
             String description,
             Set<String> expectedEntries,
             Map<String, Integer> counts,
@@ -487,7 +487,7 @@ abstract class VerifyProductionJar extends DefaultTask {
         }
     }
 
-    private static byte[] readEntry(java.util.zip.ZipFile zip, String entryName) {
+    static byte[] readEntry(java.util.zip.ZipFile zip, String entryName) {
         java.util.zip.ZipEntry entry = zip.getEntry(entryName)
         if (entry == null) {
             return null
@@ -500,12 +500,12 @@ abstract class VerifyProductionJar extends DefaultTask {
         }
     }
 
-    private static String readUtf8Entry(java.util.zip.ZipFile zip, String entryName) {
+    static String readUtf8Entry(java.util.zip.ZipFile zip, String entryName) {
         byte[] bytes = VerifyProductionJar.readEntry(zip, entryName)
         return bytes == null ? null : new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
     }
 
-    private static void requireAttribute(
+    static void requireAttribute(
             java.util.jar.Attributes attributes,
             String name,
             String expected,
