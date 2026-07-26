@@ -45,7 +45,7 @@ class ForgeAuditWiringTest {
         assertTrue(buildScript.contains("sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.AudioFileReader')"))
         assertTrue(buildScript.contains("sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')"))
         assertFalse(buildScript.contains("project(':core').file('src/main/resources/META-INF/services/"))
-        assertTrue(buildScript.contains("reobfuscationEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')"))
+        assertTrue(buildScript.contains("namingEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')"))
     }
 
     @Test

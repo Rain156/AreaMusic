@@ -79,7 +79,7 @@ abstract class VerifyProductionJar extends DefaultTask {
 
     @Input
     @Optional
-    abstract Property<String> getReobfuscationEvidenceEntry()
+    abstract Property<String> getNamingEvidenceEntry()
 
     @Input
     @Optional
@@ -89,10 +89,22 @@ abstract class VerifyProductionJar extends DefaultTask {
     @Optional
     abstract Property<String> getForbiddenMojangName()
 
+    @Input
+    @Optional
+    abstract Property<String> getExpectedMojangName()
+
+    @Input
+    @Optional
+    abstract Property<String> getForbiddenSrgName()
+
     @TaskAction
     void verifyArchive() {
         File archive = productionJar.get().asFile
         List<String> errors = []
+        String verifiedNamingKind = null
+        String verifiedNamingEntry = null
+        String verifiedExpectedName = null
+        String verifiedForbiddenName = null
 
         if (archive.name != expectedFileName.get()) {
             errors << "expected artifact filename '${expectedFileName.get()}', found '${archive.name}'"
@@ -407,27 +419,81 @@ abstract class VerifyProductionJar extends DefaultTask {
                 }
             }
 
+            String evidenceEntry = namingEvidenceEntry.getOrNull()
+            if (evidenceEntry == null) {
+                errors << 'naming evidence entry is not configured'
+            }
             if (verifyReobfuscation.get()) {
-                String evidenceEntry = reobfuscationEvidenceEntry.get()
-                byte[] productionClass = VerifyProductionJar.readEntry(zip, evidenceEntry)
-                File developmentClass = VerifyProductionJar.findRelativeFile(
-                        commonMainClassRoots.files, evidenceEntry
-                )
-                if (productionClass == null) {
-                    errors << "reobfuscation evidence class is missing: ${evidenceEntry}"
-                } else if (developmentClass == null) {
-                    errors << "common development class for reobfuscation comparison is missing: ${evidenceEntry}"
-                } else {
-                    byte[] developmentBytes = java.nio.file.Files.readAllBytes(developmentClass.toPath())
-                    if (java.util.Arrays.equals(productionClass, developmentBytes)) {
-                        errors << "production class '${evidenceEntry}' is byte-identical to the Mojang-named development class"
+                String expectedName = expectedSrgName.getOrNull()
+                String forbiddenName = forbiddenMojangName.getOrNull()
+                if (expectedName == null) {
+                    errors << 'expected SRG symbol is not configured'
+                }
+                if (forbiddenName == null) {
+                    errors << 'forbidden Mojang symbol is not configured'
+                }
+                if (evidenceEntry != null) {
+                    byte[] productionClass = VerifyProductionJar.readEntry(zip, evidenceEntry)
+                    File developmentClass = VerifyProductionJar.findRelativeFile(
+                            commonMainClassRoots.files, evidenceEntry
+                    )
+                    if (productionClass == null) {
+                        errors << "reobfuscation evidence class is missing: ${evidenceEntry}"
+                    } else if (developmentClass == null) {
+                        errors << "common development class for reobfuscation comparison is missing: ${evidenceEntry}"
+                    } else {
+                        byte[] developmentBytes = java.nio.file.Files.readAllBytes(developmentClass.toPath())
+                        if (java.util.Arrays.equals(productionClass, developmentBytes)) {
+                            errors << "production class '${evidenceEntry}' is byte-identical to the Mojang-named development class"
+                        }
+                        String classConstants = new String(
+                                productionClass,
+                                java.nio.charset.StandardCharsets.ISO_8859_1
+                        )
+                        if (expectedName != null && !classConstants.contains(expectedName)) {
+                            errors << "production class '${evidenceEntry}' lacks expected SRG symbol '${expectedName}'"
+                        }
+                        if (forbiddenName != null && classConstants.contains(forbiddenName)) {
+                            errors << "production class '${evidenceEntry}' still contains Mojang symbol '${forbiddenName}'"
+                        }
+                        if (expectedName != null && forbiddenName != null) {
+                            verifiedNamingKind = 'SRG'
+                            verifiedNamingEntry = evidenceEntry
+                            verifiedExpectedName = expectedName
+                            verifiedForbiddenName = forbiddenName
+                        }
                     }
-                    String classConstants = new String(productionClass, java.nio.charset.StandardCharsets.ISO_8859_1)
-                    if (!classConstants.contains(expectedSrgName.get())) {
-                        errors << "production class '${evidenceEntry}' lacks expected SRG symbol '${expectedSrgName.get()}'"
-                    }
-                    if (classConstants.contains(forbiddenMojangName.get())) {
-                        errors << "production class '${evidenceEntry}' still contains Mojang symbol '${forbiddenMojangName.get()}'"
+                }
+            } else {
+                String expectedName = expectedMojangName.getOrNull()
+                String forbiddenName = forbiddenSrgName.getOrNull()
+                if (expectedName == null) {
+                    errors << 'expected Mojang symbol is not configured'
+                }
+                if (forbiddenName == null) {
+                    errors << 'forbidden SRG symbol is not configured'
+                }
+                if (evidenceEntry != null) {
+                    byte[] productionClass = VerifyProductionJar.readEntry(zip, evidenceEntry)
+                    if (productionClass == null) {
+                        errors << "naming evidence class is missing: ${evidenceEntry}"
+                    } else {
+                        String classConstants = new String(
+                                productionClass,
+                                java.nio.charset.StandardCharsets.ISO_8859_1
+                        )
+                        if (expectedName != null && !classConstants.contains(expectedName)) {
+                            errors << "production class '${evidenceEntry}' lacks expected Mojang symbol '${expectedName}'"
+                        }
+                        if (forbiddenName != null && classConstants.contains(forbiddenName)) {
+                            errors << "production class '${evidenceEntry}' still contains SRG symbol '${forbiddenName}'"
+                        }
+                        if (expectedName != null && forbiddenName != null) {
+                            verifiedNamingKind = 'Mojang'
+                            verifiedNamingEntry = evidenceEntry
+                            verifiedExpectedName = expectedName
+                            verifiedForbiddenName = forbiddenName
+                        }
                     }
                 }
             }
@@ -436,6 +502,13 @@ abstract class VerifyProductionJar extends DefaultTask {
                 throw new GradleException("Production JAR audit failed for ${archive}:\n - ${errors.join('\n - ')}")
             }
 
+            logger.lifecycle(
+                    'Verified {} naming evidence in {}: contains {}, excludes {}',
+                    verifiedNamingKind,
+                    verifiedNamingEntry,
+                    verifiedExpectedName,
+                    verifiedForbiddenName
+            )
             logger.lifecycle(
                     'Verified production JAR {}: {} entries, {} staged codec entries ({} codec classes), {} core classes, {} common classes, {} Forge classes, {} production classes',
                     archive.name,

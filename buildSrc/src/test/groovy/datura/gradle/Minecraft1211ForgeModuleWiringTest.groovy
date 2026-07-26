@@ -118,6 +118,11 @@ class Minecraft1211ForgeModuleWiringTest {
         assertTrue(buildScript.contains('expectedPackFormat.set(34)'))
         assertTrue(buildScript.contains('expectedProjectClassMajor.set(65)'))
         assertTrue(buildScript.contains('verifyReobfuscation.set(false)'))
+        assertTrue(buildScript.contains(
+                "namingEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')"
+        ))
+        assertTrue(buildScript.contains("expectedMojangName.set('getX')"))
+        assertTrue(buildScript.contains("forbiddenSrgName.set('m_123341_')"))
         assertTrue(buildScript.contains('dependsOn verifyBundledAudioCodecs, verifyProductionJar'))
         assertFalse(buildScript.contains('reobfJar'))
     }

@@ -118,9 +118,9 @@ class VerifyProductionJarTest {
     }
 
     @Test
-    void acceptsMojangNamedProductionClassesWhenReobfuscationAuditIsDisabled() {
+    void acceptsMojangNamedProductionClassWithExpectedSymbolAndNoSrgSymbol() {
         Fixture fixture = newFixture()
-        fixture.disableReobfuscationAudit()
+        fixture.useMojangNamingMode()
         fixture.replaceArchiveEntry(
                 Fixture.EVIDENCE_ENTRY,
                 Files.readAllBytes(fixture.commonClasses.resolve(Fixture.EVIDENCE_ENTRY))
@@ -130,9 +130,41 @@ class VerifyProductionJarTest {
     }
 
     @Test
+    void rejectsMojangNamedProductionClassMissingExpectedMojangSymbol() {
+        Fixture fixture = newFixture()
+        fixture.useMojangNamingMode()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                classBytes(61, 'production otherSymbol')
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "production class '${Fixture.EVIDENCE_ENTRY}' lacks expected Mojang symbol 'getInstance'"
+        ))
+    }
+
+    @Test
+    void rejectsMojangNamedProductionClassContainingForbiddenSrgSymbol() {
+        Fixture fixture = newFixture()
+        fixture.useMojangNamingMode()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                classBytes(61, 'production getInstance m_91087_')
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "production class '${Fixture.EVIDENCE_ENTRY}' still contains SRG symbol 'm_91087_'"
+        ))
+    }
+
+    @Test
     void disabledReobfuscationAuditStillRejectsUnexpectedProductionEntries() {
         Fixture fixture = newFixture()
-        fixture.disableReobfuscationAudit()
+        fixture.useMojangNamingMode()
         fixture.addArchiveEntry('rogue/Unexpected.class', classBytes(61, 'rogue'))
 
         GradleException failure = assertAuditFails(fixture)
@@ -145,7 +177,7 @@ class VerifyProductionJarTest {
     @Test
     void disabledReobfuscationAuditStillRejectsTheWrongClassFileMajor() {
         Fixture fixture = newFixture()
-        fixture.disableReobfuscationAudit()
+        fixture.useMojangNamingMode()
         fixture.replaceArchiveEntry(
                 'example/Core.class',
                 classBytes(65, 'production core')
@@ -161,7 +193,7 @@ class VerifyProductionJarTest {
     @Test
     void disabledReobfuscationAuditStillRejectsIncorrectMetadata() {
         Fixture fixture = newFixture()
-        fixture.disableReobfuscationAudit()
+        fixture.useMojangNamingMode()
         fixture.replaceArchiveEntry(
                 'META-INF/mods.toml',
                 'modId="areamusic"\nversion="9.9.9"\n'.bytes
@@ -571,9 +603,13 @@ class VerifyProductionJarTest {
             }
             task.requiredResourceEntries.set(REQUIRED_RESOURCES)
             task.requiredProviderEntries.set(['example/Codec.class'])
-            task.reobfuscationEvidenceEntry.set(EVIDENCE_ENTRY)
-            task.expectedSrgName.set('m_91087_')
-            task.forbiddenMojangName.set('getInstance')
+            setTaskProperty(
+                    ['getNamingEvidenceEntry', 'getReobfuscationEvidenceEntry'],
+                    EVIDENCE_ENTRY,
+                    true
+            )
+            setTaskProperty(['getExpectedSrgName'], 'm_91087_', true)
+            setTaskProperty(['getForbiddenMojangName'], 'getInstance', true)
         }
 
         void verify() {
@@ -595,12 +631,30 @@ class VerifyProductionJarTest {
             archiveEntries.removeAll { it.name == name }
         }
 
-        void disableReobfuscationAudit() {
+        void useMojangNamingMode() {
+            setTaskProperty(['getVerifyReobfuscation'], false, true)
+            setTaskProperty(
+                    ['getNamingEvidenceEntry', 'getReobfuscationEvidenceEntry'],
+                    EVIDENCE_ENTRY,
+                    true
+            )
+            setTaskProperty(['getExpectedMojangName'], 'getInstance', false)
+            setTaskProperty(['getForbiddenSrgName'], 'm_91087_', false)
+        }
+
+        private void setTaskProperty(List<String> getterNames, Object value, boolean required) {
             def getter = task.class.methods.find {
-                it.name == 'getVerifyReobfuscation' && it.parameterCount == 0
+                getterNames.contains(it.name) && it.parameterCount == 0
             }
-            assertNotNull(getter, 'VerifyProductionJar must expose verifyReobfuscation')
-            getter.invoke(task).set(false)
+            if (required) {
+                assertNotNull(
+                        getter,
+                        "VerifyProductionJar must expose one of ${getterNames}"
+                )
+            }
+            if (getter != null) {
+                getter.invoke(task).set(value)
+            }
         }
 
         void writeRelative(Path directory, String relativeName, byte[] bytes) {

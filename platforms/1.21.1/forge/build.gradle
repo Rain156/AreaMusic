@@ -227,6 +227,9 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
             'META-INF/services/javax.sound.sampled.spi.FormatConversionProvider'
     ])
     verifyReobfuscation.set(false)
+    namingEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')
+    expectedMojangName.set('getX')
+    forbiddenSrgName.set('m_123341_')
 
     dependsOn productionJarTask
     dependsOn syncEmbeddedCodecs
