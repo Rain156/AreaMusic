@@ -16,6 +16,7 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
@@ -65,18 +66,27 @@ abstract class VerifyProductionJar extends DefaultTask {
     abstract Property<Integer> getExpectedPackFormat()
 
     @Input
+    abstract Property<Integer> getExpectedProjectClassMajor()
+
+    @Input
     abstract ListProperty<String> getRequiredResourceEntries()
 
     @Input
     abstract ListProperty<String> getRequiredProviderEntries()
 
     @Input
+    abstract Property<Boolean> getVerifyReobfuscation()
+
+    @Input
+    @Optional
     abstract Property<String> getReobfuscationEvidenceEntry()
 
     @Input
+    @Optional
     abstract Property<String> getExpectedSrgName()
 
     @Input
+    @Optional
     abstract Property<String> getForbiddenMojangName()
 
     @TaskAction
@@ -225,10 +235,6 @@ abstract class VerifyProductionJar extends DefaultTask {
             if (testOutputEntries.isEmpty()) {
                 errors << "no compiled test outputs/resources were found; leakage detection would be vacuous"
             }
-            Set<String> leakedTestOutputs = testOutputEntries.findAll { counts.containsKey(it) }
-            if (!leakedTestOutputs.isEmpty()) {
-                errors << "test outputs/resources leaked into the production JAR: ${leakedTestOutputs}"
-            }
 
             Set<File> serviceSources = new TreeSet<>({ File left, File right ->
                 left.absolutePath <=> right.absolutePath
@@ -268,6 +274,17 @@ abstract class VerifyProductionJar extends DefaultTask {
                 !it.endsWith('.class')
             })
             expectedResourceEntries.addAll(requiredResources)
+            Set<String> expectedProductionEntries = new TreeSet<>(expectedClassEntries)
+            expectedProductionEntries.addAll(expectedResourceEntries)
+            Set<String> exclusivelyTestOutputEntries = new TreeSet<>(testOutputEntries)
+            exclusivelyTestOutputEntries.removeAll(expectedProductionEntries)
+            Set<String> leakedTestOutputs = VerifyProductionJar.intersection(
+                    new TreeSet<>(counts.keySet()),
+                    exclusivelyTestOutputEntries
+            )
+            if (!leakedTestOutputs.isEmpty()) {
+                errors << "test outputs/resources leaked into the production JAR: ${leakedTestOutputs}"
+            }
             Set<String> actualResourceEntries = new TreeSet<>(entries.findAll {
                 !it.directory && !it.name.endsWith('.class')
             }.collect { it.name })
@@ -280,6 +297,24 @@ abstract class VerifyProductionJar extends DefaultTask {
             }
             if (!unexpectedResourceEntries.isEmpty()) {
                 errors << "unexpected production resources: ${unexpectedResourceEntries}"
+            }
+
+            Set<String> projectClassEntries = new TreeSet<>()
+            projectClassEntries.addAll(coreClassEntries)
+            projectClassEntries.addAll(commonClassEntries)
+            projectClassEntries.addAll(forgeClassEntries)
+            projectClassEntries.each { entryName ->
+                byte[] classBytes = VerifyProductionJar.readEntry(zip, entryName)
+                if (classBytes != null) {
+                    if (classBytes.length < 8) {
+                        errors << "project class '${entryName}' is too short to contain a class-file header"
+                    } else {
+                        int major = ((classBytes[6] & 0xFF) << 8) | (classBytes[7] & 0xFF)
+                        if (major != expectedProjectClassMajor.get()) {
+                            errors << "project class '${entryName}' must use class-file major ${expectedProjectClassMajor.get()}, found ${major}"
+                        }
+                    }
+                }
             }
 
             Set<String> projectTextResources = requiredResources.findAll {
@@ -372,26 +407,28 @@ abstract class VerifyProductionJar extends DefaultTask {
                 }
             }
 
-            String evidenceEntry = reobfuscationEvidenceEntry.get()
-            byte[] productionClass = VerifyProductionJar.readEntry(zip, evidenceEntry)
-            File developmentClass = VerifyProductionJar.findRelativeFile(
-                    commonMainClassRoots.files, evidenceEntry
-            )
-            if (productionClass == null) {
-                errors << "reobfuscation evidence class is missing: ${evidenceEntry}"
-            } else if (developmentClass == null) {
-                errors << "common development class for reobfuscation comparison is missing: ${evidenceEntry}"
-            } else {
-                byte[] developmentBytes = java.nio.file.Files.readAllBytes(developmentClass.toPath())
-                if (java.util.Arrays.equals(productionClass, developmentBytes)) {
-                    errors << "production class '${evidenceEntry}' is byte-identical to the Mojang-named development class"
-                }
-                String classConstants = new String(productionClass, java.nio.charset.StandardCharsets.ISO_8859_1)
-                if (!classConstants.contains(expectedSrgName.get())) {
-                    errors << "production class '${evidenceEntry}' lacks expected SRG symbol '${expectedSrgName.get()}'"
-                }
-                if (classConstants.contains(forbiddenMojangName.get())) {
-                    errors << "production class '${evidenceEntry}' still contains Mojang symbol '${forbiddenMojangName.get()}'"
+            if (verifyReobfuscation.get()) {
+                String evidenceEntry = reobfuscationEvidenceEntry.get()
+                byte[] productionClass = VerifyProductionJar.readEntry(zip, evidenceEntry)
+                File developmentClass = VerifyProductionJar.findRelativeFile(
+                        commonMainClassRoots.files, evidenceEntry
+                )
+                if (productionClass == null) {
+                    errors << "reobfuscation evidence class is missing: ${evidenceEntry}"
+                } else if (developmentClass == null) {
+                    errors << "common development class for reobfuscation comparison is missing: ${evidenceEntry}"
+                } else {
+                    byte[] developmentBytes = java.nio.file.Files.readAllBytes(developmentClass.toPath())
+                    if (java.util.Arrays.equals(productionClass, developmentBytes)) {
+                        errors << "production class '${evidenceEntry}' is byte-identical to the Mojang-named development class"
+                    }
+                    String classConstants = new String(productionClass, java.nio.charset.StandardCharsets.ISO_8859_1)
+                    if (!classConstants.contains(expectedSrgName.get())) {
+                        errors << "production class '${evidenceEntry}' lacks expected SRG symbol '${expectedSrgName.get()}'"
+                    }
+                    if (classConstants.contains(forbiddenMojangName.get())) {
+                        errors << "production class '${evidenceEntry}' still contains Mojang symbol '${forbiddenMojangName.get()}'"
+                    }
                 }
             }
 

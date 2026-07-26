@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 
+import static org.junit.jupiter.api.Assertions.assertNotNull
 import static org.junit.jupiter.api.Assertions.assertThrows
 import static org.junit.jupiter.api.Assertions.assertTrue
 
@@ -24,6 +25,54 @@ class VerifyProductionJarTest {
         Fixture fixture = newFixture()
 
         fixture.verify()
+    }
+
+    @Test
+    void ignoresTestOutputEntriesThatAreExpectedProductionEntries() {
+        Fixture fixture = newFixture()
+        fixture.writeRelative(
+                fixture.testOutputs,
+                'example/Core.class',
+                'test task copy of production core'.bytes
+        )
+
+        fixture.verify()
+    }
+
+    @Test
+    void ignoresCodecClassAlsoPresentUnderTestOutputs() {
+        Fixture fixture = newFixture()
+        fixture.writeRelative(
+                fixture.testOutputs,
+                'example/Codec.class',
+                'test task copy of production codec'.bytes
+        )
+
+        fixture.verify()
+    }
+
+    @Test
+    void ignoresExpectedProductionResourceAlsoPresentUnderTestOutputs() {
+        Fixture fixture = newFixture()
+        fixture.writeRelative(
+                fixture.testOutputs,
+                'pack.mcmeta',
+                'test task copy of production metadata'.bytes
+        )
+
+        fixture.verify()
+    }
+
+    @Test
+    void rejectsAnArchivedEntryExclusiveToTestOutputs() {
+        Fixture fixture = newFixture()
+        fixture.addArchiveEntry('test-only-resource.txt', 'leaked test resource'.bytes)
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                'test outputs/resources leaked into the production JAR: [test-only-resource.txt]'
+        ))
     }
 
     @Test
@@ -51,6 +100,78 @@ class VerifyProductionJarTest {
         GradleException failure = assertAuditFails(fixture)
 
         assertTrue(failure.message.contains("expected artifact filename '${Fixture.EXPECTED_FILE_NAME}'"))
+    }
+
+    @Test
+    void rejectsAProjectClassWithTheWrongClassFileMajor() {
+        Fixture fixture = newFixture()
+        fixture.replaceArchiveEntry(
+                'example/Core.class',
+                classBytes(65, 'production core')
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "project class 'example/Core.class' must use class-file major 61, found 65"
+        ))
+    }
+
+    @Test
+    void acceptsMojangNamedProductionClassesWhenReobfuscationAuditIsDisabled() {
+        Fixture fixture = newFixture()
+        fixture.disableReobfuscationAudit()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                Files.readAllBytes(fixture.commonClasses.resolve(Fixture.EVIDENCE_ENTRY))
+        )
+
+        fixture.verify()
+    }
+
+    @Test
+    void disabledReobfuscationAuditStillRejectsUnexpectedProductionEntries() {
+        Fixture fixture = newFixture()
+        fixture.disableReobfuscationAudit()
+        fixture.addArchiveEntry('rogue/Unexpected.class', classBytes(61, 'rogue'))
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                'unexpected production classes: [rogue/Unexpected.class]'
+        ))
+    }
+
+    @Test
+    void disabledReobfuscationAuditStillRejectsTheWrongClassFileMajor() {
+        Fixture fixture = newFixture()
+        fixture.disableReobfuscationAudit()
+        fixture.replaceArchiveEntry(
+                'example/Core.class',
+                classBytes(65, 'production core')
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "project class 'example/Core.class' must use class-file major 61, found 65"
+        ))
+    }
+
+    @Test
+    void disabledReobfuscationAuditStillRejectsIncorrectMetadata() {
+        Fixture fixture = newFixture()
+        fixture.disableReobfuscationAudit()
+        fixture.replaceArchiveEntry(
+                'META-INF/mods.toml',
+                'modId="areamusic"\nversion="9.9.9"\n'.bytes
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "mods.toml must contain exactly one version = '1.2.3'"
+        ))
     }
 
     @Test
@@ -322,6 +443,22 @@ class VerifyProductionJarTest {
         return assertThrows(GradleException) { fixture.verify() }
     }
 
+    private static byte[] classBytes(int major, String payload) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream()
+        output.write([
+                0xCA,
+                0xFE,
+                0xBA,
+                0xBE,
+                0x00,
+                0x00,
+                (major >>> 8) & 0xFF,
+                major & 0xFF
+        ] as byte[])
+        output.write(payload.getBytes(StandardCharsets.ISO_8859_1))
+        return output.toByteArray()
+    }
+
     private static final class Fixture {
         static final String EXPECTED_FILE_NAME = 'areamusic-forge-1.20.1-1.2.3.jar'
         static final String EVIDENCE_ENTRY = 'example/ForgeEvidence.class'
@@ -360,10 +497,10 @@ class VerifyProductionJarTest {
                 Files.createDirectories(it)
             }
 
-            writeRelative(coreClasses, 'example/Core.class', 'development core'.bytes)
-            writeRelative(commonClasses, 'example/Common.class', 'development common'.bytes)
-            writeRelative(commonClasses, EVIDENCE_ENTRY, 'development getInstance'.bytes)
-            writeRelative(forgeClasses, 'example/Forge.class', 'development forge'.bytes)
+            writeRelative(coreClasses, 'example/Core.class', classBytes(61, 'development core'))
+            writeRelative(commonClasses, 'example/Common.class', classBytes(61, 'development common'))
+            writeRelative(commonClasses, EVIDENCE_ENTRY, classBytes(61, 'development getInstance'))
+            writeRelative(forgeClasses, 'example/Forge.class', classBytes(61, 'development forge'))
             writeRelative(codecFiles, 'example/Codec.class', 'staged codec'.bytes)
             writeRelative(codecFiles, 'META-INF/codec.properties', 'codec metadata'.bytes)
             writeRelative(testOutputs, 'example/TestOnly.class', 'test class'.bytes)
@@ -374,10 +511,10 @@ class VerifyProductionJarTest {
             Files.writeString(audioReaderService, 'example.AudioReader\n', StandardCharsets.UTF_8)
             Files.writeString(conversionService, 'example.FormatConverter\n', StandardCharsets.UTF_8)
 
-            addArchiveEntry('example/Core.class', 'production core'.bytes)
-            addArchiveEntry('example/Common.class', 'production common'.bytes)
-            addArchiveEntry(EVIDENCE_ENTRY, 'production m_91087_'.bytes)
-            addArchiveEntry('example/Forge.class', 'production forge'.bytes)
+            addArchiveEntry('example/Core.class', classBytes(61, 'production core'))
+            addArchiveEntry('example/Common.class', classBytes(61, 'production common'))
+            addArchiveEntry(EVIDENCE_ENTRY, classBytes(61, 'production m_91087_'))
+            addArchiveEntry('example/Forge.class', classBytes(61, 'production forge'))
             addArchiveEntry('example/Codec.class', 'staged codec'.bytes)
             addArchiveEntry('META-INF/codec.properties', 'codec metadata'.bytes)
             addArchiveEntry('META-INF/MANIFEST.MF', manifest().bytes)
@@ -420,6 +557,18 @@ class VerifyProductionJarTest {
             task.expectedModVersion.set('1.2.3')
             task.expectedImplementationTitle.set('AreaMusic')
             task.expectedPackFormat.set(15)
+            def classMajorGetter = task.class.methods.find {
+                it.name == 'getExpectedProjectClassMajor' && it.parameterCount == 0
+            }
+            if (classMajorGetter != null) {
+                classMajorGetter.invoke(task).set(61)
+            }
+            def reobfuscationGetter = task.class.methods.find {
+                it.name == 'getVerifyReobfuscation' && it.parameterCount == 0
+            }
+            if (reobfuscationGetter != null) {
+                reobfuscationGetter.invoke(task).set(true)
+            }
             task.requiredResourceEntries.set(REQUIRED_RESOURCES)
             task.requiredProviderEntries.set(['example/Codec.class'])
             task.reobfuscationEvidenceEntry.set(EVIDENCE_ENTRY)
@@ -444,6 +593,14 @@ class VerifyProductionJarTest {
 
         void removeArchiveEntry(String name) {
             archiveEntries.removeAll { it.name == name }
+        }
+
+        void disableReobfuscationAudit() {
+            def getter = task.class.methods.find {
+                it.name == 'getVerifyReobfuscation' && it.parameterCount == 0
+            }
+            assertNotNull(getter, 'VerifyProductionJar must expose verifyReobfuscation')
+            getter.invoke(task).set(false)
         }
 
         void writeRelative(Path directory, String relativeName, byte[] bytes) {

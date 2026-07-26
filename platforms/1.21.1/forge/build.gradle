@@ -1,20 +1,21 @@
 import datura.gradle.VerifyProductionJar
+import datura.gradle.ProductionRootsJvmArgumentProvider
+import org.gradle.api.tasks.PathSensitivity
 
 plugins {
-    id 'eclipse'
-    id 'idea'
-    id 'net.neoforged.moddev.legacyforge' version '2.0.142'
+    id 'java'
+    id 'net.minecraftforge.gradle' version '7.0.3'
 }
 
 group = rootProject.group
 version = rootProject.version
 
 base {
-    archivesName = "${mod_id}-forge-${mc1_20_1_minecraft_version}"
+    archivesName = "${mod_id}-forge-${mc1_21_1_minecraft_version}"
 }
 
 java {
-    toolchain.languageVersion = JavaLanguageVersion.of(17)
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
 }
 
 configurations {
@@ -26,77 +27,57 @@ configurations {
     compileOnly.extendsFrom embeddedCodecs
 }
 
-legacyForge {
-    version = "${mc1_20_1_minecraft_version}-${mc1_20_1_forge_version}"
-    addModdingDependenciesTo sourceSets.test
-
-    runs {
-        configureEach {
-            gameDirectory = project.file('run')
-            systemProperty 'forge.logging.markers', 'REGISTRIES'
-            systemProperty 'forge.logging.console.level', 'debug'
-        }
-
-        client {
-            client()
-            systemProperty 'forge.enabledGameTestNamespaces', "${mod_id},minecraft"
-        }
-
-        server {
-            server()
-            systemProperty 'forge.enabledGameTestNamespaces', "${mod_id},minecraft"
-            programArgument '--nogui'
-        }
-
-        gameTestServer {
-            type = 'gameTestServer'
-            systemProperty 'forge.enabledGameTestNamespaces', "${mod_id},minecraft"
-        }
-
-        data {
-            data()
-            gameDirectory = project.file('run-data')
-            programArguments = [
-                    '--mod', mod_id,
-                    '--all',
-                    '--output', file('src/generated/resources/').absolutePath,
-                    '--existing', file('src/main/resources/').absolutePath
-            ]
-        }
-    }
-
-    mods {
-        register(mod_id) {
-            sourceSet sourceSets.main
-        }
-    }
-}
-
 def sharedAudioCodecResources = rootProject.layout.projectDirectory.dir('platforms/shared/audio-codecs')
-
-sourceSets.main.resources {
-    srcDir 'src/generated/resources'
-}
 sourceSets.main.resources.srcDir(sharedAudioCodecResources)
 
+evaluationDependsOn(':core')
+evaluationDependsOn(':platforms:mc1_21_1:common')
 def coreSourceSets = project(':core').sourceSets
-def commonSourceSets = project(':platforms:mc1_20_1:common').sourceSets
-def coreMainOutput = coreSourceSets.main.output
+def commonSourceSets = project(':platforms:mc1_21_1:common').sourceSets
+def coreMainJava21ClassesDir = layout.buildDirectory.dir('classes/java/coreMainJava21')
+def compileCoreMainJava21 = tasks.register('compileCoreMainJava21', JavaCompile) {
+    source(coreSourceSets.main.allJava)
+    classpath = coreSourceSets.main.compileClasspath
+    destinationDirectory.set(coreMainJava21ClassesDir)
+    javaCompiler.set(javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    })
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+def coreMainOutput = files(coreMainJava21ClassesDir).builtBy(compileCoreMainJava21)
 def coreTestOutput = coreSourceSets.test.output
 def commonMainOutput = commonSourceSets.main.output
 def commonTestOutput = commonSourceSets.test.output
 def forgeMainOutput = sourceSets.main.output
 def forgeTestOutput = sourceSets.test.output
+def dedicatedServerProductionRoots = files(
+        coreMainOutput,
+        commonMainOutput.classesDirs,
+        forgeMainOutput.classesDirs
+)
+
+minecraft {
+    mappings channel: mc1_21_1_mapping_channel,
+            version: mc1_21_1_mapping_version
+}
 
 repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
     mavenCentral()
 }
 
 dependencies {
+    implementation minecraft.dependency(
+            "net.minecraftforge:forge:${mc1_21_1_minecraft_version}-${mc1_21_1_forge_version}"
+    )
+
     implementation(project(':core')) {
         transitive = false
     }
-    implementation(project(':platforms:mc1_20_1:common')) {
+    implementation(project(':platforms:mc1_21_1:common')) {
         transitive = false
     }
 
@@ -104,7 +85,6 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.ow2.asm:asm:9.7.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    // Unit tests run without Minecraft's runtime libraries, so mirror its JOrbis version here.
     testRuntimeOnly 'org.jcraft:jorbis:0.0.17'
 
     embeddedCodecs 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
@@ -133,19 +113,22 @@ def syncEmbeddedCodecs = tasks.register('syncEmbeddedCodecs', Sync) {
 
 sourceSets.main.output.dir([builtBy: syncEmbeddedCodecs], embeddedCodecsDir)
 
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
 tasks.named('processResources', ProcessResources).configure {
     def replaceProperties = [
-            mc1_20_1_minecraft_version      : mc1_20_1_minecraft_version,
-            mc1_20_1_minecraft_version_range: mc1_20_1_minecraft_version_range,
-            mc1_20_1_forge_version          : mc1_20_1_forge_version,
-            mc1_20_1_forge_version_range    : mc1_20_1_forge_version_range,
-            mc1_20_1_loader_version_range   : mc1_20_1_loader_version_range,
-            mod_id                 : mod_id,
-            mod_name               : mod_name,
-            mod_license            : mod_license,
-            mod_version            : mod_version,
-            mod_authors            : mod_authors,
-            mod_description        : mod_description
+            mc1_21_1_minecraft_version_range: mc1_21_1_minecraft_version_range,
+            mc1_21_1_forge_version_range    : mc1_21_1_forge_version_range,
+            mc1_21_1_loader_version_range   : mc1_21_1_loader_version_range,
+            mod_id                          : mod_id,
+            mod_name                        : mod_name,
+            mod_license                     : mod_license,
+            mod_version                     : mod_version,
+            mod_authors                     : mod_authors,
+            mod_description                 : mod_description
     ]
 
     inputs.properties replaceProperties
@@ -156,7 +139,8 @@ tasks.named('processResources', ProcessResources).configure {
 }
 
 tasks.named('jar', Jar).configure {
-    dependsOn ':core:classes', ':platforms:mc1_20_1:common:classes'
+    dependsOn compileCoreMainJava21
+    dependsOn ':platforms:mc1_21_1:common:classes'
     from coreMainOutput
     from commonMainOutput
 
@@ -170,14 +154,6 @@ tasks.named('jar', Jar).configure {
                 'Implementation-Vendor'     : mod_authors
         ])
     }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-}
-
-tasks.named('test', Test).configure {
-    useJUnitPlatform()
 }
 
 def bundledAudioProviderEntries = [
@@ -216,14 +192,14 @@ def verifyBundledAudioCodecs = tasks.register('verifyBundledAudioCodecs') {
     }
 }
 
-def reobfJarTask = tasks.named('reobfJar', Jar)
+def productionJarTask = tasks.named('jar', Jar)
 def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProductionJar) {
     group = LifecycleBasePlugin.VERIFICATION_GROUP
-    description = 'Audits the final reobfuscated production JAR.'
+    description = 'Audits the final Forge 1.21.1 production JAR.'
 
-    productionJar.set(reobfJarTask.flatMap { it.archiveFile })
+    productionJar.set(productionJarTask.flatMap { it.archiveFile })
     codecDirectory.set(embeddedCodecsDir)
-    coreMainClassRoots.from(coreMainOutput.classesDirs)
+    coreMainClassRoots.from(coreMainOutput)
     commonMainClassRoots.from(commonMainOutput.classesDirs)
     forgeMainClassRoots.from(forgeMainOutput.classesDirs)
     testOutputRoots.from(coreTestOutput, commonTestOutput, forgeTestOutput)
@@ -232,12 +208,12 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
             sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')
     )
 
-    expectedFileName.set("${mod_id}-forge-${mc1_20_1_minecraft_version}-${mod_version}.jar")
+    expectedFileName.set("${mod_id}-forge-${mc1_21_1_minecraft_version}-${mod_version}.jar")
     expectedModId.set(mod_id)
     expectedModVersion.set(mod_version)
     expectedImplementationTitle.set(rootProject.name)
-    expectedPackFormat.set(15)
-    expectedProjectClassMajor.set(61)
+    expectedPackFormat.set(34)
+    expectedProjectClassMajor.set(65)
     requiredProviderEntries.set(bundledAudioProviderEntries)
     requiredResourceEntries.set([
             'META-INF/MANIFEST.MF',
@@ -250,17 +226,35 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
             'META-INF/services/javax.sound.sampled.spi.AudioFileReader',
             'META-INF/services/javax.sound.sampled.spi.FormatConversionProvider'
     ])
-    verifyReobfuscation.set(true)
-    reobfuscationEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')
-    expectedSrgName.set('m_123341_')
-    forbiddenMojangName.set('getX')
+    verifyReobfuscation.set(false)
 
-    dependsOn reobfJarTask
+    dependsOn productionJarTask
     dependsOn syncEmbeddedCodecs
-    dependsOn ':core:classes', ':core:testClasses'
-    dependsOn ':platforms:mc1_20_1:common:classes', ':platforms:mc1_20_1:common:testClasses'
-    dependsOn 'classes', 'testClasses'
-    mustRunAfter reobfJarTask
+    dependsOn compileCoreMainJava21
+    dependsOn ':core:testClasses'
+    dependsOn ':platforms:mc1_21_1:common:classes', ':platforms:mc1_21_1:common:testClasses'
+    dependsOn tasks.named('classes'), tasks.named('testClasses')
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+    inputs.files(dedicatedServerProductionRoots)
+            .withPropertyName('dedicatedServerProductionClassRoots')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    dependsOn compileCoreMainJava21
+    dependsOn ':platforms:mc1_21_1:common:classes'
+    dependsOn tasks.named('classes')
+
+    def productionRootsArgumentProvider = objects.newInstance(
+            ProductionRootsJvmArgumentProvider
+    )
+    productionRootsArgumentProvider.propertyName.set(
+            'areamusic.forge.dedicatedServerProductionRoots'
+    )
+    productionRootsArgumentProvider.productionRoots.from(
+            dedicatedServerProductionRoots
+    )
+    jvmArgumentProviders.add(productionRootsArgumentProvider)
 }
 
 tasks.named('check') {
