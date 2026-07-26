@@ -11,6 +11,7 @@ import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.ConstantDynamic
 import org.objectweb.asm.Handle
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -298,6 +299,109 @@ class VerifyProductionJarTest {
     }
 
     @Test
+    void rejectsForbiddenEntriesEvenWhenTheyAreDeclaredAsExpectedPlatformOutput() {
+        [
+                'org/spockframework/runtime/SpockRuntime.class',
+                'org/gradle/api/Project.class',
+                'org/gradle/testkit/runner/GradleRunner.class',
+                'org/gradle/test/fixtures/ProjectBuilder.class',
+                'example/InjectedTest.class',
+                'net/fabricmc/loader/api/FabricLoader.class',
+                'net/fabricmc/fabric/api/event/Event.class',
+                'datura/areamusic/fabric/FabricAreaMusic.class',
+                'dev/architectury/platform/Platform.class',
+                'com/jcraft/jorbis/Info.class'
+        ].each { entryName ->
+            Fixture fixture = newFixture()
+            fixture.useNeoForgeMode()
+            fixture.addExpectedPlatformClass(
+                    entryName,
+                    classBytes(61, entryName - '.class')
+            )
+
+            GradleException failure = assertAuditFails(fixture)
+
+            assertTrue(failure.message.contains(entryName), failure.message)
+        }
+    }
+
+    @Test
+    void rejectsForgeEntriesFromANeoForgeExpectedSourceRoot() {
+        Fixture fixture = newFixture()
+        fixture.useNeoForgeMode()
+        String entryName = 'net/minecraftforge/fml/ModLoader.class'
+        fixture.addExpectedPlatformClass(entryName, classBytes(61, entryName - '.class'))
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(entryName), failure.message)
+    }
+
+    @Test
+    void rejectsForbiddenReferencesFromAnOtherwiseExpectedProjectClass() {
+        Fixture fixture = newFixture()
+        fixture.useNeoForgeMode()
+        String entryName = 'example/Contaminated.class'
+        fixture.addExpectedPlatformClass(
+                entryName,
+                classWithFieldReference(
+                        61,
+                        'example/Contaminated',
+                        'net/fabricmc/api/Environment'
+                )
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains('net/fabricmc/api/Environment'), failure.message)
+    }
+
+    @Test
+    void permitsTheIntentionalLegacyForgeMinecraftGameTestEntrypoint() {
+        Fixture fixture = newFixture()
+        String entryName = 'datura/areamusic/gametest/AreaMusicGameTests.class'
+        fixture.addExpectedPlatformClass(
+                entryName,
+                classWithFieldReference(
+                        61,
+                        'datura/areamusic/gametest/AreaMusicGameTests',
+                        'net/minecraft/gametest/framework/GameTest'
+                )
+        )
+
+        fixture.verify()
+    }
+
+    @Test
+    void rejectsClientOnlyReachabilityHiddenInRecursiveConstantDynamicArguments() {
+        Fixture fixture = newFixture()
+        fixture.useNeoForgeMode()
+        fixture.replaceExpectedPlatformClass(
+                'datura/areamusic/AreaMusic.class',
+                classWithFieldReference(
+                        61,
+                        'datura/areamusic/AreaMusic',
+                        'datura/areamusic/server/Reachable'
+                )
+        )
+        fixture.addExpectedPlatformClass(
+                'datura/areamusic/server/Reachable.class',
+                classWithRecursiveConstantDynamicReference(
+                        61,
+                        'datura/areamusic/server/Reachable',
+                        'net/minecraft/client/Minecraft'
+                )
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains('net/minecraft/client/Minecraft'), failure.message)
+        assertTrue(failure.message.contains(
+                'datura/areamusic/AreaMusic -> datura/areamusic/server/Reachable'
+        ), failure.message)
+    }
+
+    @Test
     void rejectsAnUnexpectedProductionResource() {
         Fixture fixture = newFixture()
         fixture.addArchiveEntry('rogue/unexpected.txt', 'rogue'.bytes)
@@ -305,6 +409,18 @@ class VerifyProductionJarTest {
         GradleException failure = assertAuditFails(fixture)
 
         assertTrue(failure.message.contains('unexpected production resources: [rogue/unexpected.txt]'))
+    }
+
+    @Test
+    void rejectsNestedJarEntries() {
+        Fixture fixture = newFixture()
+        fixture.addArchiveEntry('META-INF/jars/dependency.jar', 'nested'.bytes)
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                'nested JAR entries are forbidden: [META-INF/jars/dependency.jar]'
+        ))
     }
 
     @Test
@@ -628,17 +744,99 @@ class VerifyProductionJarTest {
     }
 
     private static byte[] classBytes(int major, String payload) {
+        return classBytes(major, 'example/SyntheticClass', payload)
+    }
+
+    private static byte[] classBytes(int major, String internalName, String payload) {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(
                 major,
                 Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
-                'example/SyntheticClass',
+                internalName,
                 null,
                 'java/lang/Object',
                 null
         )
         writer.visitSource(payload, null)
         writeConstructor(writer)
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    private static byte[] classWithFieldReference(
+            int major,
+            String internalName,
+            String referencedInternalName
+    ) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(
+                major,
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
+                internalName,
+                null,
+                'java/lang/Object',
+                null
+        )
+        writer.visitField(
+                Opcodes.ACC_PRIVATE,
+                'reference',
+                "L${referencedInternalName};",
+                null,
+                null
+        ).visitEnd()
+        writeConstructor(writer)
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    private static byte[] classWithRecursiveConstantDynamicReference(
+            int major,
+            String internalName,
+            String referencedInternalName
+    ) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(
+                major,
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
+                internalName,
+                null,
+                'java/lang/Object',
+                null
+        )
+        writeConstructor(writer)
+        Handle bootstrap = new Handle(
+                Opcodes.H_INVOKESTATIC,
+                'example/Bootstrap',
+                'bootstrap',
+                '(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;' +
+                        'Ljava/lang/Class;Ljava/lang/Object;)Ljava/lang/Object;',
+                false
+        )
+        ConstantDynamic inner = new ConstantDynamic(
+                'inner',
+                'Ljava/lang/Object;',
+                bootstrap,
+                Type.getObjectType(referencedInternalName)
+        )
+        ConstantDynamic outer = new ConstantDynamic(
+                'outer',
+                'Ljava/lang/Object;',
+                bootstrap,
+                inner
+        )
+        def method = writer.visitMethod(
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                'reference',
+                '()V',
+                null,
+                null
+        )
+        method.visitCode()
+        method.visitLdcInsn(outer)
+        method.visitInsn(Opcodes.POP)
+        method.visitInsn(Opcodes.RETURN)
+        method.visitMaxs(0, 0)
+        method.visitEnd()
         writer.visitEnd()
         return writer.toByteArray()
     }
@@ -760,11 +958,13 @@ class VerifyProductionJarTest {
         final Path coreClasses
         final Path commonClasses
         final Path forgeClasses
+        final Path neoforgeClasses
         final Path codecFiles
         final Path testOutputs
         final VerifyProductionJar task
         final List<ArchiveEntryData> archiveEntries = []
         File archive
+        boolean neoForgeMode
 
         Fixture(Path root) {
             this.root = root
@@ -772,10 +972,12 @@ class VerifyProductionJarTest {
             coreClasses = root.resolve('core-classes')
             commonClasses = root.resolve('common-classes')
             forgeClasses = root.resolve('forge-classes')
+            neoforgeClasses = root.resolve('neoforge-classes')
             codecFiles = root.resolve('codec-files')
             testOutputs = root.resolve('test-outputs')
             Path serviceSources = root.resolve('service-sources')
-            [projectDirectory, coreClasses, commonClasses, forgeClasses, codecFiles, testOutputs, serviceSources].each {
+            [projectDirectory, coreClasses, commonClasses, forgeClasses, neoforgeClasses,
+             codecFiles, testOutputs, serviceSources].each {
                 Files.createDirectories(it)
             }
 
@@ -839,6 +1041,7 @@ class VerifyProductionJarTest {
             task.coreMainClassRoots.from(coreClasses.toFile())
             task.commonMainClassRoots.from(commonClasses.toFile())
             task.forgeMainClassRoots.from(forgeClasses.toFile())
+            task.neoforgeMainClassRoots.from(neoforgeClasses.toFile())
             task.testOutputRoots.from(testOutputs.toFile())
             task.serviceSourceFiles.from(audioReaderService.toFile(), conversionService.toFile())
             task.expectedFileName.set(EXPECTED_FILE_NAME)
@@ -888,6 +1091,41 @@ class VerifyProductionJarTest {
 
         void removeArchiveEntry(String name) {
             archiveEntries.removeAll { it.name == name }
+        }
+
+        void addExpectedPlatformClass(String entryName, byte[] bytes) {
+            writeRelative(neoForgeMode ? neoforgeClasses : forgeClasses, entryName, bytes)
+            addArchiveEntry(entryName, bytes)
+        }
+
+        void replaceExpectedPlatformClass(String entryName, byte[] bytes) {
+            writeRelative(neoForgeMode ? neoforgeClasses : forgeClasses, entryName, bytes)
+            replaceArchiveEntry(entryName, bytes)
+        }
+
+        void useNeoForgeMode() {
+            neoForgeMode = true
+            Files.delete(forgeClasses.resolve('example/Forge.class'))
+            removeArchiveEntry('example/Forge.class')
+            task.forgeMainClassRoots.setFrom([])
+            task.neoforgeMainClassRoots.setFrom(neoforgeClasses.toFile())
+            useMojangNamingMode()
+            addExpectedPlatformClass(
+                    'example/NeoForge.class',
+                    classBytes(61, 'example/NeoForge', 'development neoforge')
+            )
+            addExpectedPlatformClass(
+                    'datura/areamusic/AreaMusic.class',
+                    classBytes(61, 'datura/areamusic/AreaMusic', 'entrypoint')
+            )
+            addExpectedPlatformClass(
+                    'datura/areamusic/server/NeoForgeAreaMusicServer.class',
+                    classBytes(
+                            61,
+                            'datura/areamusic/server/NeoForgeAreaMusicServer',
+                            'server subscriber'
+                    )
+            )
         }
 
         void useMojangNamingMode() {

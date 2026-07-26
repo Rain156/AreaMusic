@@ -33,7 +33,11 @@ public final class NeoForgeClientAreaMusic {
         AreaMusicNetwork.setClientHandler(created);
     }
 
-    @EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT)
+    @EventBusSubscriber(
+            modid = AreaMusic.MOD_ID,
+            value = Dist.CLIENT,
+            bus = EventBusSubscriber.Bus.MOD
+    )
     public static final class ModEvents {
         private ModEvents() {
         }

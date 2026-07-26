@@ -70,8 +70,9 @@ neoForge {
 
     mods {
         "${mod_id}" {
-            sourceSet sourceSets.main
+            sourceSet coreSourceSets.main
             sourceSet commonSourceSets.main
+            sourceSet sourceSets.main
         }
     }
 

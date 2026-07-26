@@ -8,6 +8,8 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.handling.IPayloadHandler;
+import net.neoforged.neoforge.network.registration.HandlerThread;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
 import java.util.Objects;
@@ -25,6 +27,24 @@ public final class AreaMusicNetwork {
 
     public static void register(RegisterPayloadHandlersEvent event) {
         REGISTRATION.register(event);
+    }
+
+    static void registerPayloads(RegistrarFactory registrarFactory) {
+        Objects.requireNonNull(registrarFactory, "registrarFactory");
+        ClientboundRegistrar registrar = Objects.requireNonNull(
+                registrarFactory.create(PROTOCOL_VERSION, HandlerThread.MAIN),
+                "registrar"
+        );
+        registrar.playToClient(
+                PlaybackPayload.TYPE,
+                PlaybackPayload.STREAM_CODEC,
+                (message, context) -> handleClientPlayback(message.message())
+        );
+        registrar.playToClient(
+                ReloadPayload.TYPE,
+                ReloadPayload.STREAM_CODEC,
+                (message, context) -> handleClientReload(message.message())
+        );
     }
 
     public static void setClientHandler(ClientPacketHandler handler) {
@@ -92,19 +112,9 @@ public final class AreaMusicNetwork {
         private void registerOnce(RegisterPayloadHandlersEvent event) {
             state = State.REGISTERING;
             try {
-                PayloadRegistrar registrar = event.registrar(PROTOCOL_VERSION);
-                registrar.playToClient(
-                        PlaybackPayload.TYPE,
-                        PlaybackPayload.STREAM_CODEC,
-                        (message, context) -> context.enqueueWork(
-                                () -> handleClientPlayback(message.message())
-                        )
-                );
-                registrar.playToClient(
-                        ReloadPayload.TYPE,
-                        ReloadPayload.STREAM_CODEC,
-                        (message, context) -> context.enqueueWork(
-                                () -> handleClientReload(message.message())
+                registerPayloads((protocolVersion, handlerThread) ->
+                        new NeoForgeClientboundRegistrar(
+                                event.registrar(protocolVersion).executesOn(handlerThread)
                         )
                 );
                 state = State.REGISTERED;
@@ -121,6 +131,35 @@ public final class AreaMusicNetwork {
                             "NeoForge registry state may already have been mutated",
                     failure
             );
+        }
+    }
+
+    @FunctionalInterface
+    interface RegistrarFactory {
+        ClientboundRegistrar create(String protocolVersion, HandlerThread handlerThread);
+    }
+
+    interface ClientboundRegistrar {
+        <T extends CustomPacketPayload> void playToClient(
+                CustomPacketPayload.Type<T> type,
+                StreamCodec<? super RegistryFriendlyByteBuf, T> codec,
+                IPayloadHandler<T> handler
+        );
+    }
+
+    private record NeoForgeClientboundRegistrar(PayloadRegistrar delegate)
+            implements ClientboundRegistrar {
+        private NeoForgeClientboundRegistrar {
+            Objects.requireNonNull(delegate, "delegate");
+        }
+
+        @Override
+        public <T extends CustomPacketPayload> void playToClient(
+                CustomPacketPayload.Type<T> type,
+                StreamCodec<? super RegistryFriendlyByteBuf, T> codec,
+                IPayloadHandler<T> handler
+        ) {
+            delegate.playToClient(type, codec, handler);
         }
     }
 

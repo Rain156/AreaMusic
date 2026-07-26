@@ -160,21 +160,6 @@ abstract class VerifyProductionJar extends DefaultTask {
                 errors << "nested JAR entries are forbidden: ${nestedJars}"
             }
 
-            Set<String> jorbisEntries = counts.keySet().findAll { it.startsWith('com/jcraft/jorbis/') }
-            if (!jorbisEntries.isEmpty()) {
-                errors << "JOrbis must be supplied by Minecraft, but the production JAR contains: ${jorbisEntries}"
-            }
-
-            Set<String> testDependencyEntries = counts.keySet().findAll {
-                it.startsWith('junit/') ||
-                        it.startsWith('org/junit/') ||
-                        it.startsWith('org/opentest4j/') ||
-                        it.startsWith('org/apiguardian/')
-            }
-            if (!testDependencyEntries.isEmpty()) {
-                errors << "test-framework entries are forbidden: ${testDependencyEntries}"
-            }
-
             Set<String> codecEntries = VerifyProductionJar.relativeFileNames(
                     [codecDirectory.get().asFile] as Set<File>,
                     false
@@ -215,6 +200,26 @@ abstract class VerifyProductionJar extends DefaultTask {
 
             Set<String> platformClassEntries = new TreeSet<>(forgeClassEntries)
             platformClassEntries.addAll(neoforgeClassEntries)
+
+            boolean nativeNeoForgeJar = !neoforgeClassEntries.isEmpty()
+            Map<String, List<String>> forbiddenCategories =
+                    VerifyProductionJar.forbiddenClassCategories(nativeNeoForgeJar)
+            forbiddenCategories.each { category, prefixes ->
+                Set<String> forbiddenEntries = new TreeSet<>(counts.keySet().findAll { entryName ->
+                    prefixes.any { prefix -> entryName.startsWith(prefix) }
+                })
+                if (!forbiddenEntries.isEmpty()) {
+                    errors << "forbidden ${category} entries: ${forbiddenEntries}"
+                }
+            }
+            if (nativeNeoForgeJar) {
+                Set<String> testLikeEntries = new TreeSet<>(counts.keySet().findAll {
+                    VerifyProductionJar.isTestFixtureClassEntry(it)
+                })
+                if (!testLikeEntries.isEmpty()) {
+                    errors << "test fixture/Test class entries are forbidden: ${testLikeEntries}"
+                }
+            }
 
             Set<String> coreForgeOverlap = VerifyProductionJar.intersection(
                     coreClassEntries, forgeClassEntries
@@ -373,9 +378,12 @@ abstract class VerifyProductionJar extends DefaultTask {
             projectClassEntries.addAll(commonClassEntries)
             projectClassEntries.addAll(forgeClassEntries)
             projectClassEntries.addAll(neoforgeClassEntries)
+            Map<String, byte[]> projectClassBytes = new TreeMap<>()
             projectClassEntries.each { entryName ->
                 byte[] classBytes = VerifyProductionJar.readEntry(zip, entryName)
                 if (classBytes != null) {
+                    String internalName = entryName.substring(0, entryName.length() - '.class'.length())
+                    projectClassBytes[internalName] = classBytes
                     if (classBytes.length < 8) {
                         errors << "project class '${entryName}' is too short to contain a class-file header"
                     } else {
@@ -384,7 +392,44 @@ abstract class VerifyProductionJar extends DefaultTask {
                             errors << "project class '${entryName}' must use class-file major ${expectedProjectClassMajor.get()}, found ${major}"
                         }
                     }
+                    try {
+                        Set<String> references = FinalJarClassGraph.references(classBytes)
+                        forbiddenCategories.each { category, prefixes ->
+                            Set<String> forbiddenReferences = new TreeSet<>(references.findAll { reference ->
+                                prefixes.any { prefix -> reference.startsWith(prefix) }
+                            })
+                            if (!forbiddenReferences.isEmpty()) {
+                                errors << "project class '${entryName}' has forbidden ${category} references: ${forbiddenReferences}"
+                            }
+                        }
+                        if (nativeNeoForgeJar) {
+                            Set<String> testLikeReferences = new TreeSet<>(references.findAll {
+                                VerifyProductionJar.isTestFixtureInternalName(it)
+                            })
+                            if (!testLikeReferences.isEmpty()) {
+                                errors << "project class '${entryName}' has forbidden test fixture/Test class references: ${testLikeReferences}"
+                            }
+                        }
+                    } catch (RuntimeException invalidClass) {
+                        errors << "project class '${entryName}' is not a valid class file: ${invalidClass.message}"
+                    }
                 }
+            }
+
+            if (nativeNeoForgeJar) {
+                errors.addAll(FinalJarClassGraph.verifyDedicatedServerReachability(
+                        projectClassBytes,
+                        [
+                                'datura/areamusic/AreaMusic',
+                                'datura/areamusic/server/NeoForgeAreaMusicServer'
+                        ],
+                        [
+                                'net/minecraft/client/',
+                                'com/mojang/blaze3d/',
+                                'net/neoforged/neoforge/client/',
+                                'datura/areamusic/client/'
+                        ]
+                ))
             }
 
             Set<String> projectTextResources = requiredResources.findAll {
@@ -631,6 +676,47 @@ abstract class VerifyProductionJar extends DefaultTask {
             }
         }
         return names
+    }
+
+    private static Map<String, List<String>> forbiddenClassCategories(boolean nativeNeoForgeJar) {
+        Map<String, List<String>> categories = new LinkedHashMap<>()
+        categories['JUnit'] = [
+                'junit/', 'org/junit/', 'org/opentest4j/', 'org/apiguardian/'
+        ]
+        categories['Spock'] = ['org/spockframework/']
+        categories['Gradle/TestKit'] = ['org/gradle/']
+        categories['Fabric loader/API/project'] = [
+                'net/fabricmc/', 'datura/areamusic/fabric/'
+        ]
+        categories['Architectury'] = ['dev/architectury/', 'architectury/']
+        categories['JOrbis'] = ['com/jcraft/jorbis/']
+        if (nativeNeoForgeJar) {
+            categories['Forge loader/project'] = [
+                    'net/minecraftforge/', 'datura/areamusic/forge/'
+            ]
+        }
+        return categories
+    }
+
+    private static boolean isTestFixtureClassEntry(String entryName) {
+        return entryName.endsWith('.class') && VerifyProductionJar.isTestFixtureInternalName(
+                entryName.substring(0, entryName.length() - '.class'.length())
+        )
+    }
+
+    private static boolean isTestFixtureInternalName(String internalName) {
+        if (internalName == null) {
+            return false
+        }
+        List<String> segments = internalName.split('/') as List<String>
+        return segments.any { segment ->
+            String outerName = segment.contains('$') ? segment.substring(0, segment.indexOf('$')) : segment
+            outerName == 'Test' || outerName == 'Tests' || outerName == 'TestCase' ||
+                    outerName.endsWith('Test') || outerName.endsWith('Tests') ||
+                    outerName.endsWith('TestCase') || outerName.endsWith('Fixture') ||
+                    outerName.endsWith('Fixtures') || outerName == 'testFixtures' ||
+                    outerName == 'test-fixtures'
+        }
     }
 
     static Set<String> readMethodReferences(

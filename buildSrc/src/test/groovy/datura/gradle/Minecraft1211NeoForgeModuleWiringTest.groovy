@@ -70,6 +70,17 @@ class Minecraft1211NeoForgeModuleWiringTest {
     }
 
     @Test
+    void modDevTestedModExplicitlyOwnsCoreCommonAndNeoForgeSourceSets() {
+        String buildScript = Files.readString(
+                findRepositoryRoot().resolve(LEAF_DIRECTORY).resolve('build.gradle')
+        )
+
+        assertTrue(buildScript.contains('sourceSet coreSourceSets.main'))
+        assertTrue(buildScript.contains('sourceSet commonSourceSets.main'))
+        assertTrue(buildScript.contains('sourceSet sourceSets.main'))
+    }
+
+    @Test
     void nativeNeoForgeLeafHasFlattenedJarAuditsAndNativeMetadata() {
         Path root = findRepositoryRoot()
         String buildScript = Files.readString(root.resolve(LEAF_DIRECTORY).resolve('build.gradle'))
