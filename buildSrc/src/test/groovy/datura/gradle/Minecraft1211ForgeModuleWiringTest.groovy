@@ -121,6 +121,10 @@ class Minecraft1211ForgeModuleWiringTest {
         assertTrue(buildScript.contains(
                 "namingEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')"
         ))
+        assertTrue(buildScript.contains(
+                "namingEvidenceMethodOwner.set('net/minecraft/core/BlockPos')"
+        ))
+        assertTrue(buildScript.contains("namingEvidenceMethodDescriptor.set('()I')"))
         assertTrue(buildScript.contains("expectedMojangName.set('getX')"))
         assertTrue(buildScript.contains("forbiddenSrgName.set('m_123341_')"))
         assertTrue(buildScript.contains('dependsOn verifyBundledAudioCodecs, verifyProductionJar'))

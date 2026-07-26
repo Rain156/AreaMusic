@@ -20,6 +20,12 @@ import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.ConstantDynamic
+import org.objectweb.asm.Handle
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
 
 abstract class VerifyProductionJar extends DefaultTask {
     @InputFile
@@ -96,6 +102,14 @@ abstract class VerifyProductionJar extends DefaultTask {
     @Input
     @Optional
     abstract Property<String> getForbiddenSrgName()
+
+    @Input
+    @Optional
+    abstract Property<String> getNamingEvidenceMethodOwner()
+
+    @Input
+    @Optional
+    abstract Property<String> getNamingEvidenceMethodDescriptor()
 
     @TaskAction
     void verifyArchive() {
@@ -420,8 +434,16 @@ abstract class VerifyProductionJar extends DefaultTask {
             }
 
             String evidenceEntry = namingEvidenceEntry.getOrNull()
+            String evidenceMethodOwner = namingEvidenceMethodOwner.getOrNull()
+            String evidenceMethodDescriptor = namingEvidenceMethodDescriptor.getOrNull()
             if (evidenceEntry == null) {
                 errors << 'naming evidence entry is not configured'
+            }
+            if (evidenceMethodOwner == null) {
+                errors << 'naming evidence method owner is not configured'
+            }
+            if (evidenceMethodDescriptor == null) {
+                errors << 'naming evidence method descriptor is not configured'
             }
             if (verifyReobfuscation.get()) {
                 String expectedName = expectedSrgName.getOrNull()
@@ -446,21 +468,35 @@ abstract class VerifyProductionJar extends DefaultTask {
                         if (java.util.Arrays.equals(productionClass, developmentBytes)) {
                             errors << "production class '${evidenceEntry}' is byte-identical to the Mojang-named development class"
                         }
-                        String classConstants = new String(
+                        Set<String> methodReferences = VerifyProductionJar.readMethodReferences(
                                 productionClass,
-                                java.nio.charset.StandardCharsets.ISO_8859_1
+                                evidenceEntry,
+                                errors
                         )
-                        if (expectedName != null && !classConstants.contains(expectedName)) {
-                            errors << "production class '${evidenceEntry}' lacks expected SRG symbol '${expectedName}'"
+                        String expectedReference = VerifyProductionJar.methodReference(
+                                evidenceMethodOwner,
+                                expectedName,
+                                evidenceMethodDescriptor
+                        )
+                        String forbiddenReference = VerifyProductionJar.methodReference(
+                                evidenceMethodOwner,
+                                forbiddenName,
+                                evidenceMethodDescriptor
+                        )
+                        if (methodReferences != null && expectedReference != null &&
+                                !methodReferences.contains(expectedReference)) {
+                            errors << "production class '${evidenceEntry}' lacks expected SRG method reference '${expectedReference}'"
                         }
-                        if (forbiddenName != null && classConstants.contains(forbiddenName)) {
-                            errors << "production class '${evidenceEntry}' still contains Mojang symbol '${forbiddenName}'"
+                        if (methodReferences != null && forbiddenReference != null &&
+                                methodReferences.contains(forbiddenReference)) {
+                            errors << "production class '${evidenceEntry}' still contains forbidden Mojang method reference '${forbiddenReference}'"
                         }
-                        if (expectedName != null && forbiddenName != null) {
+                        if (methodReferences != null && expectedReference != null &&
+                                forbiddenReference != null) {
                             verifiedNamingKind = 'SRG'
                             verifiedNamingEntry = evidenceEntry
-                            verifiedExpectedName = expectedName
-                            verifiedForbiddenName = forbiddenName
+                            verifiedExpectedName = expectedReference
+                            verifiedForbiddenName = forbiddenReference
                         }
                     }
                 }
@@ -478,21 +514,35 @@ abstract class VerifyProductionJar extends DefaultTask {
                     if (productionClass == null) {
                         errors << "naming evidence class is missing: ${evidenceEntry}"
                     } else {
-                        String classConstants = new String(
+                        Set<String> methodReferences = VerifyProductionJar.readMethodReferences(
                                 productionClass,
-                                java.nio.charset.StandardCharsets.ISO_8859_1
+                                evidenceEntry,
+                                errors
                         )
-                        if (expectedName != null && !classConstants.contains(expectedName)) {
-                            errors << "production class '${evidenceEntry}' lacks expected Mojang symbol '${expectedName}'"
+                        String expectedReference = VerifyProductionJar.methodReference(
+                                evidenceMethodOwner,
+                                expectedName,
+                                evidenceMethodDescriptor
+                        )
+                        String forbiddenReference = VerifyProductionJar.methodReference(
+                                evidenceMethodOwner,
+                                forbiddenName,
+                                evidenceMethodDescriptor
+                        )
+                        if (methodReferences != null && expectedReference != null &&
+                                !methodReferences.contains(expectedReference)) {
+                            errors << "production class '${evidenceEntry}' lacks expected Mojang method reference '${expectedReference}'"
                         }
-                        if (forbiddenName != null && classConstants.contains(forbiddenName)) {
-                            errors << "production class '${evidenceEntry}' still contains SRG symbol '${forbiddenName}'"
+                        if (methodReferences != null && forbiddenReference != null &&
+                                methodReferences.contains(forbiddenReference)) {
+                            errors << "production class '${evidenceEntry}' still contains forbidden SRG method reference '${forbiddenReference}'"
                         }
-                        if (expectedName != null && forbiddenName != null) {
+                        if (methodReferences != null && expectedReference != null &&
+                                forbiddenReference != null) {
                             verifiedNamingKind = 'Mojang'
                             verifiedNamingEntry = evidenceEntry
-                            verifiedExpectedName = expectedName
-                            verifiedForbiddenName = forbiddenName
+                            verifiedExpectedName = expectedReference
+                            verifiedForbiddenName = forbiddenReference
                         }
                     }
                 }
@@ -536,6 +586,108 @@ abstract class VerifyProductionJar extends DefaultTask {
             }
         }
         return names
+    }
+
+    static Set<String> readMethodReferences(
+            byte[] classBytes,
+            String evidenceEntry,
+            List<String> errors
+    ) {
+        Set<String> references = new TreeSet<>()
+        try {
+            new ClassReader(classBytes).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                MethodVisitor visitMethod(
+                        int access,
+                        String name,
+                        String descriptor,
+                        String signature,
+                        String[] exceptions
+                ) {
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override
+                        void visitMethodInsn(
+                                int opcode,
+                                String owner,
+                                String invokedName,
+                                String invokedDescriptor,
+                                boolean isInterface
+                        ) {
+                            references.add(VerifyProductionJar.methodReference(
+                                    owner,
+                                    invokedName,
+                                    invokedDescriptor
+                            ))
+                        }
+
+                        @Override
+                        void visitLdcInsn(Object value) {
+                            VerifyProductionJar.collectMethodReferences(value, references)
+                        }
+
+                        @Override
+                        void visitInvokeDynamicInsn(
+                                String invokedName,
+                                String invokedDescriptor,
+                                Handle bootstrapMethodHandle,
+                                Object... bootstrapMethodArguments
+                        ) {
+                            VerifyProductionJar.collectMethodReferences(
+                                    bootstrapMethodHandle,
+                                    references
+                            )
+                            bootstrapMethodArguments.each { argument ->
+                                VerifyProductionJar.collectMethodReferences(argument, references)
+                            }
+                        }
+                    }
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES)
+            return references
+        } catch (RuntimeException failure) {
+            errors << "naming evidence class '${evidenceEntry}' is not a valid class file: ${failure.message}"
+            return null
+        }
+    }
+
+    private static void collectMethodReferences(Object value, Set<String> references) {
+        if (value instanceof Handle) {
+            Handle handle = (Handle) value
+            if (VerifyProductionJar.isMethodHandle(handle.tag)) {
+                references.add(VerifyProductionJar.methodReference(
+                        handle.owner,
+                        handle.name,
+                        handle.desc
+                ))
+            }
+        } else if (value instanceof ConstantDynamic) {
+            ConstantDynamic dynamic = (ConstantDynamic) value
+            VerifyProductionJar.collectMethodReferences(
+                    dynamic.bootstrapMethod,
+                    references
+            )
+            for (int index = 0; index < dynamic.bootstrapMethodArgumentCount; index++) {
+                VerifyProductionJar.collectMethodReferences(
+                        dynamic.getBootstrapMethodArgument(index),
+                        references
+                )
+            }
+        }
+    }
+
+    private static boolean isMethodHandle(int tag) {
+        return tag == Opcodes.H_INVOKEVIRTUAL ||
+                tag == Opcodes.H_INVOKESTATIC ||
+                tag == Opcodes.H_INVOKESPECIAL ||
+                tag == Opcodes.H_NEWINVOKESPECIAL ||
+                tag == Opcodes.H_INVOKEINTERFACE
+    }
+
+    private static String methodReference(String owner, String name, String descriptor) {
+        if (owner == null || name == null || descriptor == null) {
+            return null
+        }
+        return "${owner}#${name}${descriptor}"
     }
 
     static File findRelativeFile(Set<File> roots, String relativeName) {

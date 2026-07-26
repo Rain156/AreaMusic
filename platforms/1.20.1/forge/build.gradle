@@ -252,6 +252,8 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
     ])
     verifyReobfuscation.set(true)
     namingEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')
+    namingEvidenceMethodOwner.set('net/minecraft/core/BlockPos')
+    namingEvidenceMethodDescriptor.set('()I')
     expectedSrgName.set('m_123341_')
     forbiddenMojangName.set('getX')
 

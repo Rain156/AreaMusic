@@ -66,26 +66,40 @@ class AreaMusicNetworkTest {
     }
 
     @Test
-    void registrationIsSynchronizedIdempotentTypedAndClientThreadDispatched() throws IOException {
+    void registrationDelegatesToThePermanentStateMachine() throws IOException {
         ClassData network = read(OWNER + ".class");
         MethodData register = network.method("register");
 
         assertTrue(Modifier.isPublic(register.access));
         assertTrue(Modifier.isStatic(register.access));
-        assertTrue(Modifier.isSynchronized(register.access));
-        assertCall(register, "net/minecraftforge/network/ChannelBuilder#named");
-        assertCall(register, "net/minecraftforge/network/ChannelBuilder#networkProtocolVersion");
-        assertCall(register, "net/minecraftforge/network/ChannelBuilder#payloadChannel");
-        assertCall(register, "net/minecraftforge/network/payload/PayloadConnection#play");
-        assertCall(register, "net/minecraftforge/network/payload/PayloadProtocol#clientbound");
-        assertEquals(2, register.calls.stream()
+        assertCall(register,
+                "datura/areamusic/network/AreaMusicChannelRegistration#register");
+        assertFalse(register.calls.stream().anyMatch(call ->
+                call.startsWith("net/minecraftforge/network/ChannelBuilder#")));
+    }
+
+    @Test
+    void inlineChannelFactoryRemainsTypedAndClientbound() throws IOException {
+        ClassData network = read(OWNER + ".class");
+        MethodData buildChannel = network.method("buildChannel");
+
+        assertCall(buildChannel, OWNER + "#validateRegistrationInputs");
+        assertCall(buildChannel, "net/minecraftforge/network/ChannelBuilder#named");
+        assertTrue(
+                callIndex(buildChannel, OWNER + "#validateRegistrationInputs") <
+                        callIndex(buildChannel, "net/minecraftforge/network/ChannelBuilder#named"),
+                "local payload validation must precede Forge registry mutation"
+        );
+        assertCall(buildChannel, "net/minecraftforge/network/ChannelBuilder#networkProtocolVersion");
+        assertCall(buildChannel, "net/minecraftforge/network/ChannelBuilder#payloadChannel");
+        assertCall(buildChannel, "net/minecraftforge/network/payload/PayloadConnection#play");
+        assertCall(buildChannel, "net/minecraftforge/network/payload/PayloadProtocol#clientbound");
+        assertEquals(2, buildChannel.calls.stream()
                 .filter(call -> call.startsWith(
                         "net/minecraftforge/network/payload/PayloadFlow#addMain"
                 )).count());
-        assertCall(register, "net/minecraftforge/network/payload/PayloadFlow#build");
-        assertTrue(register.fields.stream().anyMatch(field ->
-                field.equals(OWNER + "#channel:Lnet/minecraftforge/network/Channel;")));
-        assertFalse(register.calls.stream().anyMatch(call ->
+        assertCall(buildChannel, "net/minecraftforge/network/payload/PayloadFlow#build");
+        assertFalse(buildChannel.calls.stream().anyMatch(call ->
                 call.contains("net/minecraftforge/network/simple/SimpleChannel")));
     }
 
@@ -186,6 +200,15 @@ class AreaMusicNetworkTest {
     private static void assertCall(MethodData method, String prefix) {
         assertTrue(method.calls.stream().anyMatch(call -> call.startsWith(prefix)),
                 () -> method.name + " does not call " + prefix + "; calls were " + method.calls);
+    }
+
+    private static int callIndex(MethodData method, String prefix) {
+        for (int index = 0; index < method.calls.size(); index++) {
+            if (method.calls.get(index).startsWith(prefix)) {
+                return index;
+            }
+        }
+        return fail(method.name + " does not call " + prefix + "; calls were " + method.calls);
     }
 
     private static void assertAnyCall(ClassData data, String prefix) {

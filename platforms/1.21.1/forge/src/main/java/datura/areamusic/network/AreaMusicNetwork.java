@@ -18,17 +18,22 @@ public final class AreaMusicNetwork {
     private static final AtomicReference<ClientPacketHandler> CLIENT_HANDLER =
             new AtomicReference<>();
 
-    private static Channel<CustomPacketPayload> channel;
+    private static final AreaMusicChannelRegistration<Channel<CustomPacketPayload>>
+            CHANNEL_REGISTRATION = new AreaMusicChannelRegistration<>(
+                    "AreaMusic network channel",
+                    AreaMusicNetwork::buildChannel
+            );
 
     private AreaMusicNetwork() {
     }
 
-    public static synchronized void register() {
-        if (channel != null) {
-            return;
-        }
+    public static void register() {
+        CHANNEL_REGISTRATION.register();
+    }
 
-        channel = ChannelBuilder
+    private static Channel<CustomPacketPayload> buildChannel() {
+        validateRegistrationInputs();
+        return ChannelBuilder
                 .named(ResourceLocation.fromNamespaceAndPath(MOD_ID, "main"))
                 .networkProtocolVersion(PROTOCOL_VERSION)
                 .payloadChannel()
@@ -45,6 +50,38 @@ public final class AreaMusicNetwork {
                         (payload, context) -> handleClientReload(payload.message())
                 )
                 .build();
+    }
+
+    private static void validateRegistrationInputs() {
+        CustomPacketPayload.Type<PlaybackPayload> playbackType =
+                Objects.requireNonNull(PlaybackPayload.TYPE, "playback payload type");
+        CustomPacketPayload.Type<ReloadPayload> reloadType =
+                Objects.requireNonNull(ReloadPayload.TYPE, "reload payload type");
+        Objects.requireNonNull(PlaybackPayload.STREAM_CODEC, "playback payload codec");
+        Objects.requireNonNull(ReloadPayload.STREAM_CODEC, "reload payload codec");
+
+        ResourceLocation expectedPlayback = ResourceLocation.fromNamespaceAndPath(
+                MOD_ID,
+                "playback"
+        );
+        ResourceLocation expectedReload = ResourceLocation.fromNamespaceAndPath(
+                MOD_ID,
+                "reload"
+        );
+        if (!expectedPlayback.equals(playbackType.id())) {
+            throw new IllegalStateException(
+                    "playback payload ID must be " + expectedPlayback + ", found " +
+                            playbackType.id()
+            );
+        }
+        if (!expectedReload.equals(reloadType.id())) {
+            throw new IllegalStateException(
+                    "reload payload ID must be " + expectedReload + ", found " + reloadType.id()
+            );
+        }
+        if (playbackType.id().equals(reloadType.id())) {
+            throw new IllegalStateException("playback and reload payload IDs must be distinct");
+        }
     }
 
     public static void setClientHandler(ClientPacketHandler handler) {
@@ -94,10 +131,7 @@ public final class AreaMusicNetwork {
     }
 
     private static Channel<CustomPacketPayload> requireChannel() {
-        if (channel == null) {
-            throw new IllegalStateException("AreaMusic network channel has not been registered");
-        }
-        return channel;
+        return CHANNEL_REGISTRATION.requireRegistered();
     }
 
     public record PlaybackPayload(

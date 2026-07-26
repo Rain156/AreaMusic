@@ -7,6 +7,10 @@ import org.gradle.api.Project
 import org.gradle.testfixtures.ProjectBuilder
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.ConstantDynamic
+import org.objectweb.asm.Handle
+import org.objectweb.asm.Opcodes
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -82,7 +86,7 @@ class VerifyProductionJarTest {
         fixture.writeRelative(
                 fixture.forgeClasses,
                 Fixture.EVIDENCE_ENTRY,
-                'development getInstance'.bytes
+                namingEvidenceClassBytes(61, [Fixture.MOJANG_NAME], [], [], [])
         )
 
         GradleException failure = assertAuditFails(fixture)
@@ -130,18 +134,65 @@ class VerifyProductionJarTest {
     }
 
     @Test
-    void rejectsMojangNamedProductionClassMissingExpectedMojangSymbol() {
+    void rejectsMojangNamingEvidenceThatOnlyLoadsExpectedNameAsAString() {
         Fixture fixture = newFixture()
         fixture.useMojangNamingMode()
         fixture.replaceArchiveEntry(
                 Fixture.EVIDENCE_ENTRY,
-                classBytes(61, 'production otherSymbol')
+                namingEvidenceClassBytes(61, [], [Fixture.MOJANG_NAME], [], [])
         )
 
         GradleException failure = assertAuditFails(fixture)
 
         assertTrue(failure.message.contains(
-                "production class '${Fixture.EVIDENCE_ENTRY}' lacks expected Mojang symbol 'getInstance'"
+                "production class '${Fixture.EVIDENCE_ENTRY}' lacks expected Mojang method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.MOJANG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
+        ))
+    }
+
+    @Test
+    void rejectsMojangNamingEvidenceWithOnlyALongerMethodName() {
+        Fixture fixture = newFixture()
+        fixture.useMojangNamingMode()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                namingEvidenceClassBytes(61, ['getXOffset'], [], [], [])
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "lacks expected Mojang method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.MOJANG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
+        ))
+    }
+
+    @Test
+    void acceptsMojangNamingEvidenceFromAnExactMethodHandleReference() {
+        Fixture fixture = newFixture()
+        fixture.useMojangNamingMode()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                namingEvidenceClassBytes(61, [], [], [Fixture.MOJANG_NAME], [])
+        )
+
+        fixture.verify()
+    }
+
+    @Test
+    void rejectsMojangNamedProductionClassMissingExpectedMojangSymbol() {
+        Fixture fixture = newFixture()
+        fixture.useMojangNamingMode()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                namingEvidenceClassBytes(61, ['getY'], [], [], [])
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "production class '${Fixture.EVIDENCE_ENTRY}' lacks expected Mojang method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.MOJANG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
         ))
     }
 
@@ -151,13 +202,43 @@ class VerifyProductionJarTest {
         fixture.useMojangNamingMode()
         fixture.replaceArchiveEntry(
                 Fixture.EVIDENCE_ENTRY,
-                classBytes(61, 'production getInstance m_91087_')
+                namingEvidenceClassBytes(
+                        61,
+                        [Fixture.MOJANG_NAME, Fixture.SRG_NAME],
+                        [],
+                        [],
+                        []
+                )
         )
 
         GradleException failure = assertAuditFails(fixture)
 
         assertTrue(failure.message.contains(
-                "production class '${Fixture.EVIDENCE_ENTRY}' still contains SRG symbol 'm_91087_'"
+                "production class '${Fixture.EVIDENCE_ENTRY}' still contains forbidden SRG method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.SRG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
+        ))
+    }
+
+    @Test
+    void rejectsForbiddenSrgMethodHandleNestedInMojangConstantDynamicEvidence() {
+        Fixture fixture = newFixture()
+        fixture.useMojangNamingMode()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                namingEvidenceClassBytes(
+                        61,
+                        [Fixture.MOJANG_NAME],
+                        [],
+                        [],
+                        [Fixture.SRG_NAME]
+                )
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "still contains forbidden SRG method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.SRG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
         ))
     }
 
@@ -463,8 +544,79 @@ class VerifyProductionJarTest {
         GradleException failure = assertAuditFails(fixture)
 
         assertTrue(failure.message.contains('is byte-identical to the Mojang-named development class'))
-        assertTrue(failure.message.contains("lacks expected SRG symbol 'm_91087_'"))
-        assertTrue(failure.message.contains("still contains Mojang symbol 'getInstance'"))
+        assertTrue(failure.message.contains(
+                "lacks expected SRG method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.SRG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
+        ))
+        assertTrue(failure.message.contains(
+                "still contains forbidden Mojang method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.MOJANG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
+        ))
+    }
+
+    @Test
+    void rejectsSrgNamingEvidenceThatOnlyLoadsExpectedNameAsAString() {
+        Fixture fixture = newFixture()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                namingEvidenceClassBytes(61, [], [Fixture.SRG_NAME], [], [])
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "lacks expected SRG method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.SRG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
+        ))
+    }
+
+    @Test
+    void rejectsSrgNamingEvidenceWithOnlyALongerMethodName() {
+        Fixture fixture = newFixture()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                namingEvidenceClassBytes(61, [Fixture.SRG_NAME + 'Suffix'], [], [], [])
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "lacks expected SRG method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.SRG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
+        ))
+    }
+
+    @Test
+    void acceptsSrgNamingEvidenceFromAnExactMethodHandleReference() {
+        Fixture fixture = newFixture()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                namingEvidenceClassBytes(61, [], [], [Fixture.SRG_NAME], [])
+        )
+
+        fixture.verify()
+    }
+
+    @Test
+    void rejectsForbiddenMojangMethodHandleNestedInSrgConstantDynamicEvidence() {
+        Fixture fixture = newFixture()
+        fixture.replaceArchiveEntry(
+                Fixture.EVIDENCE_ENTRY,
+                namingEvidenceClassBytes(
+                        61,
+                        [Fixture.SRG_NAME],
+                        [],
+                        [],
+                        [Fixture.MOJANG_NAME]
+                )
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(
+                "still contains forbidden Mojang method reference " +
+                        "'${Fixture.METHOD_OWNER}#${Fixture.MOJANG_NAME}${Fixture.METHOD_DESCRIPTOR}'"
+        ))
     }
 
     private Fixture newFixture() {
@@ -476,24 +628,122 @@ class VerifyProductionJarTest {
     }
 
     private static byte[] classBytes(int major, String payload) {
-        ByteArrayOutputStream output = new ByteArrayOutputStream()
-        output.write([
-                0xCA,
-                0xFE,
-                0xBA,
-                0xBE,
-                0x00,
-                0x00,
-                (major >>> 8) & 0xFF,
-                major & 0xFF
-        ] as byte[])
-        output.write(payload.getBytes(StandardCharsets.ISO_8859_1))
-        return output.toByteArray()
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(
+                major,
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
+                'example/SyntheticClass',
+                null,
+                'java/lang/Object',
+                null
+        )
+        writer.visitSource(payload, null)
+        writeConstructor(writer)
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    private static byte[] namingEvidenceClassBytes(
+            int major,
+            List<String> invokedNames,
+            List<String> stringConstants,
+            List<String> methodHandleNames,
+            List<String> constantDynamicHandleNames
+    ) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(
+                major,
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
+                'example/ForgeEvidence',
+                null,
+                'java/lang/Object',
+                null
+        )
+        writeConstructor(writer)
+        def method = writer.visitMethod(
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                'evidence',
+                '()V',
+                null,
+                null
+        )
+        method.visitCode()
+        stringConstants.each { constant ->
+            method.visitLdcInsn(constant)
+            method.visitInsn(Opcodes.POP)
+        }
+        invokedNames.each { name ->
+            method.visitInsn(Opcodes.ACONST_NULL)
+            method.visitMethodInsn(
+                    Opcodes.INVOKEVIRTUAL,
+                    Fixture.METHOD_OWNER,
+                    name,
+                    Fixture.METHOD_DESCRIPTOR,
+                    false
+            )
+            method.visitInsn(Opcodes.POP)
+        }
+        methodHandleNames.each { name ->
+            method.visitLdcInsn(methodHandle(name))
+            method.visitInsn(Opcodes.POP)
+        }
+        Handle bootstrap = new Handle(
+                Opcodes.H_INVOKESTATIC,
+                'example/Bootstrap',
+                'bootstrap',
+                '(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;' +
+                        'Ljava/lang/Class;Ljava/lang/invoke/MethodHandle;)Ljava/lang/Object;',
+                false
+        )
+        constantDynamicHandleNames.eachWithIndex { name, index ->
+            method.visitLdcInsn(new ConstantDynamic(
+                    "evidence${index}",
+                    'Ljava/lang/Object;',
+                    bootstrap,
+                    methodHandle(name)
+            ))
+            method.visitInsn(Opcodes.POP)
+        }
+        method.visitInsn(Opcodes.RETURN)
+        method.visitMaxs(0, 0)
+        method.visitEnd()
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    private static Handle methodHandle(String name) {
+        return new Handle(
+                Opcodes.H_INVOKEVIRTUAL,
+                Fixture.METHOD_OWNER,
+                name,
+                Fixture.METHOD_DESCRIPTOR,
+                false
+        )
+    }
+
+    private static void writeConstructor(ClassWriter writer) {
+        def constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, '<init>', '()V', null, null)
+        constructor.visitCode()
+        constructor.visitVarInsn(Opcodes.ALOAD, 0)
+        constructor.visitMethodInsn(
+                Opcodes.INVOKESPECIAL,
+                'java/lang/Object',
+                '<init>',
+                '()V',
+                false
+        )
+        constructor.visitInsn(Opcodes.RETURN)
+        constructor.visitMaxs(0, 0)
+        constructor.visitEnd()
     }
 
     private static final class Fixture {
         static final String EXPECTED_FILE_NAME = 'areamusic-forge-1.20.1-1.2.3.jar'
         static final String EVIDENCE_ENTRY = 'example/ForgeEvidence.class'
+        static final String METHOD_OWNER = 'net/minecraft/core/BlockPos'
+        static final String METHOD_DESCRIPTOR = '()I'
+        static final String MOJANG_NAME = 'getX'
+        static final String SRG_NAME = 'm_123341_'
         static final List<String> REQUIRED_RESOURCES = [
                 'META-INF/MANIFEST.MF',
                 'META-INF/mods.toml',
@@ -531,7 +781,11 @@ class VerifyProductionJarTest {
 
             writeRelative(coreClasses, 'example/Core.class', classBytes(61, 'development core'))
             writeRelative(commonClasses, 'example/Common.class', classBytes(61, 'development common'))
-            writeRelative(commonClasses, EVIDENCE_ENTRY, classBytes(61, 'development getInstance'))
+            writeRelative(
+                    commonClasses,
+                    EVIDENCE_ENTRY,
+                    namingEvidenceClassBytes(61, [MOJANG_NAME], [], [], [])
+            )
             writeRelative(forgeClasses, 'example/Forge.class', classBytes(61, 'development forge'))
             writeRelative(codecFiles, 'example/Codec.class', 'staged codec'.bytes)
             writeRelative(codecFiles, 'META-INF/codec.properties', 'codec metadata'.bytes)
@@ -545,7 +799,10 @@ class VerifyProductionJarTest {
 
             addArchiveEntry('example/Core.class', classBytes(61, 'production core'))
             addArchiveEntry('example/Common.class', classBytes(61, 'production common'))
-            addArchiveEntry(EVIDENCE_ENTRY, classBytes(61, 'production m_91087_'))
+            addArchiveEntry(
+                    EVIDENCE_ENTRY,
+                    namingEvidenceClassBytes(61, [SRG_NAME], [], [], [])
+            )
             addArchiveEntry('example/Forge.class', classBytes(61, 'production forge'))
             addArchiveEntry('example/Codec.class', 'staged codec'.bytes)
             addArchiveEntry('META-INF/codec.properties', 'codec metadata'.bytes)
@@ -608,8 +865,10 @@ class VerifyProductionJarTest {
                     EVIDENCE_ENTRY,
                     true
             )
-            setTaskProperty(['getExpectedSrgName'], 'm_91087_', true)
-            setTaskProperty(['getForbiddenMojangName'], 'getInstance', true)
+            setTaskProperty(['getExpectedSrgName'], SRG_NAME, true)
+            setTaskProperty(['getForbiddenMojangName'], MOJANG_NAME, true)
+            setTaskProperty(['getNamingEvidenceMethodOwner'], METHOD_OWNER, false)
+            setTaskProperty(['getNamingEvidenceMethodDescriptor'], METHOD_DESCRIPTOR, false)
         }
 
         void verify() {
@@ -638,8 +897,8 @@ class VerifyProductionJarTest {
                     EVIDENCE_ENTRY,
                     true
             )
-            setTaskProperty(['getExpectedMojangName'], 'getInstance', false)
-            setTaskProperty(['getForbiddenSrgName'], 'm_91087_', false)
+            setTaskProperty(['getExpectedMojangName'], MOJANG_NAME, false)
+            setTaskProperty(['getForbiddenSrgName'], SRG_NAME, false)
         }
 
         private void setTaskProperty(List<String> getterNames, Object value, boolean required) {
