@@ -51,6 +51,24 @@ class ForgeAuditWiringTest {
     }
 
     @Test
+    void forgeEvaluatesSourceSetOwnersBeforeReadingTheirModels() {
+        String buildScript = Files.readString(findForgeBuildScript())
+        int coreEvaluation = buildScript.indexOf("evaluationDependsOn(':core')")
+        int commonEvaluation = buildScript.indexOf(
+                "evaluationDependsOn(':platforms:mc1_20_1:common')"
+        )
+        int coreSourceSets = buildScript.indexOf("def coreSourceSets = project(':core').sourceSets")
+        int commonSourceSets = buildScript.indexOf(
+                "def commonSourceSets = project(':platforms:mc1_20_1:common').sourceSets"
+        )
+
+        assertTrue(coreEvaluation >= 0)
+        assertTrue(commonEvaluation >= 0)
+        assertTrue(coreEvaluation < coreSourceSets)
+        assertTrue(commonEvaluation < commonSourceSets)
+    }
+
+    @Test
     void codecPackagingResourcesHaveSharedRawOwnershipAndACoreJarExclusionGate() {
         Path root = findRepositoryRoot()
         Path sharedRoot = root.resolve('platforms/shared/audio-codecs')

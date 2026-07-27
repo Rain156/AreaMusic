@@ -79,6 +79,8 @@ sourceSets.main.resources {
 }
 sourceSets.main.resources.srcDir(sharedAudioCodecResources)
 
+evaluationDependsOn(':core')
+evaluationDependsOn(':platforms:mc1_20_1:common')
 def coreSourceSets = project(':core').sourceSets
 def commonSourceSets = project(':platforms:mc1_20_1:common').sourceSets
 def coreMainOutput = coreSourceSets.main.output
