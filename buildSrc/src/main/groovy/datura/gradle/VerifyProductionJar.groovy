@@ -12,6 +12,7 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
+import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
@@ -88,6 +89,12 @@ abstract class VerifyProductionJar extends DefaultTask {
     abstract ListProperty<String> getRequiredProviderEntries()
 
     @Input
+    abstract SetProperty<String> getAllowedProductionTestClassEntries()
+
+    @Input
+    abstract SetProperty<String> getAllowedProductionTestClassReferences()
+
+    @Input
     abstract Property<Boolean> getVerifyReobfuscation()
 
     @Input
@@ -120,6 +127,8 @@ abstract class VerifyProductionJar extends DefaultTask {
 
     VerifyProductionJar() {
         metadataEntry.convention('META-INF/mods.toml')
+        allowedProductionTestClassEntries.convention([])
+        allowedProductionTestClassReferences.convention([])
     }
 
     @TaskAction
@@ -202,9 +211,30 @@ abstract class VerifyProductionJar extends DefaultTask {
             platformClassEntries.addAll(neoforgeClassEntries)
 
             boolean nativeNeoForgeJar = !neoforgeClassEntries.isEmpty()
-            Map<String, List<String>> forbiddenCategories =
-                    VerifyProductionJar.forbiddenClassCategories(nativeNeoForgeJar)
-            forbiddenCategories.each { category, prefixes ->
+            Set<String> allowedTestClassEntries =
+                    new TreeSet<>(allowedProductionTestClassEntries.get())
+            Set<String> allowedTestClassReferences =
+                    new TreeSet<>(allowedProductionTestClassReferences.get())
+            Set<String> invalidAllowedTestEntries = new TreeSet<>(
+                    allowedTestClassEntries.findAll {
+                        !VerifyProductionJar.isTestFixtureClassEntry(it)
+                    }
+            )
+            if (!invalidAllowedTestEntries.isEmpty()) {
+                errors << "production test-class allowlist contains non-test entries: ${invalidAllowedTestEntries}"
+            }
+            Set<String> missingAllowedTestEntries = new TreeSet<>(
+                    allowedTestClassEntries.findAll { counts[it] != 1 }
+            )
+            if (!missingAllowedTestEntries.isEmpty()) {
+                errors << "production test-class allowlist entries are missing from the JAR: ${missingAllowedTestEntries}"
+            }
+
+            Map<String, List<String>> forbiddenEntryCategories =
+                    VerifyProductionJar.forbiddenEntryClassCategories(nativeNeoForgeJar)
+            Map<String, List<String>> forbiddenReferenceCategories =
+                    VerifyProductionJar.forbiddenReferenceClassCategories(nativeNeoForgeJar)
+            forbiddenEntryCategories.each { category, prefixes ->
                 Set<String> forbiddenEntries = new TreeSet<>(counts.keySet().findAll { entryName ->
                     prefixes.any { prefix -> entryName.startsWith(prefix) }
                 })
@@ -212,13 +242,12 @@ abstract class VerifyProductionJar extends DefaultTask {
                     errors << "forbidden ${category} entries: ${forbiddenEntries}"
                 }
             }
-            if (nativeNeoForgeJar) {
-                Set<String> testLikeEntries = new TreeSet<>(counts.keySet().findAll {
-                    VerifyProductionJar.isTestFixtureClassEntry(it)
-                })
-                if (!testLikeEntries.isEmpty()) {
-                    errors << "test fixture/Test class entries are forbidden: ${testLikeEntries}"
-                }
+            Set<String> testLikeEntries = new TreeSet<>(counts.keySet().findAll {
+                VerifyProductionJar.isTestFixtureClassEntry(it) &&
+                        !allowedTestClassEntries.contains(it)
+            })
+            if (!testLikeEntries.isEmpty()) {
+                errors << "test fixture/Test class entries are forbidden: ${testLikeEntries}"
             }
 
             Set<String> coreForgeOverlap = VerifyProductionJar.intersection(
@@ -394,7 +423,7 @@ abstract class VerifyProductionJar extends DefaultTask {
                     }
                     try {
                         Set<String> references = FinalJarClassGraph.references(classBytes)
-                        forbiddenCategories.each { category, prefixes ->
+                        forbiddenReferenceCategories.each { category, prefixes ->
                             Set<String> forbiddenReferences = new TreeSet<>(references.findAll { reference ->
                                 prefixes.any { prefix -> reference.startsWith(prefix) }
                             })
@@ -402,13 +431,19 @@ abstract class VerifyProductionJar extends DefaultTask {
                                 errors << "project class '${entryName}' has forbidden ${category} references: ${forbiddenReferences}"
                             }
                         }
-                        if (nativeNeoForgeJar) {
-                            Set<String> testLikeReferences = new TreeSet<>(references.findAll {
-                                VerifyProductionJar.isTestFixtureInternalName(it)
-                            })
-                            if (!testLikeReferences.isEmpty()) {
-                                errors << "project class '${entryName}' has forbidden test fixture/Test class references: ${testLikeReferences}"
-                            }
+                        boolean allowlistedTestClass = allowedTestClassEntries.contains(entryName)
+                        String entryInternalName = entryName.substring(
+                                0,
+                                entryName.length() - '.class'.length()
+                        )
+                        Set<String> testLikeReferences = new TreeSet<>(references.findAll { reference ->
+                            VerifyProductionJar.isTestFixtureInternalName(reference) &&
+                                    !(allowlistedTestClass &&
+                                            (reference == entryInternalName ||
+                                                    allowedTestClassReferences.contains(reference)))
+                        })
+                        if (!testLikeReferences.isEmpty()) {
+                            errors << "project class '${entryName}' has forbidden test fixture/Test class references: ${testLikeReferences}"
                         }
                     } catch (RuntimeException invalidClass) {
                         errors << "project class '${entryName}' is not a valid class file: ${invalidClass.message}"
@@ -678,7 +713,7 @@ abstract class VerifyProductionJar extends DefaultTask {
         return names
     }
 
-    private static Map<String, List<String>> forbiddenClassCategories(boolean nativeNeoForgeJar) {
+    private static Map<String, List<String>> commonForbiddenClassCategories() {
         Map<String, List<String>> categories = new LinkedHashMap<>()
         categories['JUnit'] = [
                 'junit/', 'org/junit/', 'org/opentest4j/', 'org/apiguardian/'
@@ -690,6 +725,24 @@ abstract class VerifyProductionJar extends DefaultTask {
         ]
         categories['Architectury'] = ['dev/architectury/', 'architectury/']
         categories['JOrbis'] = ['com/jcraft/jorbis/']
+        return categories
+    }
+
+    private static Map<String, List<String>> forbiddenEntryClassCategories(
+            boolean nativeNeoForgeJar
+    ) {
+        Map<String, List<String>> categories = VerifyProductionJar.commonForbiddenClassCategories()
+        categories['Forge loader'] = ['net/minecraftforge/']
+        if (nativeNeoForgeJar) {
+            categories['Forge project'] = ['datura/areamusic/forge/']
+        }
+        return categories
+    }
+
+    private static Map<String, List<String>> forbiddenReferenceClassCategories(
+            boolean nativeNeoForgeJar
+    ) {
+        Map<String, List<String>> categories = VerifyProductionJar.commonForbiddenClassCategories()
         if (nativeNeoForgeJar) {
             categories['Forge loader/project'] = [
                     'net/minecraftforge/', 'datura/areamusic/forge/'

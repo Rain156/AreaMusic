@@ -239,6 +239,12 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
     expectedPackFormat.set(15)
     expectedProjectClassMajor.set(61)
     requiredProviderEntries.set(bundledAudioProviderEntries)
+    allowedProductionTestClassEntries.add(
+            'datura/areamusic/gametest/AreaMusicGameTests.class'
+    )
+    allowedProductionTestClassReferences.add(
+            'net/minecraft/gametest/framework/GameTest'
+    )
     requiredResourceEntries.set([
             'META-INF/MANIFEST.MF',
             'META-INF/mods.toml',

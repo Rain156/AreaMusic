@@ -33,6 +33,22 @@ class VerifyProductionJarTest {
     }
 
     @Test
+    void productionTestClassAllowlistsDefaultToEmpty() {
+        Fixture fixture = newFixture()
+        def entriesGetter = fixture.task.class.methods.find {
+            it.name == 'getAllowedProductionTestClassEntries' && it.parameterCount == 0
+        }
+        def referencesGetter = fixture.task.class.methods.find {
+            it.name == 'getAllowedProductionTestClassReferences' && it.parameterCount == 0
+        }
+
+        assertNotNull(entriesGetter)
+        assertNotNull(referencesGetter)
+        assertTrue(entriesGetter.invoke(fixture.task).get().isEmpty())
+        assertTrue(referencesGetter.invoke(fixture.task).get().isEmpty())
+    }
+
+    @Test
     void ignoresTestOutputEntriesThatAreExpectedProductionEntries() {
         Fixture fixture = newFixture()
         fixture.writeRelative(
@@ -338,6 +354,61 @@ class VerifyProductionJarTest {
     }
 
     @Test
+    void rejectsForgeLoaderEntriesFromAForgeExpectedSourceRoot() {
+        Fixture fixture = newFixture()
+        String entryName = 'net/minecraftforge/fml/ModLoader.class'
+        fixture.addExpectedPlatformClass(entryName, classBytes(61, entryName - '.class'))
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(entryName), failure.message)
+    }
+
+    @Test
+    void permitsForgeLoaderReferencesFromAForgeProjectClass() {
+        Fixture fixture = newFixture()
+        fixture.addExpectedPlatformClass(
+                'example/ForgeIntegration.class',
+                classWithFieldReference(
+                        61,
+                        'example/ForgeIntegration',
+                        'net/minecraftforge/fml/ModLoader'
+                )
+        )
+
+        fixture.verify()
+    }
+
+    @Test
+    void rejectsTestLikeEntriesFromAForgeExpectedSourceRoot() {
+        Fixture fixture = newFixture()
+        String entryName = 'example/InjectedTest.class'
+        fixture.addExpectedPlatformClass(entryName, classBytes(61, entryName - '.class'))
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(entryName), failure.message)
+    }
+
+    @Test
+    void rejectsTestLikeReferencesFromAForgeExpectedProjectClass() {
+        Fixture fixture = newFixture()
+        String referencedInternalName = 'example/InjectedFixture'
+        fixture.addExpectedPlatformClass(
+                'example/Contaminated.class',
+                classWithFieldReference(
+                        61,
+                        'example/Contaminated',
+                        referencedInternalName
+                )
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains(referencedInternalName), failure.message)
+    }
+
+    @Test
     void rejectsForbiddenReferencesFromAnOtherwiseExpectedProjectClass() {
         Fixture fixture = newFixture()
         fixture.useNeoForgeMode()
@@ -360,6 +431,10 @@ class VerifyProductionJarTest {
     void permitsTheIntentionalLegacyForgeMinecraftGameTestEntrypoint() {
         Fixture fixture = newFixture()
         String entryName = 'datura/areamusic/gametest/AreaMusicGameTests.class'
+        fixture.allowProductionTestClass(
+                entryName,
+                ['net/minecraft/gametest/framework/GameTest']
+        )
         fixture.addExpectedPlatformClass(
                 entryName,
                 classWithFieldReference(
@@ -370,6 +445,35 @@ class VerifyProductionJarTest {
         )
 
         fixture.verify()
+    }
+
+    @Test
+    void exactGameTestReferenceAllowlistDoesNotApplyToOtherProductionClasses() {
+        Fixture fixture = newFixture()
+        String gameTestEntry = 'datura/areamusic/gametest/AreaMusicGameTests.class'
+        String gameTestReference = 'net/minecraft/gametest/framework/GameTest'
+        fixture.allowProductionTestClass(gameTestEntry, [gameTestReference])
+        fixture.addExpectedPlatformClass(
+                gameTestEntry,
+                classWithFieldReference(
+                        61,
+                        gameTestEntry - '.class',
+                        gameTestReference
+                )
+        )
+        fixture.addExpectedPlatformClass(
+                'example/Contaminated.class',
+                classWithFieldReference(
+                        61,
+                        'example/Contaminated',
+                        gameTestReference
+                )
+        )
+
+        GradleException failure = assertAuditFails(fixture)
+
+        assertTrue(failure.message.contains('example/Contaminated.class'), failure.message)
+        assertTrue(failure.message.contains(gameTestReference), failure.message)
     }
 
     @Test
@@ -1126,6 +1230,11 @@ class VerifyProductionJarTest {
                             'server subscriber'
                     )
             )
+        }
+
+        void allowProductionTestClass(String entryName, List<String> references) {
+            task.allowedProductionTestClassEntries.add(entryName)
+            task.allowedProductionTestClassReferences.addAll(references)
         }
 
         void useMojangNamingMode() {
