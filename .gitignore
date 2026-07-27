@@ -25,3 +25,6 @@ logs/
 
 # Local Git worktrees
 .worktrees/
+
+# Local development documentation
+/docs/

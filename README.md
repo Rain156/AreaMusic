@@ -1,37 +1,39 @@
-# AreaMusic — Forge 1.20.1
+# AreaMusic
 
-*Server-defined local music areas with multitrack, delayed playback, and resume support.*
+AreaMusic 是一个由服务端定义长方体区域、在玩家进入区域时播放本地音乐的 Minecraft 模组。区域可以同时播放多条音轨，也可以按列表顺序循环播放；每个区域还支持淡入淡出、重进续播和重叠区域优先级。
 
-AreaMusic 允许服务器用长方体区域控制玩家客户端上的本地音乐。玩家进入区域后，可同时播放多条音轨，并为每条音轨分别设置延迟、音量、循环和淡入淡出；离开后再次进入时，也可以选择从上次进度继续。
+> English summary: AreaMusic lets a server define cuboid zones that trigger local audio on players' clients. It supports parallel tracks and ordered looping playlists.
 
-## 功能
+## 重要说明
 
-- 每个区域可配置 1–16 条音轨。
-- 每条音轨可独立设置进入区域后的播放延迟，默认立即播放。
-- 支持 OGG、MP3、WAV 和 FLAC。
-- 支持循环、一次性播放、淡入、淡出和区域切换时的交叉淡化。
-- `resumeOnReenter` 可控制再次进入同一区域时是否继续播放进度。
-- 重叠区域按优先级确定当前区域。
-- 服务端只同步区域和播放状态，不传输音频文件。
-- AreaMusic 音量独立于原版“音乐”音量，并受“主音量”控制。
+- 模组必须同时安装在服务端和每一位玩家的客户端。
+- 音频文件不会通过网络传输或自动同步。服务端与所有客户端必须在各自的 `<gameDir>/areamusic/` 中准备相同 MusicID（相同的相对路径、文件名、扩展名和大小写）；各客户端使用本地文件独立解码和播放，不保证听到相同内容或保持帧级同步。
+- 专用服务器不输出声音，但仍会扫描本地音频目录，用于校验 MusicID 和命令补全。
+- Fabric 版本必须另外安装下表对应的 Fabric API；Forge 与 NeoForge 版本不需要额外库模组。
+- 项目采用类似 Architectury 的 `shared core/common + loader leaf` 多加载器结构，但没有 Architectury 运行时依赖，安装时也不需要 Architectury API。
 
-## 运行要求
+## 支持版本
 
-| 项目 | 要求 |
-| --- | --- |
-| Minecraft | 1.20.1 |
-| 模组加载器 | Forge 47.4.21 |
-| Java | 17 |
-| 安装位置 | 服务端与每一位玩家的客户端 |
+以下是当前已经完成并验证的版本；加载器与 API 测试版本来自 [`gradle.properties`](gradle.properties)。
 
-服务端和所有客户端必须拥有相同的本地 MusicID，也就是 `areamusic` 下相同的相对路径与文件名。音频内容不会通过网络发送；专用服务器虽然不播放声音，仍会扫描本地文件来校验 MusicID 和提供命令补全。
+| Minecraft | 加载器 | 测试版本 | Java | 额外依赖 |
+| --- | --- | --- | --- | --- |
+| 1.20.1 | Fabric | Fabric Loader 0.19.3 | 17 | Fabric API 0.92.11+1.20.1 |
+| 1.20.1 | Forge | Forge 47.4.22 | 17 | 无 |
+| 1.21.1 | Fabric | Fabric Loader 0.19.3 | 21 | Fabric API 0.116.14+1.21.1 |
+| 1.21.1 | Forge | Forge 52.1.16 | 21 | 无 |
+| 1.21.1 | NeoForge | NeoForge 21.1.244 | 21 | 无 |
 
 ## 安装
 
-1. 将 `areamusic-0.0.1.jar` 放入服务端和每个客户端的 `mods/`。
-2. 启动一次游戏或服务器，让模组创建配置和小写的 `areamusic/` 目录。
-3. 把需要的音频放进服务端及所有客户端各自的 `<gameDir>/areamusic/`；相对路径、扩展名和大小写应保持一致。
-4. 进入世界后执行 `/areamusic reload`，然后创建区域。
+1. 根据 Minecraft 版本和加载器选择对应的 `areamusic-<loader>-<minecraft>-<mod>.jar`。
+2. 把同一份 AreaMusic JAR 放入服务端和每个客户端的 `mods/`。
+3. 使用 Fabric 时，还要在服务端和每个客户端安装对应版本的 Fabric API。
+4. 启动一次游戏或服务器，让模组创建小写的 `areamusic/` 与配置目录。
+5. 将音频放入每台机器各自的 `<gameDir>/areamusic/`；相同 MusicID 必须对应相同的相对路径。
+6. 进入世界后执行 `/areamusic reload`，再创建或编辑区域。
+
+支持 `.ogg`、`.mp3`、`.wav` 和 `.flac`。MusicID 是带扩展名的相对路径，嵌套目录统一使用 `/`，例如 `village/day.mp3`。
 
 ## 目录结构
 
@@ -48,50 +50,63 @@ AreaMusic 允许服务器用长方体区域控制玩家客户端上的本地音�
          └─ village.json
 ```
 
-- `<gameDir>/areamusic`：服务端或客户端的本地音频根目录。
-- `config/areamusic/<saveId>/*.json`：当前存档的区域定义；JSON 文件名就是区域 ID。
+- `<gameDir>/areamusic/`：本机音频根目录。
+- `config/areamusic/<saveId>/*.json`：当前存档的区域定义；文件名就是区域 ID。
 - `config/areamusic-client.toml`：客户端 AreaMusic 独立音量配置。
-- MusicID 是带扩展名的相对路径，嵌套目录统一使用 `/`，例如 `village/day.mp3`。
+- 旧的 `<gameDir>/AreaMusic/` 会在没有冲突时安全迁移为小写目录；如果大小写目录同时存在，请先备份并手动合并。
 
-## 快速开始
+## 命令
 
-先在服务端和每个客户端的 `areamusic/` 中放入 `ambient.ogg`，执行重载，然后在游戏中运行：
+```text
+/areamusic create <areaId> <pos1> <pos2> <musicId>
+/areamusic reload
+```
+
+`pos1` 与 `pos2` 均为 `x y z`，例如：
 
 ```text
 /areamusic create spawn 0 64 0 10 80 10 ambient.ogg
 ```
 
-该命令会立即创建一个使用默认参数的单音轨区域。要添加更多音轨或调整延迟，请编辑当前存档目录下生成的 `spawn.json`，保存后执行：
+`create` 会生成一个使用默认参数的单音轨区域。编辑生成的 JSON 后，执行 `/areamusic reload` 重新扫描音频并加载区域。命令需要权限等级 2；区域 ID 必须匹配 `[a-z0-9][a-z0-9_-]{0,63}`。
 
-```text
-/areamusic reload
-```
+## 区域 JSON（schema v3）
 
-区域 ID 必须匹配 `[a-z0-9][a-z0-9_-]{0,63}`。MusicID 是 `create` 的最后一个参数，因此可以包含空格，也必须包含文件扩展名。
+AreaMusic 仍可读取 schema v1 和 v2；新建或重新写入的区域统一使用 schema v3。解析器会拒绝未知字段、重复字段和错误类型。
 
-## 命令与权限
+所有模式通用的区域字段：
 
-| 命令 | 作用 |
-| --- | --- |
-| `/areamusic create <areaId> <pos1> <pos2> <musicId>` | 在当前维度创建区域；`pos1` 和 `pos2` 均为 `x y z` |
-| `/areamusic reload` | 重新扫描服务端/客户端音乐目录并重新加载当前存档的区域 JSON |
+| 字段 | 必填/默认值 | 说明 |
+| --- | --- | --- |
+| `schemaVersion` | 必填：`3` | 当前写入格式 |
+| `dimension` | 必填 | 维度 ID，例如 `minecraft:overworld` |
+| `pos1` / `pos2` | 必填 | 两个整数坐标端点 |
+| `playbackMode` | 必填 | `parallel` 或 `playlist_loop` |
+| `resumeOnReenter` | `false` | 再次进入时是否恢复该区域的播放状态 |
+| `priority` | `0` | 重叠区域中数值更高者优先 |
 
-两个命令都要求权限等级 2（单人游戏启用作弊，或多人服务器管理员权限）。
+### 同时播放：`parallel`
 
-## 区域 JSON（schema v2）
-
-下面是完整的多音轨示例。第一条音轨省略了可选字段，因此会在进入区域时立即按默认参数播放；第二条音轨会在进入 5 秒后开始播放。
+`tracks` 必须包含 1–16 条音轨。每条音轨的默认值是：`delaySeconds: 0`、`volume: 1.0`、`loop: true`、`fadeInMs: 2000`、`fadeOutMs: 2000`。
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "dimension": "minecraft:overworld",
-  "pos1": { "x": 0, "y": 64, "z": 0 },
-  "pos2": { "x": 10, "y": 80, "z": 10 },
+  "pos1": { "x": 10, "y": 80, "z": 10 },
+  "pos2": { "x": 0, "y": 60, "z": 0 },
+  "playbackMode": "parallel",
   "tracks": [
-    { "musicId": "ambient.ogg" },
     {
-      "musicId": "voice.mp3",
+      "musicId": "ambient.ogg",
+      "delaySeconds": 0,
+      "volume": 1.0,
+      "loop": true,
+      "fadeInMs": 2000,
+      "fadeOutMs": 2000
+    },
+    {
+      "musicId": "voice/intro.mp3",
       "delaySeconds": 5,
       "volume": 0.8,
       "loop": false,
@@ -100,79 +115,75 @@ AreaMusic 允许服务器用长方体区域控制玩家客户端上的本地音�
     }
   ],
   "resumeOnReenter": true,
+  "priority": 5
+}
+```
+
+每条音轨独立计时、控制音量、循环和淡入淡出。`delaySeconds` 是进入区域后等待的非负整数秒；`volume` 范围为 0–1；淡入淡出范围为 0–60000 毫秒。
+
+### 列表循环：`playlist_loop`
+
+`playlist` 必须包含 1–256 个有序 MusicID，可以重复。模组按照第一首、第二首、第三首……的顺序播放，播完最后一首后回到第一首继续循环。
+
+列表模式不使用 `tracks`，也不需要填写默认 `track` 或根级 `musicId`。整个列表统一使用 `volume`、`fadeInMs` 和 `fadeOutMs`；默认值分别为 `1.0`、`2000`、`2000`。
+
+```json
+{
+  "schemaVersion": 3,
+  "dimension": "minecraft:overworld",
+  "pos1": { "x": -20, "y": 50, "z": -20 },
+  "pos2": { "x": 20, "y": 100, "z": 20 },
+  "playbackMode": "playlist_loop",
+  "playlist": [
+    "village/day.ogg",
+    "village/evening.ogg",
+    "village/day.ogg"
+  ],
+  "volume": 0.75,
+  "fadeInMs": 1500,
+  "fadeOutMs": 2500,
+  "resumeOnReenter": false,
   "priority": 0
 }
 ```
 
-### 字段与默认值
+### `pos1` / `pos2` 保序
 
-| 范围 | 字段 | 必填/默认值 | 说明 |
-| --- | --- | --- | --- |
-| 区域 | `schemaVersion` | 必填：`2` | 当前写入格式 |
-| 区域 | `dimension` | 必填 | 维度 ID，例如 `minecraft:overworld` |
-| 区域 | `pos1` / `pos2` | 必填 | 两个端点，`x`、`y`、`z` 都必须是整数；顺序不限 |
-| 区域 | `tracks` | 必填 | 包含 1–16 个音轨对象 |
-| 区域 | `resumeOnReenter` | `false` | 离开后再次进入是否恢复该区域的播放状态 |
-| 区域 | `priority` | `0` | 重叠区域中数值更高者优先 |
-| 音轨 | `musicId` | 必填 | `areamusic/` 下带扩展名的相对路径 |
-| 音轨 | `delaySeconds` | `0` | 进入区域后等待多少秒开始播放；必须是非负整数 |
-| 音轨 | `volume` | `1.0` | 单轨音量，范围 0.0–1.0 |
-| 音轨 | `loop` | `true` | 播放结束后是否循环 |
-| 音轨 | `fadeInMs` | `2000` | 淡入毫秒数，范围 0–60000 |
-| 音轨 | `fadeOutMs` | `2000` | 淡出毫秒数，范围 0–60000 |
+`pos1` 和 `pos2` 是用户选择的原始端点，不是自动排序后的最小点与最大点。AreaMusic 读取、保存和重新写入 JSON 时会保持两个端点各自的原值和顺序；只有判断玩家是否在区域内、计算区域体积和比较边界时，才会逐轴使用 `min` / `max`。因此坐标交叉或从大坐标选到小坐标时，JSON 也不会再出现两个端点被混合重组的问题。
 
-当多个区域重叠时，先选择 `priority` 更高的区域；优先级相同时选择体积更小的区域；仍相同时按区域 ID 排序。解析器会拒绝未知字段和错误类型，以便尽早发现拼写错误。
+## 重叠、续播与音量
 
-旧的 schema v1 单音轨 JSON 仍可读取，并会在内存中映射为一条无延迟音轨；新建和重新写入的区域使用 schema v2。
-
-## 延迟与再次进入
-
-- 每条音轨的 `delaySeconds` 都从进入区域时开始独立计时；`0` 表示立即播放。
-- `resumeOnReenter: false`（默认）：离开时按 `fadeOutMs` 淡出，再次进入会从音频开头重新开始，并重新计算完整延迟。
-- `resumeOnReenter: true`：再次进入同一区域时恢复各音轨的播放游标；尚未播放的音轨会保留剩余延迟，离开期间不会继续倒计时。
-- 对于 `loop: false` 的音轨，若它已经播放完毕，开启续播后再次进入仍保持完成状态，不会自动重播。
-- 续播状态按区域分别保存，只存在于当前客户端运行期间；重启客户端、成功重载音乐库或修改区域播放定义后，不应依赖旧进度继续。
-
-## 音量
-
-实际输出音量由以下三项共同决定：
-
-```text
-Minecraft 主音量 × AreaMusic 独立音量 × 单轨 volume
-```
-
-原版“音乐”音量不会影响 AreaMusic。可以在声音设置中的“AreaMusic 音量”调节，也可以修改 `config/areamusic-client.toml`；“主音量”仍会影响最终输出。
-
-## 小写目录与旧版本迁移
-
-规范目录固定为 `<gameDir>/areamusic`，模组不会再创建大写的 `AreaMusic`。
-
-如果只存在旧的 `<gameDir>/AreaMusic`，模组会在扫描时安全地将整个目录迁移为小写名称，不覆盖已有目录。如果大小写两个目录同时存在且实际不是同一个目录，模组会停止迁移并报告冲突，避免静默覆盖文件。此时请先备份并手动合并内容，只保留小写的 `areamusic`。音乐根目录不能是符号链接。
-
-## 常见问题
-
-- **进入区域没有声音**：确认客户端已安装模组，MusicID 对应文件位于客户端小写的 `areamusic/`，主音量和 AreaMusic 音量都不为 0，并执行 `/areamusic reload`。
-- **创建区域提示未知 MusicID**：确认服务端也有该文件，路径大小写和扩展名完全一致，然后重载。
-- **重载 JSON 失败**：检查 `schemaVersion`、字段类型、1–16 条音轨限制，以及 JSON 中是否存在拼错或不支持的字段；日志会指出失败文件。
-- **目录迁移冲突**：不要直接删除任何一侧；先备份、合并 `AreaMusic` 与 `areamusic`，再只保留小写目录。
-- **某种音频没有被识别**：仅支持 `.ogg`、`.mp3`、`.wav` 和 `.flac`。避免仅大小写不同的重复 MusicID。
+- 区域重叠时先比较 `priority`，再选择体积更小的区域，最后按区域 ID 排序。
+- `resumeOnReenter: false` 会在离开后淡出，再进入时从头开始并重新计算延迟。
+- `resumeOnReenter: true` 会在当前客户端运行期间保留各音轨或列表的播放位置；重启客户端、成功重载音乐库或修改播放定义后不应依赖旧进度。
+- 最终音量由 Minecraft 主音量、AreaMusic 独立音量和 JSON 中的 `volume` 共同决定；原版“音乐”音量不影响 AreaMusic。
 
 ## 构建
 
-需要 JDK 17。Windows：
+需要同时可用的 JDK 17 与 JDK 21 工具链。Windows：
 
 ```powershell
-.\gradlew.bat clean build
+.\gradlew.bat test check assemble build
 ```
 
-Linux/macOS 使用 `./gradlew clean build`。发布 JAR 位于 `build/libs/areamusic-0.0.1.jar`。
+Linux/macOS：
 
-## 许可与第三方解码器
+```bash
+./gradlew test check assemble build
+```
 
-AreaMusic 本体采用 **All Rights Reserved**。发布 JAR 内包含音频解码运行库；其许可与归属请查看 [`AREA_MUSIC_THIRD_PARTY_NOTICES.txt`](src/main/resources/META-INF/AREA_MUSIC_THIRD_PARTY_NOTICES.txt)。
+可安装成品位于五个 loader leaf 的 `build/libs/`：
 
-## English quick summary
+```text
+platforms/1.20.1/fabric/build/libs/areamusic-fabric-1.20.1-<mod_version>.jar
+platforms/1.20.1/forge/build/libs/areamusic-forge-1.20.1-<mod_version>.jar
+platforms/1.21.1/fabric/build/libs/areamusic-fabric-1.21.1-<mod_version>.jar
+platforms/1.21.1/forge/build/libs/areamusic-forge-1.21.1-<mod_version>.jar
+platforms/1.21.1/neoforge/build/libs/areamusic-neoforge-1.21.1-<mod_version>.jar
+```
 
-AreaMusic lets a server define cuboid zones that trigger 1–16 local audio tracks per zone. Each track supports an independent delay, volume, loop flag, and fades; `resumeOnReenter` optionally restores playback after leaving and returning.
+`common`、`dev` 和 `sources` JAR 不是安装包。GitHub Release 由 `v<mod_version>` 标签或手动工作流触发，附带上述五个成品和 `SHA256SUMS`。
 
-Install the mod on the server and every client, and keep matching MusicIDs under lowercase `<gameDir>/areamusic`. Audio bytes are never sent over the network. This branch targets Minecraft 1.20.1, Forge 47.4.21, and Java 17.
+## 许可证
+
+AreaMusic 使用 [MIT License](LICENSE)。发布 JAR 内嵌第三方音频解码运行库；其许可证与归属信息见 JAR 内的 `META-INF/AREA_MUSIC_THIRD_PARTY_NOTICES.txt`。
