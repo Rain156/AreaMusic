@@ -35,8 +35,7 @@ public final class NeoForgeClientAreaMusic {
 
     @EventBusSubscriber(
             modid = AreaMusic.MOD_ID,
-            value = Dist.CLIENT,
-            bus = EventBusSubscriber.Bus.MOD
+            value = Dist.CLIENT
     )
     public static final class ModEvents {
         private ModEvents() {
