@@ -23,12 +23,15 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 public final class AreaJsonCodec {
     public static final int LEGACY_SCHEMA_VERSION = 1;
-    public static final int CURRENT_SCHEMA_VERSION = 3;
+    public static final int CURRENT_SCHEMA_VERSION = 4;
     private static final int MULTI_TRACK_SCHEMA_VERSION = 2;
+    private static final int PLAYBACK_MODE_SCHEMA_VERSION = 3;
     // Counts simultaneously open objects and arrays; area schemas require at most three.
     private static final int MAX_JSON_NESTING_DEPTH = 64;
 
@@ -48,6 +51,16 @@ public final class AreaJsonCodec {
             "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "playlist",
             "volume", "fadeInMs", "fadeOutMs", "resumeOnReenter", "priority"
     );
+    private static final Set<String> V4_PARALLEL_ROOT_FIELDS = Set.of(
+            "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "tracks",
+            "resumeOnReenter", "priority", "displayName", "color", "enabled"
+    );
+    private static final Set<String> V4_PLAYLIST_LOOP_ROOT_FIELDS = Set.of(
+            "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "playlist",
+            "volume", "fadeInMs", "fadeOutMs", "resumeOnReenter", "priority",
+            "displayName", "color", "enabled"
+    );
+    private static final Pattern COLOR_PATTERN = Pattern.compile("#[0-9a-fA-F]{6}");
     private static final Set<String> TRACK_FIELDS = Set.of(
             "musicId", "delaySeconds", "volume", "loop", "fadeInMs", "fadeOutMs"
     );
@@ -56,13 +69,11 @@ public final class AreaJsonCodec {
     public AreaDefinition read(String areaId, Reader reader) throws JsonParseException {
         JsonObject root = requireObject(parseStrict(reader), "root");
         int schemaVersion = requireInt(root, "schemaVersion");
-        if (schemaVersion != LEGACY_SCHEMA_VERSION
-                && schemaVersion != MULTI_TRACK_SCHEMA_VERSION
-                && schemaVersion != CURRENT_SCHEMA_VERSION) {
+        if (schemaVersion < LEGACY_SCHEMA_VERSION || schemaVersion > CURRENT_SCHEMA_VERSION) {
             throw new JsonParseException("Unsupported schemaVersion: " + schemaVersion);
         }
         PlaybackMode playbackMode = PlaybackMode.PARALLEL;
-        if (schemaVersion == CURRENT_SCHEMA_VERSION) {
+        if (schemaVersion >= PLAYBACK_MODE_SCHEMA_VERSION) {
             String playbackModeId = requireString(root, "playbackMode");
             try {
                 playbackMode = PlaybackMode.fromJsonId(playbackModeId);
@@ -73,9 +84,12 @@ public final class AreaJsonCodec {
         Set<String> rootFields = switch (schemaVersion) {
             case LEGACY_SCHEMA_VERSION -> V1_ROOT_FIELDS;
             case MULTI_TRACK_SCHEMA_VERSION -> V2_ROOT_FIELDS;
-            case CURRENT_SCHEMA_VERSION -> playbackMode == PlaybackMode.PARALLEL
+            case PLAYBACK_MODE_SCHEMA_VERSION -> playbackMode == PlaybackMode.PARALLEL
                     ? V3_PARALLEL_ROOT_FIELDS
                     : V3_PLAYLIST_LOOP_ROOT_FIELDS;
+            case CURRENT_SCHEMA_VERSION -> playbackMode == PlaybackMode.PARALLEL
+                    ? V4_PARALLEL_ROOT_FIELDS
+                    : V4_PLAYLIST_LOOP_ROOT_FIELDS;
             default -> throw new AssertionError("Validated schemaVersion: " + schemaVersion);
         };
         rejectUnknownFields(root, rootFields, "root");
@@ -84,6 +98,9 @@ public final class AreaJsonCodec {
         AreaPosition pos1 = requirePosition(root, "pos1");
         AreaPosition pos2 = requirePosition(root, "pos2");
         int priority = optionalInt(root, "priority", 0);
+        String displayName = root.has("displayName") ? requireString(root, "displayName") : "";
+        int color = optionalColor(root, "color");
+        boolean enabled = optionalBoolean(root, "enabled", true);
 
         try {
             PlaybackDefinition playback;
@@ -112,7 +129,8 @@ public final class AreaJsonCodec {
                 resumeOnReenter = optionalBoolean(root, "resumeOnReenter", false);
             }
             return new AreaDefinition(
-                    areaId, dimension, pos1, pos2, playback, resumeOnReenter, priority
+                    areaId, dimension, pos1, pos2, playback, resumeOnReenter, priority,
+                    displayName, color, enabled
             );
         } catch (IllegalArgumentException exception) {
             throw new JsonParseException("Invalid area '" + areaId + "': " + exception.getMessage(), exception);
@@ -152,6 +170,13 @@ public final class AreaJsonCodec {
         }
         root.addProperty("resumeOnReenter", area.resumeOnReenter());
         root.addProperty("priority", area.priority());
+        if (!area.displayName().isEmpty()) {
+            root.addProperty("displayName", area.displayName());
+        }
+        if (area.color() != AreaDefinition.AUTO_COLOR) {
+            root.addProperty("color", String.format(Locale.ROOT, "#%06X", area.color()));
+        }
+        root.addProperty("enabled", area.enabled());
         return GSON.toJson(root) + System.lineSeparator();
     }
 
@@ -294,6 +319,17 @@ public final class AreaJsonCodec {
         } catch (NumberFormatException exception) {
             throw new JsonParseException(name + " must be a number", exception);
         }
+    }
+
+    private static int optionalColor(JsonObject object, String name) {
+        if (!object.has(name)) {
+            return AreaDefinition.AUTO_COLOR;
+        }
+        JsonPrimitive value = requirePrimitive(object, name);
+        if (!value.isString() || !COLOR_PATTERN.matcher(value.getAsString()).matches()) {
+            throw new JsonParseException(name + " must be a #RRGGBB string");
+        }
+        return Integer.parseInt(value.getAsString().substring(1), 16);
     }
 
     private static boolean optionalBoolean(JsonObject object, String name, boolean defaultValue) {

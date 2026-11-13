@@ -64,7 +64,7 @@ class AreaJsonCodecTest {
     void writerEmitsSchemaV3ParallelMode() {
         JsonObject root = JsonParser.parseString(codec.write(area(false))).getAsJsonObject();
 
-        assertEquals(3, root.get("schemaVersion").getAsInt());
+        assertEquals(4, root.get("schemaVersion").getAsInt());
         assertEquals("parallel", root.get("playbackMode").getAsString());
     }
 
@@ -89,7 +89,7 @@ class AreaJsonCodecTest {
         assertEquals(900, root.get("fadeOutMs").getAsInt());
         assertTrue(root.get("resumeOnReenter").getAsBoolean());
         assertEquals(4, root.get("priority").getAsInt());
-        assertEquals(PLAYLIST_V3_ROOT_FIELDS, root.keySet());
+        assertEquals(withEnabled(PLAYLIST_V3_ROOT_FIELDS), root.keySet());
         assertFalse(root.has("tracks"));
     }
 
@@ -105,7 +105,7 @@ class AreaJsonCodecTest {
 
         assertEquals(new AreaPosition(10, 80, 10), area.pos1());
         assertEquals(new AreaPosition(0, 60, 0), area.pos2());
-        assertEquals(3, upgraded.get("schemaVersion").getAsInt());
+        assertEquals(4, upgraded.get("schemaVersion").getAsInt());
         assertEquals("parallel", upgraded.get("playbackMode").getAsString());
         assertEquals(JsonParser.parseString("{\"x\":10,\"y\":80,\"z\":10}"), upgraded.get("pos1"));
         assertEquals(JsonParser.parseString("{\"x\":0,\"y\":60,\"z\":0}"), upgraded.get("pos2"));
@@ -573,11 +573,11 @@ class AreaJsonCodecTest {
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
         JsonObject firstTrack = root.getAsJsonArray("tracks").get(0).getAsJsonObject();
 
-        assertTrue(json.startsWith("{\n  \"schemaVersion\": 3,"));
+        assertTrue(json.startsWith("{\n  \"schemaVersion\": 4,"));
         assertTrue(json.contains("\n  \"tracks\": [\n    {"));
-        assertEquals(3, root.get("schemaVersion").getAsInt());
+        assertEquals(4, root.get("schemaVersion").getAsInt());
         assertEquals("parallel", root.get("playbackMode").getAsString());
-        assertEquals(PARALLEL_V3_ROOT_FIELDS, root.keySet());
+        assertEquals(withEnabled(PARALLEL_V3_ROOT_FIELDS), root.keySet());
         assertEquals(TRACK_FIELDS, firstTrack.keySet());
         assertTrue(root.get("resumeOnReenter").getAsBoolean());
         assertEquals(12, root.get("priority").getAsInt());
@@ -727,7 +727,7 @@ class AreaJsonCodecTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = {0, 4, -1})
+    @ValueSource(ints = {0, 5, -1})
     void rejectsUnsupportedSchemaVersions(int schemaVersion) {
         String json = v2Json("[{ \"musicId\": \"track.ogg\" }]", "")
                 .replace("\"schemaVersion\": 2", "\"schemaVersion\": " + schemaVersion);
@@ -743,6 +743,83 @@ class AreaJsonCodecTest {
         assertThrows(JsonParseException.class, () -> codec.read("square", new StringReader(unknown)));
         assertThrows(JsonParseException.class,
                 () -> codec.read("square", new StringReader(fractionalCoordinate)));
+    }
+
+    @Test
+    void writesSchemaVersion4AndRoundTripsEditorFields() {
+        AreaDefinition parallel = area(true)
+                .withDisplayName("村庄").withColor(0x1D9E75).withEnabled(false);
+        AreaDefinition playlist = AreaDefinition.createPlaylistLoop(
+                "playlist", "minecraft:overworld",
+                new AreaPosition(0, 0, 0), new AreaPosition(1, 1, 1),
+                List.of("first.ogg", "second.ogg"), 0.75f, 250, 900, true, 4
+        ).withDisplayName("酒馆 🍺").withColor(0x00ab0f).withEnabled(false);
+
+        String parallelJson = codec.write(parallel);
+        String playlistJson = codec.write(playlist);
+
+        assertTrue(parallelJson.contains("\"schemaVersion\": 4"));
+        assertTrue(parallelJson.contains("\"color\": \"#1D9E75\""));
+        assertTrue(parallelJson.contains("\"displayName\": \"村庄\""));
+        assertTrue(parallelJson.contains("\"enabled\": false"));
+        assertTrue(playlistJson.contains("\"color\": \"#00AB0F\""));
+        assertEquals(parallel, codec.read("boss", new StringReader(parallelJson)));
+        assertEquals(playlist, codec.read("playlist", new StringReader(playlistJson)));
+    }
+
+    @Test
+    void omitsBlankDisplayNameAndAutoColor() {
+        JsonObject root = JsonParser.parseString(codec.write(area(false))).getAsJsonObject();
+
+        assertFalse(root.has("displayName"));
+        assertFalse(root.has("color"));
+        assertTrue(root.get("enabled").getAsBoolean());
+    }
+
+    @Test
+    void readsVersion3WithEditorDefaults() {
+        AreaDefinition area = codec.read("square", new StringReader(v3Json("\"parallel\"", "")));
+
+        assertTrue(area.enabled());
+        assertEquals("", area.displayName());
+        assertEquals(AreaDefinition.AUTO_COLOR, area.color());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\"enabled\": false", "\"displayName\": \"x\"", "\"color\": \"#000000\""})
+    void version3RejectsVersion4Fields(String field) {
+        String json = v3Json("\"parallel\"", ",\n  " + field);
+
+        JsonParseException error = assertThrows(
+                JsonParseException.class, () -> codec.read("square", new StringReader(json)));
+        assertTrue(error.getMessage().contains("Unknown field"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\"1D9E75\"", "\"#12345\"", "\"#GGGGGG\"", "123", "true"})
+    void rejectsMalformedColor(String color) {
+        String json = v3Json("\"parallel\"", ",\n  \"color\": " + color)
+                .replace("\"schemaVersion\": 3", "\"schemaVersion\": 4");
+
+        JsonParseException error = assertThrows(
+                JsonParseException.class, () -> codec.read("square", new StringReader(json)));
+        assertTrue(error.getMessage().contains("color"));
+    }
+
+    @Test
+    void version4RejectsInvalidDisplayNameWithAreaId() {
+        String json = v3Json("\"parallel\"", ",\n  \"displayName\": \"" + "x".repeat(65) + "\"")
+                .replace("\"schemaVersion\": 3", "\"schemaVersion\": 4");
+
+        JsonParseException error = assertThrows(
+                JsonParseException.class, () -> codec.read("square", new StringReader(json)));
+        assertTrue(error.getMessage().contains("Invalid area 'square'"));
+    }
+
+    private static Set<String> withEnabled(Set<String> fields) {
+        Set<String> expected = new java.util.HashSet<>(fields);
+        expected.add("enabled");
+        return expected;
     }
 
     private static AreaDefinition area(boolean resumeOnReenter) {
