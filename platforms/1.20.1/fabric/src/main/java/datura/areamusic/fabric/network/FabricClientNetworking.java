@@ -3,6 +3,8 @@ package datura.areamusic.fabric.network;
 import datura.areamusic.network.ClientPacketHandler;
 import datura.areamusic.network.ClientboundPlaybackState;
 import datura.areamusic.network.ClientboundReloadMusic;
+import datura.areamusic.network.SyncBlob;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.minecraft.client.Minecraft;
@@ -47,7 +49,23 @@ public final class FabricClientNetworking {
                     "AreaMusic reload receiver was already registered by another owner"
             );
         }
+        ClientPlayNetworking.registerGlobalReceiver(
+                FabricAreaMusicNetwork.SYNC_TO_CLIENT_CHANNEL,
+                (client, networkHandler, buffer, responseSender) -> {
+                    byte[] data = SyncBlob.decodeClientbound(buffer).data();
+                    client.execute(() -> requireClientHandler().onSync(data));
+                }
+        );
         receiversRegistered = true;
+    }
+
+    /** Sends the bytes of one serverbound sync message; dropped when the server lacks the mod. */
+    public static void sendSyncToServer(byte[] data) {
+        if (ClientPlayNetworking.canSend(FabricAreaMusicNetwork.SYNC_TO_SERVER_CHANNEL)) {
+            FriendlyByteBuf buffer = PacketByteBufs.create();
+            SyncBlob.encode(new SyncBlob(data), buffer);
+            ClientPlayNetworking.send(FabricAreaMusicNetwork.SYNC_TO_SERVER_CHANNEL, buffer);
+        }
     }
 
     public static void setClientHandler(ClientPacketHandler handler) {

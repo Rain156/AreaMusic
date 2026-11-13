@@ -7,4 +7,8 @@ public interface ClientPacketHandler {
     void onPlayback(long revision, PlaybackState state);
 
     void onReload(long revision);
+
+    /** Receives the encoded bytes of one clientbound {@code SyncMessage}. */
+    default void onSync(byte[] data) {
+    }
 }

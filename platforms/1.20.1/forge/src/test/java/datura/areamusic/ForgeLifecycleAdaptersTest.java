@@ -39,8 +39,9 @@ class ForgeLifecycleAdaptersTest {
 
         assertSubscriber(modEvents, "MOD", true);
         assertSubscriber(forgeEvents, "FORGE", true);
-        assertSubscribedMethods(modEvents, Set.of("onClientSetup"));
+        assertSubscribedMethods(modEvents, Set.of("onClientSetup", "onRegisterKeyMappings"));
         assertSubscribedMethods(forgeEvents, Set.of(
+                "onRenderLevel",
                 "onClientTick",
                 "onLoggingIn",
                 "onLoggingOut",
@@ -52,7 +53,7 @@ class ForgeLifecycleAdaptersTest {
         assertCall(forgeEvents.method("onClientTick"),
                 "datura/areamusic/client/ClientAreaMusic#tick");
         assertField(forgeEvents.method("onClientTick"),
-                "net/minecraftforge/event/TickEvent$Phase#END");
+                "net/minecraftforge/event/TickEvent$Phase#START");
         assertCall(forgeEvents.method("onLoggingIn"),
                 "datura/areamusic/client/ClientAreaMusic#connect");
         assertCall(forgeEvents.method("onLoggingOut"),
@@ -148,12 +149,11 @@ class ForgeLifecycleAdaptersTest {
         assertJump(requestReload, Opcodes.IFNONNULL);
         assertAnyCall(server, "lambda$requestReload$",
                 reloadOperation + "server");
+        // Creating an area is applied at once through the edit service; it only has to
+        // stand aside while a reload is replacing everything.
         MethodData createArea = server.method("createArea");
-        assertCall(createArea, coordinator + "createBusy");
-        assertCall(createArea, coordinator + "beginCreate");
-        assertJump(createArea, Opcodes.IFNONNULL);
-        assertAnyCall(server, "lambda$createArea$",
-                createOperation + "server");
+        assertCall(createArea, coordinator + "reloadInFlight");
+        assertCall(createArea, "datura/areamusic/server/AreaMusicServer#applyEdit");
         MethodData finishReload = server.method("finishReload");
         assertCall(finishReload, reloadOperation + "lifecycle");
         assertCall(finishReload, coordinator + "finishReload");
@@ -163,22 +163,12 @@ class ForgeLifecycleAdaptersTest {
         assertCall(finishReload, completion + "lifecycle");
         assertCall(finishReload, completion + "server");
         assertCall(finishReload, completion + "sender");
-        MethodData finishCreate = server.method("finishCreate");
-        assertCall(finishCreate, createOperation + "lifecycle");
-        assertCall(finishCreate, coordinator + "finishCreate");
-        assertJump(finishCreate, Opcodes.IFNONNULL);
-        assertCall(finishCreate,
-                "datura/areamusic/server/AreaMusicServer$ServerState#owns");
-        assertCall(finishCreate, completion + "lifecycle");
-        assertCall(finishCreate, completion + "server");
-        assertCall(finishCreate, completion + "sender");
         assertCall(server.method("onPlayerLogout"), coordinator + "removeTracker");
         assertCall(server.method("forceSync"), coordinator + "removeTracker");
         assertCall(server.method("forceSync"), coordinator + "senderFor");
         assertCall(server.method("syncPlayer"), coordinator + "senderFor");
         assertCall(server.method("syncPlayerWithSender"), coordinator + "tracker");
         assertCall(finishReload, coordinator + "clearTrackers");
-        assertCall(finishCreate, coordinator + "clearTrackers");
     }
 
     private static void assertPlayerDelegation(

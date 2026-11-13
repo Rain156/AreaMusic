@@ -4,6 +4,8 @@ import datura.areamusic.fabric.AreaMusicFabric;
 import datura.areamusic.fabric.AreaMusicFabric.RegistrationGuard;
 import datura.areamusic.network.ClientboundPlaybackState;
 import datura.areamusic.network.ClientboundReloadMusic;
+import datura.areamusic.network.SyncBlob;
+import datura.areamusic.server.AreaMusicServer;
 import datura.areamusic.playback.PlaybackState;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -23,6 +25,15 @@ public final class FabricAreaMusicNetwork {
             "reload"
     );
 
+    public static final ResourceLocation SYNC_TO_CLIENT_CHANNEL = new ResourceLocation(
+            AreaMusicFabric.MOD_ID,
+            "sync_s2c"
+    );
+    public static final ResourceLocation SYNC_TO_SERVER_CHANNEL = new ResourceLocation(
+            AreaMusicFabric.MOD_ID,
+            "sync_c2s"
+    );
+
     private static final RegistrationGuard REGISTRATION = new RegistrationGuard(
             "AreaMusic Fabric networking has not been registered"
     );
@@ -30,8 +41,25 @@ public final class FabricAreaMusicNetwork {
     private FabricAreaMusicNetwork() {
     }
 
-    public static void register() {
+    public static synchronized void register() {
+        if (REGISTRATION.isRegistered()) {
+            return;
+        }
+        ServerPlayNetworking.registerGlobalReceiver(
+                SYNC_TO_SERVER_CHANNEL,
+                (server, player, handler, buffer, responseSender) -> {
+                    byte[] data = SyncBlob.decodeServerbound(buffer).data();
+                    server.execute(() -> AreaMusicServer.onSyncMessage(player, data));
+                }
+        );
         REGISTRATION.register();
+    }
+
+    public static void sendSync(ServerPlayer player, byte[] data) {
+        requireRegistered();
+        FriendlyByteBuf buffer = PacketByteBufs.create();
+        SyncBlob.encode(new SyncBlob(data), buffer);
+        ServerPlayNetworking.send(Objects.requireNonNull(player, "player"), SYNC_TO_CLIENT_CHANNEL, buffer);
     }
 
     public static void sendReload(ServerPlayer player, long revision) {

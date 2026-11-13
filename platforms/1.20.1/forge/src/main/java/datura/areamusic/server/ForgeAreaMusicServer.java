@@ -85,5 +85,10 @@ public final class ForgeAreaMusicServer {
         public void sendPlayback(ServerPlayer player, long revision, PlaybackState state) {
             AreaMusicNetwork.sendPlayback(player, revision, state);
         }
+
+        @Override
+        public void sendSync(ServerPlayer player, byte[] data) {
+            AreaMusicNetwork.sendSync(player, data);
+        }
     }
 }

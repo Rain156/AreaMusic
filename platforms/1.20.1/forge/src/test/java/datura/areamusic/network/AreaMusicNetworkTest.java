@@ -14,11 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AreaMusicNetworkTest {
     @Test
-    void protocolVersionIsThreeForPlaybackModeWireLayout() throws Exception {
+    void protocolVersionIsFourForTheSyncChannel() throws Exception {
         Field protocolVersion = AreaMusicNetwork.class.getDeclaredField("PROTOCOL_VERSION");
         protocolVersion.setAccessible(true);
 
-        assertEquals("3", protocolVersion.get(null));
+        assertEquals("4", protocolVersion.get(null));
     }
 
     @Test

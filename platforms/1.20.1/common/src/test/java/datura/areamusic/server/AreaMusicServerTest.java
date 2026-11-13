@@ -53,16 +53,52 @@ class AreaMusicServerTest {
     }
 
     @Test
-    void storageDirectoryUsesTheNormalizedConfigRootAndWorldDirectoryName() {
+    void storageLivesInTheWorldAndLegacyDirectoryStaysUnderConfig() {
         Path configDirectory = tempDir.resolve("config").resolve("..").resolve("config");
         Path worldRoot = tempDir.resolve("saves").resolve("My World");
 
-        Path actual = AreaMusicServer.storageDirectory(configDirectory, worldRoot);
-
+        assertEquals(
+                worldRoot.toAbsolutePath().normalize().resolve("areamusic").resolve("areas"),
+                AreaMusicServer.storageDirectory(worldRoot)
+        );
         assertEquals(
                 AreaStorage.directory(configDirectory, AreaStorage.saveId("My World")),
-                actual
+                AreaMusicServer.legacyStorageDirectory(configDirectory, worldRoot)
         );
+    }
+
+    @Test
+    void loadCandidateMigratesLegacyAreasAndKeepsAreasWithMissingMusic() throws Exception {
+        Path gameDirectory = tempDir.resolve("game");
+        Path worldRoot = tempDir.resolve("saves").resolve("world");
+        Path legacy = AreaMusicServer.legacyStorageDirectory(tempDir.resolve("config"), worldRoot);
+        Files.createDirectories(legacy);
+        Files.writeString(legacy.resolve("village.json"), """
+                {
+                  "schemaVersion": 1,
+                  "dimension": "minecraft:overworld",
+                  "pos1": { "x": 0, "y": 64, "z": 0 },
+                  "pos2": { "x": 10, "y": 80, "z": 10 },
+                  "musicId": "not-in-library.ogg"
+                }
+                """);
+        Files.writeString(legacy.resolve("broken.json"), "{");
+        AreaStorage storage = new AreaStorage(
+                AreaMusicServer.storageDirectory(worldRoot), new AreaJsonCodec());
+
+        AreaMusicServer.ReloadCandidate candidate =
+                AreaMusicServer.loadCandidate(gameDirectory, storage, legacy);
+
+        assertEquals(List.of("village"), candidate.areas().stream().map(area -> area.id()).toList());
+        assertEquals(1, candidate.skipped().size());
+        assertTrue(candidate.skipped().get(0).startsWith("broken.json: "));
+        assertTrue(Files.exists(storage.directory().resolve("village.json")));
+        assertTrue(Files.exists(legacy.resolve("village.json")));
+
+        AreaMusicServer.ReloadCandidate again =
+                AreaMusicServer.loadCandidate(gameDirectory, storage, legacy);
+        assertEquals(List.of("village"), again.areas().stream().map(area -> area.id()).toList());
+        assertEquals(List.of(), again.skipped());
     }
 
     @Test

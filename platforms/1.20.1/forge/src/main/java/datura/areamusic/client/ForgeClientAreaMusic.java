@@ -1,10 +1,14 @@
 package datura.areamusic.client;
 
 import datura.areamusic.AreaMusic;
+import datura.areamusic.client.editor.AreaMusicEditor;
 import datura.areamusic.config.AreaMusicClientConfig;
 import datura.areamusic.network.AreaMusicNetwork;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
+import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
+import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.event.GameShuttingDownEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -29,8 +33,10 @@ public final class ForgeClientAreaMusic {
                 gameDirectory,
                 AreaMusicClientConfig.INSTANCE::volume
         );
+        created.setSyncSender(AreaMusicNetwork::sendSyncToServer);
         instance = created;
         AreaMusicNetwork.setClientHandler(created);
+        AreaMusicEditor.install(created);
     }
 
     @Mod.EventBusSubscriber(
@@ -46,6 +52,11 @@ public final class ForgeClientAreaMusic {
         public static void onClientSetup(FMLClientSetupEvent event) {
             event.enqueueWork(ForgeClientAreaMusic::initialize);
         }
+
+        @SubscribeEvent
+        public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
+            event.register(AreaMusicEditor.TOGGLE_KEY);
+        }
     }
 
     @Mod.EventBusSubscriber(
@@ -59,10 +70,26 @@ public final class ForgeClientAreaMusic {
 
         @SubscribeEvent
         public static void onClientTick(TickEvent.ClientTickEvent event) {
+            if (event.phase == TickEvent.Phase.START) {
+                AreaMusicEditor.onClientTickStart();
+                return;
+            }
             ClientAreaMusic current = instance;
-            if (event.phase == TickEvent.Phase.END && current != null) {
+            if (current != null) {
                 current.tick();
             }
+            AreaMusicEditor.onClientTickEnd();
+        }
+
+        @SubscribeEvent
+        public static void onRenderLevel(RenderLevelStageEvent event) {
+            if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
+                return;
+            }
+            var buffers = Minecraft.getInstance().renderBuffers().bufferSource();
+            AreaMusicEditor.onRenderWorld(
+                    event.getPoseStack(), buffers, event.getCamera().getPosition());
+            buffers.endBatch();
         }
 
         @SubscribeEvent
@@ -89,6 +116,7 @@ public final class ForgeClientAreaMusic {
                 instance = null;
             }
             if (current != null) {
+                AreaMusicEditor.uninstall();
                 current.shutdown();
                 AreaMusicNetwork.clearClientHandler(current);
             }

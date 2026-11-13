@@ -121,5 +121,10 @@ public final class FabricAreaMusicServer {
         public void sendPlayback(ServerPlayer player, long revision, PlaybackState state) {
             FabricAreaMusicNetwork.sendPlayback(player, revision, state);
         }
+
+        @Override
+        public void sendSync(ServerPlayer player, byte[] data) {
+            FabricAreaMusicNetwork.sendSync(player, data);
+        }
     }
 }

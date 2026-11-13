@@ -118,8 +118,10 @@ class ClientAreaMusicTest {
         ManualExecutor background = new ManualExecutor();
         FakeClientRuntime client = new FakeClientRuntime();
         FakeMixer mixer = new FakeMixer();
-        MusicLibrary newer = MusicLibrary.empty(tempDir.resolve("newer"));
-        MusicLibrary stale = MusicLibrary.empty(tempDir.resolve("stale"));
+        MusicLibrary newer = MusicLibrary.of(
+                tempDir.resolve("newer"), java.util.Map.of("newer.ogg", tempDir.resolve("newer.ogg")));
+        MusicLibrary stale = MusicLibrary.of(
+                tempDir.resolve("stale"), java.util.Map.of("stale.ogg", tempDir.resolve("stale.ogg")));
         Deque<MusicLibrary> results = new ArrayDeque<>(List.of(newer, stale));
         ClientAreaMusic service = service(
                 tempDir.resolve("game"),
@@ -136,7 +138,9 @@ class ClientAreaMusicTest {
         background.runAt(0);
         client.mainThread.runAll();
 
-        assertEquals(List.of(newer), mixer.updatedLibraries);
+        assertEquals(
+                List.of(java.util.Set.of("newer.ogg")),
+                mixer.updatedLibraries.stream().map(MusicLibrary::ids).toList());
     }
 
     @Test

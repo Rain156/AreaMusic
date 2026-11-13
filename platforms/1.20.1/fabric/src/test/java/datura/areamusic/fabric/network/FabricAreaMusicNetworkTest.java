@@ -207,7 +207,7 @@ class FabricAreaMusicNetworkTest {
         assertCallCount(
                 registration,
                 "net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking#registerGlobalReceiver",
-                2
+                3
         );
         assertReceiverRegistrationShortCircuit(registration);
         assertReceiverRegistrationCompletion(registration);
@@ -346,8 +346,8 @@ class FabricAreaMusicNetworkTest {
                 "CALL:net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking"
                         + "#registerGlobalReceiver";
         List<Integer> registrations = instructionIndexesStartingWith(method, registrationCall);
-        assertEquals(2, registrations.size(),
-                () -> "registerClientReceivers must contain exactly two receiver registrations: "
+        assertEquals(3, registrations.size(),
+                () -> "registerClientReceivers must register playback, reload and sync receivers: "
                         + method.instructions);
 
         String fieldWrite = "FIELD:" + Opcodes.PUTSTATIC + ":"
@@ -358,8 +358,8 @@ class FabricAreaMusicNetworkTest {
                 () -> "registerClientReceivers must write receiversRegistered exactly once: "
                         + method.instructions);
         int write = writes.get(0);
-        assertTrue(write > registrations.get(1),
-                () -> "receiversRegistered must be written only after both registrations: "
+        assertTrue(write > registrations.get(2),
+                () -> "receiversRegistered must be written only after every registration: "
                         + method.instructions);
         assertEquals("INSN:" + Opcodes.ICONST_1, method.instructions.get(write - 1),
                 () -> "registerClientReceivers must set receiversRegistered to true: "

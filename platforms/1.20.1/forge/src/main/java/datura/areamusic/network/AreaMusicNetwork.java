@@ -2,6 +2,8 @@ package datura.areamusic.network;
 
 import datura.areamusic.AreaMusic;
 import datura.areamusic.playback.PlaybackState;
+import datura.areamusic.server.AreaMusicServer;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkDirection;
@@ -16,7 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 public final class AreaMusicNetwork {
-    private static final String PROTOCOL_VERSION = "3";
+    private static final String PROTOCOL_VERSION = "4";
     private static final ClientPacketHandler NO_OP_CLIENT_HANDLER = new ClientPacketHandler() {
         @Override
         public void onPlayback(long revision, PlaybackState state) {
@@ -55,12 +57,28 @@ public final class AreaMusicNetwork {
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         channel.registerMessage(
-                messageId,
+                messageId++,
                 ClientboundReloadMusic.class,
                 ClientboundReloadMusic::encode,
                 ClientboundReloadMusic::decode,
                 AreaMusicNetwork::handleReloadPacket,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        channel.registerMessage(
+                messageId++,
+                SyncToClient.class,
+                (message, buffer) -> SyncBlob.encode(message.blob(), buffer),
+                buffer -> new SyncToClient(SyncBlob.decodeClientbound(buffer)),
+                AreaMusicNetwork::handleSyncToClient,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        channel.registerMessage(
+                messageId,
+                SyncToServer.class,
+                (message, buffer) -> SyncBlob.encode(message.blob(), buffer),
+                buffer -> new SyncToServer(SyncBlob.decodeServerbound(buffer)),
+                AreaMusicNetwork::handleSyncToServer,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
     }
 
@@ -87,6 +105,39 @@ public final class AreaMusicNetwork {
                 PacketDistributor.PLAYER.with(() -> player),
                 new ClientboundReloadMusic(revision)
         );
+    }
+
+    public static void sendSync(ServerPlayer player, byte[] data) {
+        requireChannel().send(
+                PacketDistributor.PLAYER.with(() -> player),
+                new SyncToClient(new SyncBlob(data))
+        );
+    }
+
+    /** Client only. */
+    public static void sendSyncToServer(byte[] data) {
+        requireChannel().sendToServer(new SyncToServer(new SyncBlob(data)));
+    }
+
+    private static void handleSyncToClient(
+            SyncToClient message,
+            Supplier<NetworkEvent.Context> contextSupplier
+    ) {
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> CLIENT_HANDLER.get().onSync(message.blob().data()));
+        context.setPacketHandled(true);
+    }
+
+    private static void handleSyncToServer(
+            SyncToServer message,
+            Supplier<NetworkEvent.Context> contextSupplier
+    ) {
+        NetworkEvent.Context context = contextSupplier.get();
+        ServerPlayer sender = context.getSender();
+        if (sender != null) {
+            context.enqueueWork(() -> AreaMusicServer.onSyncMessage(sender, message.blob().data()));
+        }
+        context.setPacketHandled(true);
     }
 
     static void handleClientPlayback(ClientboundPlaybackState message) {
@@ -122,4 +173,11 @@ public final class AreaMusicNetwork {
         return channel;
     }
 
+    /** Bytes of one clientbound sync message. */
+    public record SyncToClient(SyncBlob blob) {
+    }
+
+    /** Bytes of one serverbound sync message. */
+    public record SyncToServer(SyncBlob blob) {
+    }
 }
