@@ -34,6 +34,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 
@@ -478,11 +479,18 @@ public final class AreaMusicServer {
         }
         AreaPosition min = area.min();
         AreaPosition max = area.max();
+        int centerX = Math.floorDiv(min.x() + max.x(), 2);
+        int centerZ = Math.floorDiv(min.z() + max.z(), 2);
+        // Stand on the ground inside the area when there is some, so the music starts at once
+        // and nobody is dropped from the top of a tall area.
+        int surface = level.getChunk(centerX >> 4, centerZ >> 4)
+                .getHeight(Heightmap.Types.MOTION_BLOCKING, centerX & 15, centerZ & 15) + 1;
+        int feet = Math.max(min.y(), Math.min(max.y(), surface));
         player.teleportTo(
                 level,
-                (min.x() + max.x() + 1) / 2.0,
-                max.y() + 1.0,
-                (min.z() + max.z() + 1) / 2.0,
+                centerX + 0.5,
+                feet,
+                centerZ + 0.5,
                 player.getYRot(),
                 player.getXRot()
         );

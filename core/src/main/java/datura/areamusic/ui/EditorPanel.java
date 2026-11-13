@@ -21,6 +21,7 @@ import java.util.Objects;
  */
 public final class EditorPanel {
     private static final int FILTER_THRESHOLD = 8;
+    private static final long NOTICE_NANOS = 8_000_000_000L;
 
     private final ClientSync sync;
     private final EditorModel model;
@@ -28,6 +29,7 @@ public final class EditorPanel {
     private String filter = "";
     private String notice;
     private boolean noticeIsError;
+    private long noticeSince;
     /** Area for which "layers" was chosen while it still has a single track. */
     private String layersIntent;
 
@@ -49,6 +51,7 @@ public final class EditorPanel {
                     notice = t(useMusic(musicId) ? "areamusic.upload.bound" : "areamusic.upload.done", musicId);
                     noticeIsError = false;
                 }
+                noticeSince = System.nanoTime();
             });
         }
     }
@@ -87,9 +90,15 @@ public final class EditorPanel {
                 model.clearError();
             }
         });
+        if (notice != null && !noticeIsError && System.nanoTime() - noticeSince > NOTICE_NANOS) {
+            notice = null;
+        }
         if (notice != null) {
             if (noticeIsError) {
                 ui.error(notice);
+                if (ui.button("dismiss_notice", t("areamusic.editor.dismiss"))) {
+                    notice = null;
+                }
             } else {
                 ui.hint(notice);
             }

@@ -1,19 +1,25 @@
 package datura.areamusic.fabric.client;
 
 import datura.areamusic.client.AreaMusicSoundOptions;
+import com.mojang.blaze3d.vertex.PoseStack;
 import datura.areamusic.client.ClientAreaMusic;
+import datura.areamusic.client.editor.AreaMusicEditor;
 import datura.areamusic.fabric.config.FabricClientConfig;
 import datura.areamusic.fabric.network.FabricClientNetworking;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.renderer.MultiBufferSource;
 
 import java.nio.file.Path;
 
@@ -24,7 +30,10 @@ public final class FabricClientAreaMusic implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         initialize();
+        KeyBindingHelper.registerKeyBinding(AreaMusicEditor.TOGGLE_KEY);
+        ClientTickEvents.START_CLIENT_TICK.register(client -> AreaMusicEditor.onClientTickStart());
         ClientTickEvents.END_CLIENT_TICK.register(FabricClientAreaMusic::onClientEndTick);
+        WorldRenderEvents.AFTER_TRANSLUCENT.register(FabricClientAreaMusic::onRenderWorld);
         ClientPlayConnectionEvents.JOIN.register(FabricClientAreaMusic::onJoin);
         ClientPlayConnectionEvents.DISCONNECT.register(FabricClientAreaMusic::onDisconnect);
         ClientLifecycleEvents.CLIENT_STOPPING.register(FabricClientAreaMusic::onClientStopping);
@@ -52,6 +61,14 @@ public final class FabricClientAreaMusic implements ClientModInitializer {
         }
         config = loadedConfig;
         instance = created;
+        AreaMusicEditor.install(created);
+    }
+
+    private static void onRenderWorld(WorldRenderContext context) {
+        MultiBufferSource.BufferSource buffers = Minecraft.getInstance().renderBuffers().bufferSource();
+        PoseStack poseStack = context.matrixStack() == null ? new PoseStack() : context.matrixStack();
+        AreaMusicEditor.onRenderWorld(poseStack, buffers, context.camera().getPosition());
+        buffers.endBatch();
     }
 
     private static void onClientEndTick(Minecraft client) {
@@ -59,6 +76,7 @@ public final class FabricClientAreaMusic implements ClientModInitializer {
         if (current != null) {
             current.tick();
         }
+        AreaMusicEditor.onClientTickEnd();
     }
 
     private static void onJoin(
@@ -90,6 +108,7 @@ public final class FabricClientAreaMusic implements ClientModInitializer {
             config = null;
         }
         if (current != null) {
+            AreaMusicEditor.uninstall();
             current.shutdown();
             FabricClientNetworking.clearClientHandler(current);
         }

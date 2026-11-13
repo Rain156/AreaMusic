@@ -46,8 +46,10 @@ class ForgeLifecycleAdaptersTest {
         assertSubscriber(modEvents, "MOD", true);
         assertSubscriber(forgeEvents, "FORGE", true);
         assertSubscriber(soundOptions, "FORGE", true);
-        assertSubscribedMethods(modEvents, Set.of("onClientSetup"));
+        assertSubscribedMethods(modEvents, Set.of("onClientSetup", "onRegisterKeyMappings"));
         assertSubscribedMethods(forgeEvents, Set.of(
+                "onClientTickStart",
+                "onRenderLevel",
                 "onClientTick",
                 "onLoggingIn",
                 "onLoggingOut",
