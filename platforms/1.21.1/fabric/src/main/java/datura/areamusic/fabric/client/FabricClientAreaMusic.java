@@ -4,6 +4,7 @@ import datura.areamusic.client.AreaMusicSoundOptions;
 import com.mojang.blaze3d.vertex.PoseStack;
 import datura.areamusic.client.ClientAreaMusic;
 import datura.areamusic.client.editor.AreaMusicEditor;
+import datura.areamusic.fabric.axiom.AxiomIntegration;
 import datura.areamusic.fabric.config.FabricClientConfig;
 import datura.areamusic.fabric.network.FabricClientNetworking;
 import net.fabricmc.api.ClientModInitializer;
@@ -62,6 +63,7 @@ public final class FabricClientAreaMusic implements ClientModInitializer {
         config = loadedConfig;
         instance = created;
         AreaMusicEditor.install(created);
+        AxiomIntegration.registerIfPresent(created);
     }
 
     private static void onRenderWorld(WorldRenderContext context) {

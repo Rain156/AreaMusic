@@ -90,6 +90,13 @@ def verifyClassBoundaries = tasks.register('verifyClassBoundaries', VerifyClassB
 repositories {
     mavenCentral()
     maven {
+        name = 'JitPack'
+        url = 'https://jitpack.io'
+        content {
+            includeGroup 'com.github.moulberry'
+        }
+    }
+    maven {
         name = 'Fabric'
         url = 'https://maven.fabricmc.net/'
     }
@@ -100,6 +107,13 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${mc1_21_1_fabric_loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${mc1_21_1_fabric_api_version}"
+    // Axiom is optional at runtime and supplies these classes itself when installed.
+    modCompileOnly("com.github.moulberry:AxiomClientAPI:${mc1_21_1_axiom_api_version}") {
+        transitive = false
+    }
+    compileOnly('io.github.spair:imgui-java-binding:1.86.10') {
+        transitive = false
+    }
 
     implementation(project(':core')) {
         transitive = false

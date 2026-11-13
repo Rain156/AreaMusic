@@ -19,6 +19,10 @@ repositories {
 
 dependencies {
     compileOnlyApi 'com.google.code.gson:gson:2.10'
+    // Only for the Axiom panel adapter; Axiom itself provides ImGui at runtime.
+    compileOnly('io.github.spair:imgui-java-binding:1.86.10') {
+        transitive = false
+    }
 
     implementation('com.googlecode.soundlibs:mp3spi:1.9.5.4') {
         transitive = false

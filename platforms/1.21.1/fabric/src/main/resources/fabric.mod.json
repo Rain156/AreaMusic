@@ -22,5 +22,8 @@
     "minecraft": "${mc1_21_1_minecraft_version}",
     "java": ">=21",
     "fabric-api": ">=${mc1_21_1_fabric_api_version}"
+  },
+  "suggests": {
+    "axiom": "*"
   }
 }

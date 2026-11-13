@@ -90,6 +90,13 @@ public final class AreaMusicEditor implements PanelHost {
         }
     }
 
+    /** Draws boxes for another front end, such as the Axiom tool. Same contract as above. */
+    public static void renderBoxes(
+            PoseStack poseStack, MultiBufferSource buffers, Vec3 camera, java.util.List<EditorOverlay.Box> boxes
+    ) {
+        WorldBoxRenderer.render(poseStack, buffers, camera, boxes);
+    }
+
     void undo() {
         model.undo();
     }
