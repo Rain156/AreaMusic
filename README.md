@@ -1,188 +1,191 @@
 # AreaMusic
 
-AreaMusic 是一个由服务端定义长方体区域、在玩家进入区域时播放本地音乐的 Minecraft 模组。区域可以同时播放多条音轨，也可以按列表顺序循环播放；每个区域还支持淡入淡出、重进续播和重叠区域优先级。
+在世界里画出区域，玩家走进去就播放你指定的音乐。区域在游戏内直接创建和调整，音乐由服务器自动分发给玩家。
 
-> English summary: AreaMusic lets a server define cuboid zones that trigger local audio on players' clients. It supports parallel tracks and ordered looping playlists.
+> English summary: AreaMusic plays music inside areas you draw in the world. Areas are created and tuned with an in-game editor, and the server distributes the audio files to players automatically. Supports looping tracks, ordered playlists and layered tracks.
 
-## 重要说明
+## 三步建好一个区域
 
-- 模组必须同时安装在服务端和每一位玩家的客户端。
-- 音频文件不会通过网络传输或自动同步。服务端与所有客户端必须在各自的 `<gameDir>/areamusic/` 中准备相同 MusicID（相同的相对路径、文件名、扩展名和大小写）；各客户端使用本地文件独立解码和播放，不保证听到相同内容或保持帧级同步。
-- 专用服务器不输出声音，但仍会扫描本地音频目录，用于校验 MusicID 和命令补全。
-- Fabric 版本必须另外安装下表对应的 Fabric API；Forge 与 NeoForge 版本不需要额外库模组。
-- 项目采用类似 Architectury 的 `shared core/common + loader leaf` 多加载器结构，但没有 Architectury 运行时依赖，安装时也不需要 Architectury API。
+1. 按 `F7` 打开编辑面板，点“新建区域”。
+2. 在世界里左键点一个角，右键点另一个角。
+3. 在面板里选一首音乐，或者直接把音频文件拖进游戏窗口。
 
-## 支持版本
+改动立刻生效并自动保存。不需要 JSON，不需要重载，玩家也不需要手动放文件。
 
-以下是当前已经完成并验证的版本；加载器与 API 测试版本来自 [`gradle.properties`](gradle.properties)。
+## 支持的版本
 
-| Minecraft | 加载器 | 测试版本 | Java | 额外依赖 |
+| Minecraft | Fabric | Forge | NeoForge | Java |
 | --- | --- | --- | --- | --- |
-| 1.20.1 | Fabric | Fabric Loader 0.19.3 | 17 | Fabric API 0.92.11+1.20.1 |
-| 1.20.1 | Forge | Forge 47.4.22 | 17 | 无 |
-| 1.21.1 | Fabric | Fabric Loader 0.19.3 | 21 | Fabric API 0.116.14+1.21.1 |
-| 1.21.1 | Forge | Forge 52.1.16 | 21 | 无 |
-| 1.21.1 | NeoForge | NeoForge 21.1.244 | 21 | 无 |
+| 1.20.1 | Loader 0.19.3 + Fabric API 0.92.11 | 47.4.22 | 47.1.x（使用 Forge 的 JAR） | 17 |
+| 1.21.1 | Loader 0.19.3 + Fabric API 0.116.14 | 52.1.16 | 21.1.244 | 21 |
+| 26.3 | Loader 0.20.1 + Fabric API 0.166.2 | 66.1.8 | 26.3.0.103 | 25 |
+
+表中是构建和测试所用的版本，具体数值见 [`gradle.properties`](gradle.properties)。
 
 ## 安装
 
-1. 根据 Minecraft 版本和加载器选择对应的 `areamusic-<loader>-<minecraft>-<mod>.jar`。
-2. 把同一份 AreaMusic JAR 放入服务端和每个客户端的 `mods/`。
-3. 使用 Fabric 时，还要在服务端和每个客户端安装对应版本的 Fabric API。
-4. 启动一次游戏或服务器，让模组创建小写的 `areamusic/` 与配置目录。
-5. 将音频放入每台机器各自的 `<gameDir>/areamusic/`；相同 MusicID 必须对应相同的相对路径。
-6. 进入世界后执行 `/areamusic reload`，再创建或编辑区域。
+1. 按 Minecraft 版本和加载器选择 `areamusic-<加载器>-<版本>-<模组版本>.jar`。
+2. 放进服务端和每个客户端的 `mods/`。单人游戏只需要放进客户端。
+3. Fabric 还需要对应版本的 Fabric API；Forge 和 NeoForge 不需要其他前置。
 
-支持 `.ogg`、`.mp3`、`.wav` 和 `.flac`。MusicID 是带扩展名的相对路径，嵌套目录统一使用 `/`，例如 `village/day.mp3`。
+服务端和客户端必须是同一个模组版本。
 
-## 目录结构
+## 编辑器
 
-```text
-<gameDir>/
-├─ areamusic/
-│  ├─ ambient.ogg
-│  └─ village/
-│     └─ day.mp3
-└─ config/
-   ├─ areamusic-client.toml
-   └─ areamusic/
-      └─ <saveId>/
-         └─ village.json
-```
+按 `F7` 打开（可在按键设置里修改）。编辑需要权限，默认是管理员等级 2；单人世界的房主始终可以编辑。没有权限时面板会直接告诉你。
 
-- `<gameDir>/areamusic/`：本机音频根目录。
-- `config/areamusic/<saveId>/*.json`：当前存档的区域定义；文件名就是区域 ID。
-- `config/areamusic-client.toml`：客户端 AreaMusic 独立音量配置。
-- 旧的 `<gameDir>/AreaMusic/` 会在没有冲突时安全迁移为小写目录；如果大小写目录同时存在，请先备份并手动合并。
+**面板里的日常操作**
+
+- 新建区域，或“在我周围创建”一个以你为中心的区域。
+- 区域列表：点一下选中，再点一下取消。
+- 名称、音乐、音量。
+- 播放方式：单曲循环、歌单（按顺序循环）、多轨叠加（同时播放）。
+- 传送、显示/隐藏、复制、删除。
+- 撤销 `Ctrl+Z`、重做 `Ctrl+Y`。删除不弹确认，靠撤销恢复。
+
+**“高级”里的内容**（默认折叠）
+
+- 淡入、淡出时长。
+- 优先级：区域重叠时数值高的播放；相同则体积小的优先。
+- 离开后再进来是否接着播。
+- 启用开关、颜色。
+- 两个角的精确坐标，以及各面整体扩大或缩小一格。
+- 多轨模式下每条音轨各自的音量、延迟和是否循环。
+
+**在世界里直接操作**（关闭面板后，编辑模式仍然开着）
+
+- 左键、右键点方块：没有选中区域时是新区域的两个角；选中了区域时是移动它的两个角。
+- 鼠标中键：选中准星指向的区域。
+- 这期间左右键不会破坏或放置方块。
+- 面板里点“完成”退出编辑模式，区域盒子随之隐藏。
+
+## Axiom
+
+在 Fabric 上同时装了 [Axiom](https://axiom.moulberry.com/) 时，Axiom 的工具列表里会多一个 AreaMusic 工具。它的工具选项面板与内置面板内容相同：
+
+- 右键点方块放置角点（依次是角 1、角 2）；右键点空处选中视线上的区域。
+- `Delete` 删除选中的区域。
+- 撤销和重做用面板里的按钮（`Ctrl+Z` 归 Axiom 自己的方块历史）。
+- 在 1.20.1 和 1.21.1 上可以把音频文件拖进窗口上传；26.3 上需要打开内置面板（`F7`）再拖。
+
+Axiom 只有 Fabric 版，所以 Forge 和 NeoForge 上没有这个工具，内置编辑器的功能是一样的。不装 Axiom 时这部分代码不会加载。
+
+> Axiom 工具已针对 Axiom 客户端 API 编译通过，但尚未在真实的 Axiom 安装上运行验证。如果它没有出现，日志里会有一条警告，内置编辑器不受影响。
+
+## 音乐
+
+支持 `.ogg`、`.mp3`、`.wav`、`.flac`。
+
+- **添加音乐**：把文件拖进游戏窗口（需要编辑权限），或者放进服务器的 `<gameDir>/areamusic/`。放进文件夹的文件几秒内会自动出现在音乐列表里。
+- **分发**：玩家登录后，客户端自动下载各区域用到的音乐，缓存在 `<gameDir>/areamusic-cache/`，按内容哈希命名，同一个文件只下载一次。
+- **已有本地文件**：如果玩家的 `<gameDir>/areamusic/` 里已经有内容完全相同的同名文件，直接使用，不下载。
+- **还没下完时**：走进区域会在快捷栏上方显示下载进度，下完后自动开始播放。
+- **音量**：最终音量 = 游戏主音量 × 声音设置里的 AreaMusic 音量 × 区域音量。原版“音乐”滑条不影响它。
+
+服务器对自己分发的音乐负有版权责任。
 
 ## 命令
 
+所有命令需要权限等级 2。`<区域>` 是区域 ID，可以 Tab 补全。
+
 ```text
-/areamusic create <areaId> <pos1> <pos2> <musicId>
+/areamusic create <区域> <角1> <角2> <音乐>
+/areamusic delete <区域>
+/areamusic list
+/areamusic info <区域>
+/areamusic tp <区域>
+/areamusic set <区域> name <名称>
+/areamusic set <区域> volume <0-100>
+/areamusic set <区域> mode <loop|playlist|layers>
+/areamusic set <区域> priority <整数>
+/areamusic set <区域> resume <true|false>
+/areamusic set <区域> enabled <true|false>
+/areamusic set <区域> fadein <毫秒>
+/areamusic set <区域> fadeout <毫秒>
+/areamusic set <区域> color <#RRGGBB|auto>
+/areamusic set <区域> pos1 <坐标>
+/areamusic set <区域> pos2 <坐标>
+/areamusic music add <区域> <音乐>
+/areamusic music remove <区域> <音乐>
 /areamusic reload
 ```
 
-`pos1` 与 `pos2` 均为 `x y z`，例如：
+`reload` 只在你手动改了区域文件之后才需要。
+
+## 服务器配置
+
+`config/areamusic-server.properties` 在首次启动时生成，默认值适合大多数服务器：
+
+| 选项 | 默认 | 说明 |
+| --- | --- | --- |
+| `distributeMusic` | `true` | 自动向玩家分发音乐。设为 `false` 则每个玩家要自己放文件 |
+| `maxUploadMiB` | `32` | 单个上传文件的大小上限 |
+| `maxLibraryMiB` | `1024` | 通过上传可达到的音乐库总大小 |
+| `downloadKiBPerSecondPerPlayer` | `2560` | 每个玩家的下载限速 |
+| `editPermissionLevel` | `2` | 使用编辑器所需的权限等级（0–4） |
+
+## 文件位置
 
 ```text
-/areamusic create spawn 0 64 0 10 80 10 ambient.ogg
+<gameDir>/
+├─ areamusic/                      音乐库（服务端）；玩家自备的同名文件（客户端）
+├─ areamusic-cache/                客户端下载缓存
+├─ config/areamusic-server.properties
+└─ <存档>/areamusic/areas/<区域>.json   区域定义，一个区域一个文件
 ```
 
-`create` 会生成一个使用默认参数的单音轨区域。编辑生成的 JSON 后，执行 `/areamusic reload` 重新扫描音频并加载区域。命令需要权限等级 2；区域 ID 必须匹配 `[a-z0-9][a-z0-9_-]{0,63}`。
+区域跟着存档走，所以地图可以连同音乐区域一起打包分发（记得带上 `areamusic/` 里的音乐）。
 
-## 区域 JSON（schema v3）
+## 从 0.x 升级
 
-AreaMusic 仍可读取 schema v1 和 v2；新建或重新写入的区域统一使用 schema v3。解析器会拒绝未知字段、重复字段和错误类型。
+- 首次启动时，旧的 `config/areamusic/<saveId>/*.json` 会被复制转换到存档目录。旧文件保持原样，并多出一个 `MIGRATED.txt` 说明去向。
+- 读不出来的旧文件会被跳过并在日志和 `reload` 的输出里逐个列出，其余区域照常加载。
+- 引用了已不存在的音乐的区域仍会加载，`/areamusic list` 会标出“有音乐文件缺失”。
+- 0.x 的客户端和 2.x 的服务端互不兼容，需要一起升级。
 
-所有模式通用的区域字段：
+## 区域文件格式（schema v4）
 
-| 字段 | 必填/默认值 | 说明 |
+一般不需要手写。格式在 v3 的基础上增加了三个可选字段：
+
+| 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `schemaVersion` | 必填：`3` | 当前写入格式 |
-| `dimension` | 必填 | 维度 ID，例如 `minecraft:overworld` |
-| `pos1` / `pos2` | 必填 | 两个整数坐标端点 |
-| `playbackMode` | 必填 | `parallel` 或 `playlist_loop` |
-| `resumeOnReenter` | `false` | 再次进入时是否恢复该区域的播放状态 |
-| `priority` | `0` | 重叠区域中数值更高者优先 |
+| `displayName` | 空 | 显示名，最多 64 个字符，可以是中文 |
+| `color` | 自动 | `#RRGGBB`，编辑器里盒子的颜色 |
+| `enabled` | `true` | `false` 时区域保留但不播放 |
 
-### 同时播放：`parallel`
+其余字段（`dimension`、`pos1`、`pos2`、`playbackMode`、`tracks` 或 `playlist`、`resumeOnReenter`、`priority`）与 v3 相同。v1、v2、v3 文件仍可读取，重新保存时写成 v4。
 
-`tracks` 必须包含 1–16 条音轨。每条音轨的默认值是：`delaySeconds: 0`、`volume: 1.0`、`loop: true`、`fadeInMs: 2000`、`fadeOutMs: 2000`。
+## 已知限制
 
-```json
-{
-  "schemaVersion": 3,
-  "dimension": "minecraft:overworld",
-  "pos1": { "x": 10, "y": 80, "z": 10 },
-  "pos2": { "x": 0, "y": 60, "z": 0 },
-  "playbackMode": "parallel",
-  "tracks": [
-    {
-      "musicId": "ambient.ogg",
-      "delaySeconds": 0,
-      "volume": 1.0,
-      "loop": true,
-      "fadeInMs": 2000,
-      "fadeOutMs": 2000
-    },
-    {
-      "musicId": "voice/intro.mp3",
-      "delaySeconds": 5,
-      "volume": 0.8,
-      "loop": false,
-      "fadeInMs": 0,
-      "fadeOutMs": 1000
-    }
-  ],
-  "resumeOnReenter": true,
-  "priority": 5
-}
-```
-
-每条音轨独立计时、控制音量、循环和淡入淡出。`delaySeconds` 是进入区域后等待的非负整数秒；`volume` 范围为 0–1；淡入淡出范围为 0–60000 毫秒。
-
-### 列表循环：`playlist_loop`
-
-`playlist` 必须包含 1–256 个有序 MusicID，可以重复。模组按照第一首、第二首、第三首……的顺序播放，播完最后一首后回到第一首继续循环。
-
-列表模式不使用 `tracks`，也不需要填写默认 `track` 或根级 `musicId`。整个列表统一使用 `volume`、`fadeInMs` 和 `fadeOutMs`；默认值分别为 `1.0`、`2000`、`2000`。
-
-```json
-{
-  "schemaVersion": 3,
-  "dimension": "minecraft:overworld",
-  "pos1": { "x": -20, "y": 50, "z": -20 },
-  "pos2": { "x": 20, "y": 100, "z": 20 },
-  "playbackMode": "playlist_loop",
-  "playlist": [
-    "village/day.ogg",
-    "village/evening.ogg",
-    "village/day.ogg"
-  ],
-  "volume": 0.75,
-  "fadeInMs": 1500,
-  "fadeOutMs": 2500,
-  "resumeOnReenter": false,
-  "priority": 0
-}
-```
-
-### `pos1` / `pos2` 保序
-
-`pos1` 和 `pos2` 是用户选择的原始端点，不是自动排序后的最小点与最大点。AreaMusic 读取、保存和重新写入 JSON 时会保持两个端点各自的原值和顺序；只有判断玩家是否在区域内、计算区域体积和比较边界时，才会逐轴使用 `min` / `max`。因此坐标交叉或从大坐标选到小坐标时，JSON 也不会再出现两个端点被混合重组的问题。
-
-## 重叠、续播与音量
-
-- 区域重叠时先比较 `priority`，再选择体积更小的区域，最后按区域 ID 排序。
-- `resumeOnReenter: false` 会在离开后淡出，再进入时从头开始并重新计算延迟。
-- `resumeOnReenter: true` 会在当前客户端运行期间保留各音轨或列表的播放位置；重启客户端、成功重载音乐库或修改播放定义后不应依赖旧进度。
-- 最终音量由 Minecraft 主音量、AreaMusic 独立音量和 JSON 中的 `volume` 共同决定；原版“音乐”音量不影响 AreaMusic。
+- 区域只能是长方体。
+- 调整正在播放的区域的音量或曲目时，音乐会带淡入淡出地重新开始，而不是原地变化。
+- 面板里没有试听按钮；要听效果请走进区域。
+- 多人游戏下各玩家各自解码播放，彼此之间不保证帧级同步。
 
 ## 构建
 
-需要同时可用的 JDK 17 与 JDK 21 工具链。Windows：
-
-```powershell
-.\gradlew.bat test check assemble build
-```
-
-Linux/macOS：
+需要能下载 JDK 17、21、25 工具链（Gradle 会自动处理）。
 
 ```bash
 ./gradlew test check assemble build
 ```
 
-可安装成品位于五个 loader leaf 的 `build/libs/`：
+8 个可安装的成品位于各加载器模块的 `build/libs/`：
 
 ```text
-platforms/1.20.1/fabric/build/libs/areamusic-fabric-1.20.1-<mod_version>.jar
-platforms/1.20.1/forge/build/libs/areamusic-forge-1.20.1-<mod_version>.jar
-platforms/1.21.1/fabric/build/libs/areamusic-fabric-1.21.1-<mod_version>.jar
-platforms/1.21.1/forge/build/libs/areamusic-forge-1.21.1-<mod_version>.jar
-platforms/1.21.1/neoforge/build/libs/areamusic-neoforge-1.21.1-<mod_version>.jar
+platforms/1.20.1/fabric/build/libs/areamusic-fabric-1.20.1-<版本>.jar
+platforms/1.20.1/forge/build/libs/areamusic-forge-1.20.1-<版本>.jar      （也用于 NeoForge 47.1）
+platforms/1.21.1/fabric/build/libs/areamusic-fabric-1.21.1-<版本>.jar
+platforms/1.21.1/forge/build/libs/areamusic-forge-1.21.1-<版本>.jar
+platforms/1.21.1/neoforge/build/libs/areamusic-neoforge-1.21.1-<版本>.jar
+platforms/26.3/fabric/build/libs/areamusic-fabric-26.3-<版本>.jar
+platforms/26.3/forge/build/libs/areamusic-forge-26.3-<版本>.jar
+platforms/26.3/neoforge/build/libs/areamusic-neoforge-26.3-<版本>.jar
 ```
 
-`common`、`dev` 和 `sources` JAR 不是安装包。GitHub Release 由 `v<mod_version>` 标签或手动工作流触发，附带上述五个成品和 `SHA256SUMS`。
+`common`、`dev` 和 `sources` JAR 不是安装包。
+
+代码结构：`core` 是不依赖 Minecraft 的纯 Java（音频引擎、区域与编辑逻辑、同步协议、面板），`platforms/<版本>/common` 是各版本的 Minecraft 适配，`platforms/<版本>/<加载器>` 只做事件接线和网络注册。
 
 ## 许可证
 

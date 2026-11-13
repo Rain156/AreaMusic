@@ -19,9 +19,14 @@ class Minecraft1211CommonModuleWiringTest {
     private static final List<String> PRODUCTION_SOURCES = [
             'datura/areamusic/client/AreaMusicSoundOptions.java',
             'datura/areamusic/client/ClientAreaMusic.java',
+            'datura/areamusic/client/editor/AreaMusicEditor.java',
+            'datura/areamusic/client/editor/AreaMusicEditorScreen.java',
+            'datura/areamusic/client/editor/GuiCanvas.java',
+            'datura/areamusic/client/editor/WorldBoxRenderer.java',
             'datura/areamusic/network/ClientPacketHandler.java',
             'datura/areamusic/network/ClientboundPlaybackState.java',
             'datura/areamusic/network/ClientboundReloadMusic.java',
+            'datura/areamusic/network/SyncBlob.java',
             'datura/areamusic/server/AreaMusicCommands.java',
             'datura/areamusic/server/AreaMusicServer.java',
             'datura/areamusic/server/NetworkSender.java',
@@ -146,7 +151,7 @@ gradle.projectsEvaluated {
 
         assertEquals(PRODUCTION_SOURCES, relativeJavaFiles(mainJava))
         assertEquals(TEST_SOURCES, relativeJavaFiles(testJava))
-        assertEquals(10, relativeJavaFiles(mainJava).size())
+        assertEquals(15, relativeJavaFiles(mainJava).size())
         assertEquals(7, relativeJavaFiles(testJava).size())
     }
 

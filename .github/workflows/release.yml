@@ -82,6 +82,16 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # Minecraft 26.x needs Java 25; Gradle picks the toolchain each module asks for.
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+            25
+
       - name: Test and build all supported targets
         run: ./gradlew test check assemble build --rerun-tasks --no-build-cache --no-daemon --continue
 
@@ -96,6 +106,9 @@ jobs:
             "platforms/1.21.1/fabric/build/libs/areamusic-fabric-1.21.1-${MOD_VERSION}.jar"
             "platforms/1.21.1/forge/build/libs/areamusic-forge-1.21.1-${MOD_VERSION}.jar"
             "platforms/1.21.1/neoforge/build/libs/areamusic-neoforge-1.21.1-${MOD_VERSION}.jar"
+            "platforms/26.3/fabric/build/libs/areamusic-fabric-26.3-${MOD_VERSION}.jar"
+            "platforms/26.3/forge/build/libs/areamusic-forge-26.3-${MOD_VERSION}.jar"
+            "platforms/26.3/neoforge/build/libs/areamusic-neoforge-26.3-${MOD_VERSION}.jar"
           )
           rm -rf dist
           mkdir dist
@@ -106,8 +119,8 @@ jobs:
             fi
             cp "$jar" dist/
           done
-          if [[ "$(find dist -maxdepth 1 -type f -name '*.jar' | wc -l)" -ne 5 ]]; then
-            echo "Expected exactly five installable JARs" >&2
+          if [[ "$(find dist -maxdepth 1 -type f -name '*.jar' | wc -l)" -ne 8 ]]; then
+            echo "Expected exactly eight installable JARs" >&2
             exit 1
           fi
           (cd dist && sha256sum ./*.jar | sort -k2 > SHA256SUMS)
