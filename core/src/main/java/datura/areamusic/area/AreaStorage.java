@@ -66,8 +66,57 @@ public final class AreaStorage {
         return resolved;
     }
 
+    public static Path worldDirectory(Path worldRoot) {
+        return worldRoot.toAbsolutePath().normalize().resolve("areamusic").resolve("areas");
+    }
+
     public Path directory() {
         return directory;
+    }
+
+    public LoadResult loadLenient() throws IOException {
+        if (!Files.isDirectory(directory)) {
+            return new LoadResult(List.of(), List.of());
+        }
+        List<Path> files;
+        try (Stream<Path> listed = Files.list(directory)) {
+            files = listed
+                    .filter(path -> {
+                        String name = path.getFileName().toString();
+                        return name.endsWith(".json") && !name.startsWith(".");
+                    })
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+                    .toList();
+        }
+
+        List<AreaDefinition> loaded = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        for (Path file : files) {
+            String fileName = file.getFileName().toString();
+            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(file)) {
+                errors.add(fileName + ": symbolic links and non-files are not supported");
+                continue;
+            }
+            String areaId = fileName.substring(0, fileName.length() - ".json".length());
+            try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                loaded.add(codec.read(areaId, reader));
+            } catch (Exception exception) {
+                errors.add(fileName + ": " + rootMessage(exception));
+            }
+        }
+        return new LoadResult(loaded, errors);
+    }
+
+    public synchronized void save(AreaDefinition area) throws IOException {
+        Files.createDirectories(directory);
+        writeAtomically(target(area.id()), area, true);
+    }
+
+    public synchronized boolean delete(String areaId) throws IOException {
+        if (areaId == null || !AreaDefinition.ID_PATTERN.matcher(areaId).matches()) {
+            throw new IllegalArgumentException("Invalid area ID: " + areaId);
+        }
+        return Files.deleteIfExists(target(areaId));
     }
 
     public List<AreaDefinition> load(MusicLibrary musicLibrary) throws IOException, LoadException {
@@ -118,14 +167,22 @@ public final class AreaStorage {
 
     public synchronized void create(AreaDefinition area) throws IOException {
         Files.createDirectories(directory);
-        Path target = directory.resolve(area.id() + ".json").normalize();
-        if (!target.startsWith(directory)) {
-            throw new IOException("Area path escapes the save directory");
-        }
+        Path target = target(area.id());
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             throw new AreaAlreadyExistsException(area.id());
         }
+        writeAtomically(target, area, false);
+    }
 
+    private Path target(String areaId) throws IOException {
+        Path target = directory.resolve(areaId + ".json").normalize();
+        if (!target.startsWith(directory)) {
+            throw new IOException("Area path escapes the save directory");
+        }
+        return target;
+    }
+
+    private void writeAtomically(Path target, AreaDefinition area, boolean replace) throws IOException {
         Path temporary = directory.resolve("." + area.id() + "-" + UUID.randomUUID() + ".tmp");
         try {
             Files.writeString(
@@ -136,9 +193,20 @@ public final class AreaStorage {
                     StandardOpenOption.WRITE
             );
             try {
-                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+                if (replace) {
+                    Files.move(
+                            temporary, target,
+                            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING
+                    );
+                } else {
+                    Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+                }
             } catch (AtomicMoveNotSupportedException ignored) {
-                Files.move(temporary, target);
+                if (replace) {
+                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                } else {
+                    Files.move(temporary, target);
+                }
             }
         } finally {
             Files.deleteIfExists(temporary);
@@ -183,6 +251,13 @@ public final class AreaStorage {
         }
         String message = current.getMessage();
         return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+    }
+
+    public record LoadResult(List<AreaDefinition> areas, List<String> errors) {
+        public LoadResult {
+            areas = List.copyOf(areas);
+            errors = List.copyOf(errors);
+        }
     }
 
     public static final class LoadException extends Exception {

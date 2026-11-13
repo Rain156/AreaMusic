@@ -149,7 +149,7 @@ class AreaStorageTest {
     }
 
     @Test
-    void createsAFormattedV3ParallelFileAndRefusesToOverwriteIt() throws Exception {
+    void createsAFormattedParallelFileAndRefusesToOverwriteIt() throws Exception {
         Path areaDirectory = tempDir.resolve("areas");
         AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
         AreaDefinition area = AreaDefinition.create(
@@ -164,13 +164,124 @@ class AreaStorageTest {
         Path saved = areaDirectory.resolve("spawn.json");
         String json = Files.readString(saved);
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-        assertTrue(json.startsWith("{\n  \"schemaVersion\": 3,"));
+        assertTrue(json.startsWith("{\n  \"schemaVersion\": 4,"));
         assertTrue(json.contains("\n  \"tracks\": [\n    {"));
-        assertEquals(3, root.get("schemaVersion").getAsInt());
+        assertEquals(4, root.get("schemaVersion").getAsInt());
         assertEquals("parallel", root.get("playbackMode").getAsString());
         assertEquals(1, root.getAsJsonArray("tracks").size());
         assertFalse(root.has("musicId"));
         assertThrows(AreaStorage.AreaAlreadyExistsException.class, () -> storage.create(area));
+    }
+
+    @Test
+    void saveOverwritesExistingAreaAtomically() throws Exception {
+        Path areaDirectory = tempDir.resolve("world/areamusic/areas");
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+        AreaDefinition first = spawn();
+
+        storage.save(first);
+        storage.save(first.withPriority(9).withDisplayName("出生点"));
+
+        AreaStorage.LoadResult loaded = storage.loadLenient();
+        assertEquals(List.of(first.withPriority(9).withDisplayName("出生点")), loaded.areas());
+        assertEquals(List.of(), loaded.errors());
+        try (var listed = Files.list(areaDirectory)) {
+            assertEquals(List.of("spawn.json"),
+                    listed.map(path -> path.getFileName().toString()).toList());
+        }
+    }
+
+    @Test
+    void deleteRemovesFileAndReportsPresence() throws Exception {
+        Path areaDirectory = tempDir.resolve("areas");
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+        storage.save(spawn());
+
+        assertTrue(storage.delete("spawn"));
+        assertFalse(storage.delete("spawn"));
+        assertFalse(Files.exists(areaDirectory.resolve("spawn.json")));
+        assertThrows(IllegalArgumentException.class, () -> storage.delete("../x"));
+        assertThrows(IllegalArgumentException.class, () -> storage.delete(""));
+    }
+
+    @Test
+    void deleteOnMissingDirectoryReportsAbsence() throws Exception {
+        AreaStorage storage = new AreaStorage(tempDir.resolve("never-created"), new AreaJsonCodec());
+
+        assertFalse(storage.delete("spawn"));
+    }
+
+    @Test
+    void loadLenientKeepsAreasWhoseMusicIsMissing() throws Exception {
+        Path areaDirectory = tempDir.resolve("areas");
+        Files.createDirectories(areaDirectory);
+        Files.writeString(areaDirectory.resolve("orphan.json"), json("gone.ogg"));
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+
+        AreaStorage.LoadResult loaded = storage.loadLenient();
+
+        assertEquals(List.of("orphan"), loaded.areas().stream().map(AreaDefinition::id).toList());
+        assertEquals(List.of("gone.ogg"), loaded.areas().get(0).musicIds());
+        assertEquals(List.of(), loaded.errors());
+    }
+
+    @Test
+    void loadLenientSkipsBrokenFilesAndReportsThem() throws Exception {
+        Path areaDirectory = tempDir.resolve("areas");
+        Files.createDirectories(areaDirectory);
+        Files.writeString(areaDirectory.resolve("valid.json"), json("track.ogg"));
+        Files.writeString(areaDirectory.resolve("broken.json"), "{");
+        Files.writeString(areaDirectory.resolve("Bad Name.json"), json("track.ogg"));
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+
+        AreaStorage.LoadResult loaded = storage.loadLenient();
+
+        assertEquals(List.of("valid"), loaded.areas().stream().map(AreaDefinition::id).toList());
+        assertEquals(2, loaded.errors().size());
+        assertTrue(loaded.errors().stream().anyMatch(error -> error.startsWith("broken.json: ")));
+        assertTrue(loaded.errors().stream().anyMatch(error -> error.startsWith("Bad Name.json: ")));
+    }
+
+    @Test
+    void loadLenientIgnoresLeftoverTemporaryFiles() throws Exception {
+        Path areaDirectory = tempDir.resolve("areas");
+        Files.createDirectories(areaDirectory);
+        Files.writeString(areaDirectory.resolve(".village-1234.tmp"), "{");
+        Files.writeString(areaDirectory.resolve(".hidden.json"), "{");
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+
+        AreaStorage.LoadResult loaded = storage.loadLenient();
+
+        assertEquals(List.of(), loaded.areas());
+        assertEquals(List.of(), loaded.errors());
+    }
+
+    @Test
+    void loadLenientOnMissingDirectoryIsEmptyAndDoesNotCreateIt() throws Exception {
+        Path areaDirectory = tempDir.resolve("absent");
+        AreaStorage storage = new AreaStorage(areaDirectory, new AreaJsonCodec());
+
+        assertEquals(List.of(), storage.loadLenient().areas());
+        assertFalse(Files.exists(areaDirectory));
+    }
+
+    @Test
+    void worldDirectoryIsAreasFolderInsideWorld() {
+        Path world = tempDir.resolve("saves/New World");
+
+        assertEquals(
+                world.toAbsolutePath().normalize().resolve("areamusic").resolve("areas"),
+                AreaStorage.worldDirectory(world)
+        );
+    }
+
+    private static AreaDefinition spawn() {
+        return AreaDefinition.create(
+                "spawn", "minecraft:overworld",
+                new AreaPosition(0, 0, 0), new AreaPosition(4, 4, 4),
+                List.of(new AreaTrackDefinition("track.ogg", 0, 1.0f, true, 2000, 2000)),
+                false,
+                0);
     }
 
     private static String json(String musicId) {
