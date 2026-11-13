@@ -179,6 +179,83 @@ class AreaDefinitionTest {
                 "valid", OVERWORLD, ZERO, ZERO, null, false, 0));
     }
 
+    @Test
+    void sevenArgumentConstructorUsesEditorDefaults() {
+        AreaDefinition area = area("square", ZERO, ZERO);
+
+        assertEquals("", area.displayName());
+        assertEquals(AreaDefinition.AUTO_COLOR, area.color());
+        assertTrue(area.enabled());
+        assertEquals("square", area.label());
+    }
+
+    @Test
+    void displayNameAcceptsCjkAndEmojiAndIsStripped() {
+        AreaDefinition area = area("square", ZERO, ZERO).withDisplayName("  村庄🎵 ");
+
+        assertEquals("村庄🎵", area.displayName());
+        assertEquals("村庄🎵", area.label());
+    }
+
+    @Test
+    void displayNameLongerThan64CodePointsIsRejected() {
+        AreaDefinition area = area("square", ZERO, ZERO);
+
+        assertEquals(64, area.withDisplayName("🎵".repeat(64)).displayName()
+                .codePointCount(0, "🎵".repeat(64).length()));
+        assertThrows(IllegalArgumentException.class, () -> area.withDisplayName("🎵".repeat(65)));
+    }
+
+    @Test
+    void displayNameWithControlCharacterIsRejected() {
+        AreaDefinition area = area("square", ZERO, ZERO);
+
+        assertThrows(IllegalArgumentException.class, () -> area.withDisplayName("a\nb"));
+        assertThrows(NullPointerException.class, () -> area.withDisplayName(null));
+    }
+
+    @Test
+    void colorOutsideRgbRangeIsRejected() {
+        AreaDefinition area = area("square", ZERO, ZERO);
+
+        assertEquals(0xFFFFFF, area.withColor(0xFFFFFF).color());
+        assertEquals(0, area.withColor(0).color());
+        assertEquals(AreaDefinition.AUTO_COLOR, area.withColor(AreaDefinition.AUTO_COLOR).color());
+        assertThrows(IllegalArgumentException.class, () -> area.withColor(0x1000000));
+        assertThrows(IllegalArgumentException.class, () -> area.withColor(-2));
+    }
+
+    @Test
+    void effectiveColorFallsBackToPaletteDeterministically() {
+        AreaDefinition area = area("square", ZERO, ZERO);
+
+        assertEquals(area.effectiveColor(), area("square", ZERO, ZERO).effectiveColor());
+        assertTrue(AreaPalette.colors().contains(area.effectiveColor()));
+        assertEquals(8, AreaPalette.colors().size());
+        assertEquals(0x123456, area.withColor(0x123456).effectiveColor());
+    }
+
+    @Test
+    void withersReplaceOnlyTheirField() {
+        AreaDefinition area = area("square", ZERO, ZERO);
+        AreaPosition corner = new AreaPosition(3, 4, 5);
+        PlaylistLoopPlayback playlist = new PlaylistLoopPlayback(List.of("a.ogg"), 0.5f, 10, 20);
+
+        assertEquals(area, area.withBounds(ZERO, ZERO));
+        assertEquals(corner, area.withBounds(ZERO, corner).pos2());
+        assertEquals(ZERO, area.withBounds(ZERO, corner).pos1());
+        assertEquals(playlist, area.withPlayback(playlist).playback());
+        assertFalse(area.withEnabled(false).enabled());
+        assertEquals(7, area.withPriority(7).priority());
+        assertTrue(area.withResumeOnReenter(true).resumeOnReenter());
+        assertEquals(
+                area.withDisplayName("x").withColor(1).withEnabled(false).withPriority(2)
+                        .withResumeOnReenter(true).withBounds(corner, ZERO).withPlayback(playlist),
+                new AreaDefinition(
+                        "square", OVERWORLD, corner, ZERO, playlist, true, 2, "x", 1, false)
+        );
+    }
+
     private static AreaDefinition area(String id, AreaPosition pos1, AreaPosition pos2) {
         return AreaDefinition.create(
                 id, OVERWORLD, pos1, pos2, List.of(track("music/theme.ogg")), false, 0);

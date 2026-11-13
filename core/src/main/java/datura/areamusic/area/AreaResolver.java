@@ -25,6 +25,7 @@ public final class AreaResolver {
         String canonicalDimension = AreaDefinition.canonicalizeDimension(dimension);
 
         return areas.stream()
+                .filter(AreaDefinition::enabled)
                 .filter(area -> area.containsCanonical(canonicalDimension, position))
                 .min(PRECEDENCE);
     }

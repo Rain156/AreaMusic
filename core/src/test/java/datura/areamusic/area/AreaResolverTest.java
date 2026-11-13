@@ -50,6 +50,18 @@ class AreaResolverTest {
         assertEquals("alpha", AreaResolver.resolve(List.of(beta, alpha), OVERWORLD, PLAYER).orElseThrow().id());
     }
 
+    @Test
+    void disabledAreaIsSkippedEvenWithHigherPriority() {
+        AreaDefinition disabled = area("disabled", 10, ZERO, new AreaPosition(20, 100, 20)).withEnabled(false);
+        AreaDefinition enabled = area("enabled", 0, ZERO, new AreaPosition(20, 100, 20));
+
+        assertEquals(
+                "enabled",
+                AreaResolver.resolve(List.of(disabled, enabled), OVERWORLD, PLAYER).orElseThrow().id()
+        );
+        assertTrue(AreaResolver.resolve(List.of(disabled), OVERWORLD, PLAYER).isEmpty());
+    }
+
     private static AreaDefinition area(String id, int priority, AreaPosition min, AreaPosition max) {
         return AreaDefinition.create(
                 id,

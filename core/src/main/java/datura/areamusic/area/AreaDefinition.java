@@ -16,9 +16,14 @@ public record AreaDefinition(
         AreaPosition pos2,
         PlaybackDefinition playback,
         boolean resumeOnReenter,
-        int priority
+        int priority,
+        String displayName,
+        int color,
+        boolean enabled
 ) {
     public static final int MAX_TRACKS = 16;
+    public static final int AUTO_COLOR = -1;
+    public static final int MAX_DISPLAY_NAME_LENGTH = 64;
     public static final Pattern ID_PATTERN = Pattern.compile("[a-z0-9][a-z0-9_-]{0,63}");
     private static final Pattern DIMENSION_NAMESPACE_PATTERN = Pattern.compile("[a-z0-9_.-]+");
     private static final Pattern DIMENSION_PATH_PATTERN = Pattern.compile("[a-z0-9/._-]+");
@@ -33,7 +38,87 @@ public record AreaDefinition(
         if (!ID_PATTERN.matcher(id).matches()) {
             throw new IllegalArgumentException("Invalid area ID: " + id);
         }
+        displayName = Objects.requireNonNull(displayName, "displayName").strip();
+        if (displayName.codePointCount(0, displayName.length()) > MAX_DISPLAY_NAME_LENGTH) {
+            throw new IllegalArgumentException(
+                    "displayName must be at most " + MAX_DISPLAY_NAME_LENGTH + " characters"
+            );
+        }
+        if (displayName.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException("displayName must not contain control characters");
+        }
+        if (color != AUTO_COLOR && (color < 0 || color > 0xFFFFFF)) {
+            throw new IllegalArgumentException("color must be AUTO_COLOR or an RGB value");
+        }
+    }
 
+    public AreaDefinition(
+            String id,
+            String dimension,
+            AreaPosition pos1,
+            AreaPosition pos2,
+            PlaybackDefinition playback,
+            boolean resumeOnReenter,
+            int priority
+    ) {
+        this(id, dimension, pos1, pos2, playback, resumeOnReenter, priority, "", AUTO_COLOR, true);
+    }
+
+    public String label() {
+        return displayName.isEmpty() ? id : displayName;
+    }
+
+    public int effectiveColor() {
+        return color == AUTO_COLOR ? AreaPalette.colorFor(id) : color;
+    }
+
+    public AreaDefinition withBounds(AreaPosition newPos1, AreaPosition newPos2) {
+        return new AreaDefinition(
+                id, dimension, newPos1, newPos2, playback, resumeOnReenter, priority,
+                displayName, color, enabled
+        );
+    }
+
+    public AreaDefinition withPlayback(PlaybackDefinition newPlayback) {
+        return new AreaDefinition(
+                id, dimension, pos1, pos2, newPlayback, resumeOnReenter, priority,
+                displayName, color, enabled
+        );
+    }
+
+    public AreaDefinition withDisplayName(String newDisplayName) {
+        return new AreaDefinition(
+                id, dimension, pos1, pos2, playback, resumeOnReenter, priority,
+                newDisplayName, color, enabled
+        );
+    }
+
+    public AreaDefinition withColor(int newColor) {
+        return new AreaDefinition(
+                id, dimension, pos1, pos2, playback, resumeOnReenter, priority,
+                displayName, newColor, enabled
+        );
+    }
+
+    public AreaDefinition withEnabled(boolean newEnabled) {
+        return new AreaDefinition(
+                id, dimension, pos1, pos2, playback, resumeOnReenter, priority,
+                displayName, color, newEnabled
+        );
+    }
+
+    public AreaDefinition withPriority(int newPriority) {
+        return new AreaDefinition(
+                id, dimension, pos1, pos2, playback, resumeOnReenter, newPriority,
+                displayName, color, enabled
+        );
+    }
+
+    public AreaDefinition withResumeOnReenter(boolean newResumeOnReenter) {
+        return new AreaDefinition(
+                id, dimension, pos1, pos2, playback, newResumeOnReenter, priority,
+                displayName, color, enabled
+        );
     }
 
     public static AreaDefinition create(
