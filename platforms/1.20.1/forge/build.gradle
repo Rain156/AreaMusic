@@ -26,6 +26,9 @@ configurations {
     compileOnly.extendsFrom embeddedCodecs
 }
 
+evaluationDependsOn(':core')
+evaluationDependsOn(':platforms:mc1_20_1:common')
+
 legacyForge {
     version = "${mc1_20_1_minecraft_version}-${mc1_20_1_forge_version}"
     addModdingDependenciesTo sourceSets.test
@@ -68,6 +71,9 @@ legacyForge {
     mods {
         register(mod_id) {
             sourceSet sourceSets.main
+            // The dev runs need the shared code too; the production jar already bundles it.
+            sourceSet project(':core').sourceSets.main
+            sourceSet project(':platforms:mc1_20_1:common').sourceSets.main
         }
     }
 }
