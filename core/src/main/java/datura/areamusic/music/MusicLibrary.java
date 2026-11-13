@@ -28,6 +28,14 @@ public final class MusicLibrary {
         return new MusicLibrary(root.toAbsolutePath().normalize(), Map.of());
     }
 
+    /**
+     * A library whose files may live anywhere, such as a download cache. Used on clients, where a
+     * MusicID resolves to whichever local file has the content the server asked for.
+     */
+    public static MusicLibrary of(Path root, Map<String, Path> files) {
+        return new MusicLibrary(root.toAbsolutePath().normalize(), new TreeMap<>(files));
+    }
+
     public static MusicLibrary scan(Path root) throws IOException, ScanException {
         Path normalizedRoot = root.toAbsolutePath().normalize();
         Files.createDirectories(normalizedRoot);
