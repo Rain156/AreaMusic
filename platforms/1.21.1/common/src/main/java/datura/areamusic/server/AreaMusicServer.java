@@ -40,9 +40,11 @@ import org.slf4j.Logger;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -194,6 +196,8 @@ public final class AreaMusicServer {
     public static void onPlayerLogin(ServerPlayer player) {
         ServerState state = serverState;
         if (state.belongsTo(player)) {
+            // Some loaders report the login before the player is in the server's own list.
+            state.online.put(player.getUUID(), player);
             state.sync.onJoin(player.getUUID());
         }
         forceSync(player, true);
@@ -204,6 +208,7 @@ public final class AreaMusicServer {
         if (state.belongsTo(player)) {
             SERVER_LIFECYCLE.removeTracker(state.lifecycle, player.getUUID());
             state.sync.onLeave(player.getUUID());
+            state.online.remove(player.getUUID());
         }
     }
 
@@ -224,6 +229,11 @@ public final class AreaMusicServer {
     }
 
     public static void onPlayerRespawn(ServerPlayer player) {
+        ServerState state = serverState;
+        if (state.belongsTo(player) && state.online.containsKey(player.getUUID())) {
+            // Respawning replaces the player object.
+            state.online.put(player.getUUID(), player);
+        }
         forceSync(player, false);
     }
 
@@ -766,6 +776,7 @@ public final class AreaMusicServer {
         private final Path uploadDirectory;
         private final ServerConfig config;
         private final ServerSync<UUID> sync;
+        private final Map<UUID, ServerPlayer> online = new HashMap<>();
         private volatile MusicLibrary musicLibrary;
         private int lastTick = -1;
         private boolean libraryRefreshInFlight;
@@ -914,7 +925,7 @@ public final class AreaMusicServer {
 
         @Override
         public void send(UUID playerId, SyncMessage.Clientbound message) {
-            ServerPlayer player = state.lifecycle.server().getPlayerList().getPlayer(playerId);
+            ServerPlayer player = state.online.get(playerId);
             if (player != null) {
                 SERVER_LIFECYCLE.senderFor(state.lifecycle).sendSync(player, SyncCodec.encode(message));
             }
@@ -923,7 +934,7 @@ public final class AreaMusicServer {
         @Override
         public boolean canEdit(UUID playerId) {
             MinecraftServer server = state.lifecycle.server();
-            ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+            ServerPlayer player = state.online.get(playerId);
             return player != null
                     && (player.hasPermissions(state.config.editPermissionLevel())
                     || server.isSingleplayerOwner(player.getGameProfile()));
