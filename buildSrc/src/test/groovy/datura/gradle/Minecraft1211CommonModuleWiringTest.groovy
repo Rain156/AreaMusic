@@ -67,7 +67,7 @@ class Minecraft1211CommonModuleWiringTest {
         String buildScript = Files.readString(buildFile)
 
         assertTrue(buildScript.contains("id 'java-library'"))
-        assertTrue(buildScript.contains("id 'net.neoforged.moddev' version '2.0.142'"))
+        assertTrue(buildScript.contains("id 'net.neoforged.moddev' version '2.0.148'"))
         assertTrue(buildScript.contains('toolchain.languageVersion = JavaLanguageVersion.of(21)'))
         assertTrue(buildScript.contains('neoForge {'))
         assertTrue(buildScript.contains('neoFormVersion = mc1_21_1_neoform_version'))

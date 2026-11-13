@@ -49,7 +49,7 @@ class CommonModuleWiringTest {
                 findRepositoryRoot().resolve('platforms/1.20.1/common/build.gradle')
         )
 
-        assertTrue(commonBuild.contains("id 'net.neoforged.moddev.legacyforge' version '2.0.142'"))
+        assertTrue(commonBuild.contains("id 'net.neoforged.moddev.legacyforge' version '2.0.148'"))
         assertTrue(commonBuild.contains('mcpVersion = mc1_20_1_minecraft_version'))
         assertTrue(commonBuild.contains('addModdingDependenciesTo sourceSets.test'))
         assertTrue(commonBuild.contains("implementation(project(':core'))"))

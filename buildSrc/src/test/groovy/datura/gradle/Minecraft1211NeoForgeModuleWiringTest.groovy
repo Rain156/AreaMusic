@@ -40,7 +40,7 @@ class Minecraft1211NeoForgeModuleWiringTest {
         String settings = Files.readString(findRepositoryRoot().resolve('settings.gradle'))
 
         assertTrue(properties.contains('mc1_21_1_neoforge_version=21.1.244'))
-        assertTrue(properties.contains('mc1_21_1_moddevgradle_version=2.0.142'))
+        assertTrue(properties.contains('mc1_21_1_moddevgradle_version=2.0.148'))
         assertTrue(settings.contains("url = 'https://maven.neoforged.net/releases/'"))
     }
 
