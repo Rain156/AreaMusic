@@ -41,6 +41,7 @@ public final class FabricClientAreaMusic implements ClientModInitializer {
         Path configDirectory = loader.getConfigDir().toAbsolutePath().normalize();
         FabricClientConfig loadedConfig = FabricClientConfig.load(configDirectory);
         ClientAreaMusic created = new ClientAreaMusic(gameDirectory, loadedConfig::volume);
+        created.setSyncSender(FabricClientNetworking::sendSyncToServer);
         FabricClientNetworking.setClientHandler(created);
         try {
             FabricClientNetworking.registerClientReceivers();

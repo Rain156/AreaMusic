@@ -79,7 +79,7 @@ class AreaMusicNetworkTest {
     }
 
     @Test
-    void inlineChannelFactoryRemainsTypedAndClientbound() throws IOException {
+    void inlineChannelFactoryRemainsTypedWithOneServerboundPayload() throws IOException {
         ClassData network = read(OWNER + ".class");
         MethodData buildChannel = network.method("buildChannel");
 
@@ -94,10 +94,12 @@ class AreaMusicNetworkTest {
         assertCall(buildChannel, "net/minecraftforge/network/ChannelBuilder#payloadChannel");
         assertCall(buildChannel, "net/minecraftforge/network/payload/PayloadConnection#play");
         assertCall(buildChannel, "net/minecraftforge/network/payload/PayloadProtocol#clientbound");
-        assertEquals(2, buildChannel.calls.stream()
+        assertEquals(4, buildChannel.calls.stream()
                 .filter(call -> call.startsWith(
                         "net/minecraftforge/network/payload/PayloadFlow#addMain"
-                )).count());
+                )).count(), "playback, reload and sync to the client; sync to the server");
+        assertEquals(1, buildChannel.calls.stream()
+                .filter(call -> call.contains("#serverbound")).count());
         assertCall(buildChannel, "net/minecraftforge/network/payload/PayloadFlow#build");
         assertFalse(buildChannel.calls.stream().anyMatch(call ->
                 call.contains("net/minecraftforge/network/simple/SimpleChannel")));

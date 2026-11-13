@@ -2,6 +2,9 @@ package datura.areamusic.fabric.network;
 
 import datura.areamusic.fabric.network.FabricAreaMusicNetwork.PlaybackPayload;
 import datura.areamusic.fabric.network.FabricAreaMusicNetwork.ReloadPayload;
+import datura.areamusic.fabric.network.FabricAreaMusicNetwork.SyncToClientPayload;
+import datura.areamusic.fabric.network.FabricAreaMusicNetwork.SyncToServerPayload;
+import datura.areamusic.network.SyncBlob;
 import datura.areamusic.network.ClientPacketHandler;
 import datura.areamusic.network.ClientboundPlaybackState;
 import datura.areamusic.network.ClientboundReloadMusic;
@@ -45,7 +48,18 @@ public final class FabricClientNetworking {
                     "AreaMusic reload receiver was already registered by another owner"
             );
         }
+        ClientPlayNetworking.registerGlobalReceiver(
+                SyncToClientPayload.TYPE,
+                (payload, context) -> requireClientHandler().onSync(payload.blob().data())
+        );
         receiversRegistered = true;
+    }
+
+    /** Sends the bytes of one serverbound sync message; dropped when the server lacks the mod. */
+    public static void sendSyncToServer(byte[] data) {
+        if (ClientPlayNetworking.canSend(SyncToServerPayload.TYPE)) {
+            ClientPlayNetworking.send(new SyncToServerPayload(new SyncBlob(data)));
+        }
     }
 
     public static void setClientHandler(ClientPacketHandler handler) {

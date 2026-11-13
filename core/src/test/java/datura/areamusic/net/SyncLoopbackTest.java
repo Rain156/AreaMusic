@@ -502,7 +502,7 @@ class SyncLoopbackTest {
         }
 
         private void scanLocal() throws IOException {
-            sync.setLocalLibrary(MusicLibrary.scan(libraryRoot));
+            library = sync.setLocalLibrary(MusicLibrary.scan(libraryRoot));
         }
 
         private boolean deliver() {

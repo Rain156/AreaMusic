@@ -1,6 +1,7 @@
 package datura.areamusic.network;
 
 import datura.areamusic.playback.PlaybackState;
+import datura.areamusic.server.AreaMusicServer;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -8,13 +9,14 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.Channel;
 import net.minecraftforge.network.ChannelBuilder;
+import net.minecraftforge.network.PacketDistributor;
 
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class AreaMusicNetwork {
     private static final String MOD_ID = "areamusic";
-    private static final int PROTOCOL_VERSION = 3;
+    private static final int PROTOCOL_VERSION = 4;
     private static final AtomicReference<ClientPacketHandler> CLIENT_HANDLER =
             new AtomicReference<>();
 
@@ -48,6 +50,22 @@ public final class AreaMusicNetwork {
                         ReloadPayload.TYPE,
                         ReloadPayload.STREAM_CODEC,
                         (payload, context) -> handleClientReload(payload.message())
+                )
+                .addMain(
+                        SyncToClientPayload.TYPE,
+                        SyncToClientPayload.STREAM_CODEC,
+                        (payload, context) -> requireClientHandler().onSync(payload.blob().data())
+                )
+                .serverbound()
+                .addMain(
+                        SyncToServerPayload.TYPE,
+                        SyncToServerPayload.STREAM_CODEC,
+                        (payload, context) -> {
+                            ServerPlayer sender = context.getSender();
+                            if (sender != null) {
+                                AreaMusicServer.onSyncMessage(sender, payload.blob().data());
+                            }
+                        }
                 )
                 .build();
     }
@@ -109,6 +127,21 @@ public final class AreaMusicNetwork {
         requireChannel().send(
                 new ReloadPayload(new ClientboundReloadMusic(revision)),
                 Objects.requireNonNull(player, "player").connection.getConnection()
+        );
+    }
+
+    public static void sendSync(ServerPlayer player, byte[] data) {
+        requireChannel().send(
+                new SyncToClientPayload(new SyncBlob(data)),
+                Objects.requireNonNull(player, "player").connection.getConnection()
+        );
+    }
+
+    /** Client only. */
+    public static void sendSyncToServer(byte[] data) {
+        requireChannel().send(
+                new SyncToServerPayload(new SyncBlob(data)),
+                PacketDistributor.SERVER.noArg()
         );
     }
 
@@ -180,6 +213,46 @@ public final class AreaMusicNetwork {
 
         @Override
         public Type<ReloadPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record SyncToClientPayload(SyncBlob blob) implements CustomPacketPayload {
+        public static final Type<SyncToClientPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(MOD_ID, "sync_s2c")
+        );
+        public static final StreamCodec<RegistryFriendlyByteBuf, SyncToClientPayload> STREAM_CODEC =
+                StreamCodec.of(
+                        (buffer, payload) -> SyncBlob.encode(payload.blob, buffer),
+                        buffer -> new SyncToClientPayload(SyncBlob.decodeClientbound(buffer))
+                );
+
+        public SyncToClientPayload {
+            Objects.requireNonNull(blob, "blob");
+        }
+
+        @Override
+        public Type<SyncToClientPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record SyncToServerPayload(SyncBlob blob) implements CustomPacketPayload {
+        public static final Type<SyncToServerPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(MOD_ID, "sync_c2s")
+        );
+        public static final StreamCodec<RegistryFriendlyByteBuf, SyncToServerPayload> STREAM_CODEC =
+                StreamCodec.of(
+                        (buffer, payload) -> SyncBlob.encode(payload.blob, buffer),
+                        buffer -> new SyncToServerPayload(SyncBlob.decodeServerbound(buffer))
+                );
+
+        public SyncToServerPayload {
+            Objects.requireNonNull(blob, "blob");
+        }
+
+        @Override
+        public Type<SyncToServerPayload> type() {
             return TYPE;
         }
     }

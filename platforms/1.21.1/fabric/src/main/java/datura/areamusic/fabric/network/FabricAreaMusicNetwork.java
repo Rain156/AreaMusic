@@ -4,6 +4,8 @@ import datura.areamusic.fabric.AreaMusicFabric;
 import datura.areamusic.fabric.AreaMusicFabric.RegistrationGuard;
 import datura.areamusic.network.ClientboundPlaybackState;
 import datura.areamusic.network.ClientboundReloadMusic;
+import datura.areamusic.network.SyncBlob;
+import datura.areamusic.server.AreaMusicServer;
 import datura.areamusic.playback.PlaybackState;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -36,6 +38,19 @@ public final class FabricAreaMusicNetwork {
                 ReloadPayload.TYPE,
                 ReloadPayload.STREAM_CODEC
         );
+        PayloadTypeRegistry.playS2C().register(
+                SyncToClientPayload.TYPE,
+                SyncToClientPayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.playC2S().register(
+                SyncToServerPayload.TYPE,
+                SyncToServerPayload.STREAM_CODEC
+        );
+        ServerPlayNetworking.registerGlobalReceiver(
+                SyncToServerPayload.TYPE,
+                (payload, context) -> AreaMusicServer.onSyncMessage(
+                        context.player(), payload.blob().data())
+        );
         REGISTRATION.register();
     }
 
@@ -55,6 +70,14 @@ public final class FabricAreaMusicNetwork {
                         revision,
                         Objects.requireNonNull(state, "state")
                 ))
+        );
+    }
+
+    public static void sendSync(ServerPlayer player, byte[] data) {
+        requireRegistered();
+        ServerPlayNetworking.send(
+                Objects.requireNonNull(player, "player"),
+                new SyncToClientPayload(new SyncBlob(data))
         );
     }
 
@@ -108,6 +131,46 @@ public final class FabricAreaMusicNetwork {
 
         @Override
         public Type<ReloadPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record SyncToClientPayload(SyncBlob blob) implements CustomPacketPayload {
+        public static final Type<SyncToClientPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(AreaMusicFabric.MOD_ID, "sync_s2c")
+        );
+        public static final StreamCodec<RegistryFriendlyByteBuf, SyncToClientPayload> STREAM_CODEC =
+                StreamCodec.of(
+                        (buffer, payload) -> SyncBlob.encode(payload.blob, buffer),
+                        buffer -> new SyncToClientPayload(SyncBlob.decodeClientbound(buffer))
+                );
+
+        public SyncToClientPayload {
+            Objects.requireNonNull(blob, "blob");
+        }
+
+        @Override
+        public Type<SyncToClientPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record SyncToServerPayload(SyncBlob blob) implements CustomPacketPayload {
+        public static final Type<SyncToServerPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(AreaMusicFabric.MOD_ID, "sync_c2s")
+        );
+        public static final StreamCodec<RegistryFriendlyByteBuf, SyncToServerPayload> STREAM_CODEC =
+                StreamCodec.of(
+                        (buffer, payload) -> SyncBlob.encode(payload.blob, buffer),
+                        buffer -> new SyncToServerPayload(SyncBlob.decodeServerbound(buffer))
+                );
+
+        public SyncToServerPayload {
+            Objects.requireNonNull(blob, "blob");
+        }
+
+        @Override
+        public Type<SyncToServerPayload> type() {
             return TYPE;
         }
     }

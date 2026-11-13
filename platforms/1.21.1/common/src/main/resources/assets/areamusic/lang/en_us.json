@@ -32,6 +32,7 @@
   "areamusic.mode.loop": "Loop one track",
   "areamusic.mode.playlist": "Playlist",
   "areamusic.mode.layers": "Layered tracks",
+  "message.areamusic.downloading": "Downloading music %s%%",
   "message.areamusic.missing_file": "AreaMusic file not found for MusicID: %s",
   "message.areamusic.decode_failed": "AreaMusic could not decode MusicID: %s",
   "message.areamusic.device_failed": "AreaMusic could not open the audio output device.",

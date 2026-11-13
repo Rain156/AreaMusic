@@ -29,6 +29,7 @@ public final class NeoForgeClientAreaMusic {
                 gameDirectory,
                 AreaMusicClientConfig.INSTANCE::volume
         );
+        created.setSyncSender(AreaMusicNetwork::sendSyncToServer);
         instance = created;
         AreaMusicNetwork.setClientHandler(created);
     }

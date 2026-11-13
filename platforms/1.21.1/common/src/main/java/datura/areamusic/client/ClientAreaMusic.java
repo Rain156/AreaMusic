@@ -6,6 +6,9 @@ import datura.areamusic.client.audio.ClientAudioMixer;
 import datura.areamusic.client.audio.PcmAudioMixer;
 import datura.areamusic.music.MusicDirectory;
 import datura.areamusic.music.MusicLibrary;
+import datura.areamusic.net.ClientSync;
+import datura.areamusic.net.SyncCodec;
+import datura.areamusic.net.SyncMessage;
 import datura.areamusic.network.ClientPacketHandler;
 import datura.areamusic.playback.PlaybackState;
 import net.minecraft.client.Minecraft;
@@ -21,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 
 /** Owns client playback; its public lifecycle methods are client-thread confined. */
@@ -35,7 +39,13 @@ public final class ClientAreaMusic implements ClientPacketHandler {
     private final ClientPlaybackSession playbackSession;
     private final Set<String> reportedErrors = ConcurrentHashMap.newKeySet();
     private final AtomicLong scanGeneration = new AtomicLong();
+    private final ClientSync sync;
+    private volatile Consumer<byte[]> syncSender = data -> { };
     private volatile boolean closed;
+    private PlaybackState currentState = PlaybackState.stopped();
+    private MusicLibrary activeLibrary;
+    private MusicLibrary deferredLibrary;
+    private int ticks;
 
     public ClientAreaMusic(Path gameDirectory, DoubleSupplier independentVolume) {
         this(
@@ -64,17 +74,102 @@ public final class ClientAreaMusic implements ClientPacketHandler {
         this.scanExecutor = Objects.requireNonNull(scanExecutor, "scanExecutor");
         this.libraryScanner = Objects.requireNonNull(libraryScanner, "libraryScanner");
         AudioMixerFactory checkedMixerFactory = Objects.requireNonNull(mixerFactory, "mixerFactory");
+        activeLibrary = MusicLibrary.empty(MusicDirectory.canonicalPath(this.gameDirectory));
         playbackSession = new ClientPlaybackSession(
-                MusicLibrary.empty(MusicDirectory.canonicalPath(this.gameDirectory)),
+                activeLibrary,
                 library -> checkedMixerFactory.create(library, this::onAudioError)
+        );
+        sync = new ClientSync(
+                new ClientSync.Host() {
+                    @Override
+                    public void send(SyncMessage.Serverbound message) {
+                        sendSync(message);
+                    }
+
+                    @Override
+                    public void libraryChanged(MusicLibrary library) {
+                        onLibraryChanged(library);
+                    }
+                },
+                MusicDirectory.canonicalPath(this.gameDirectory),
+                this.gameDirectory.resolve("areamusic-cache"),
+                scanExecutor,
+                clientRuntime::execute
         );
         reloadLocalLibrary();
     }
 
+    /** The editor and music distribution session for the current connection. */
+    public ClientSync sync() {
+        return sync;
+    }
+
+    /** Installs the loader's way of sending serverbound sync bytes. */
+    public void setSyncSender(Consumer<byte[]> sender) {
+        syncSender = Objects.requireNonNull(sender, "sender");
+    }
+
     @Override
     public void onPlayback(long revision, PlaybackState state) {
-        if (!closed) {
+        if (closed) {
+            return;
+        }
+        currentState = state;
+        sync.prioritize(state.musicIds());
+        MusicLibrary newer = deferredLibrary;
+        if (newer != null) {
+            deferredLibrary = null;
+            activeLibrary = newer;
+            playbackSession.apply(revision, state, newer);
+        } else {
             playbackSession.apply(revision, state);
+        }
+    }
+
+    @Override
+    public void onSync(byte[] data) {
+        if (closed) {
+            return;
+        }
+        try {
+            sync.onMessage(SyncCodec.decodeClientbound(data));
+        } catch (IllegalArgumentException exception) {
+            LOGGER.warn("Ignoring a malformed AreaMusic message from the server", exception);
+        }
+    }
+
+    private void sendSync(SyncMessage.Serverbound message) {
+        byte[] data = SyncCodec.encode(message);
+        if (data.length > SyncCodec.MAX_SERVERBOUND_BYTES) {
+            LOGGER.warn("AreaMusic message {} is too large to send", message.getClass().getSimpleName());
+            return;
+        }
+        syncSender.accept(data);
+    }
+
+    /**
+     * A download finished or the server pinned different files. Music that is playing is only
+     * restarted when one of its own tracks changed; otherwise the new library waits for the next
+     * playback state.
+     */
+    private void onLibraryChanged(MusicLibrary library) {
+        if (closed) {
+            return;
+        }
+        boolean affectsCurrent = false;
+        for (String musicId : currentState.musicIds()) {
+            if (!activeLibrary.find(musicId).equals(library.find(musicId))) {
+                affectsCurrent = true;
+                break;
+            }
+        }
+        if (affectsCurrent) {
+            deferredLibrary = null;
+            activeLibrary = library;
+            reportedErrors.clear();
+            playbackSession.updateLibrary(library);
+        } else {
+            deferredLibrary = library;
         }
     }
 
@@ -94,6 +189,12 @@ public final class ClientAreaMusic implements ClientPacketHandler {
                 independentVolume.getAsDouble()
         ));
         playbackSession.setPaused(clientRuntime.paused());
+        sync.tick();
+        if (++ticks % 10 == 0 && currentState.playing()) {
+            sync.downloadPercent(currentState.musicIds()).ifPresent(percent ->
+                    clientRuntime.displayOverlayMessage(
+                            Component.translatable("message.areamusic.downloading", percent)));
+        }
     }
 
     public void connect() {
@@ -110,6 +211,9 @@ public final class ClientAreaMusic implements ClientPacketHandler {
         }
         scanGeneration.incrementAndGet();
         playbackSession.disconnect();
+        sync.disconnect();
+        currentState = PlaybackState.stopped();
+        deferredLibrary = null;
     }
 
     public synchronized void shutdown() {
@@ -143,7 +247,10 @@ public final class ClientAreaMusic implements ClientPacketHandler {
             return;
         }
         reportedErrors.clear();
-        playbackSession.finishReload(library);
+        MusicLibrary playable = sync.setLocalLibrary(library);
+        activeLibrary = playable;
+        deferredLibrary = null;
+        playbackSession.finishReload(playable);
         LOGGER.info("Loaded {} local AreaMusic tracks", library.ids().size());
     }
 
@@ -157,17 +264,25 @@ public final class ClientAreaMusic implements ClientPacketHandler {
     }
 
     private void onAudioError(AudioFailure failure) {
-        if (closed || !reportedErrors.add(failure.deduplicationKey())) {
+        if (closed) {
             return;
         }
-        Throwable cause = rootCause(failure.cause());
-        LOGGER.error(
-                "AreaMusic client audio error ({}, MusicID '{}')",
-                failure.kind(),
-                failure.musicId(),
-                cause
-        );
-        clientRuntime.execute(() -> clientRuntime.displayClientMessage(errorMessage(failure)));
+        clientRuntime.execute(() -> {
+            // A track that is still downloading is not an error; it starts when it arrives.
+            if (failure.kind() == AudioFailure.Kind.MISSING_FILE && sync.awaiting(failure.musicId())) {
+                return;
+            }
+            if (!reportedErrors.add(failure.deduplicationKey())) {
+                return;
+            }
+            LOGGER.error(
+                    "AreaMusic client audio error ({}, MusicID '{}')",
+                    failure.kind(),
+                    failure.musicId(),
+                    rootCause(failure.cause())
+            );
+            clientRuntime.displayClientMessage(errorMessage(failure));
+        });
     }
 
     private static Component errorMessage(AudioFailure failure) {
@@ -191,6 +306,10 @@ public final class ClientAreaMusic implements ClientPacketHandler {
         boolean paused();
 
         void displayClientMessage(Component message);
+
+        /** Shows a short line above the hotbar. */
+        default void displayOverlayMessage(Component message) {
+        }
     }
 
     @FunctionalInterface
@@ -227,6 +346,14 @@ public final class ClientAreaMusic implements ClientPacketHandler {
             Minecraft minecraft = Minecraft.getInstance();
             if (minecraft.player != null) {
                 minecraft.player.displayClientMessage(message, false);
+            }
+        }
+
+        @Override
+        public void displayOverlayMessage(Component message) {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft.player != null) {
+                minecraft.player.displayClientMessage(message, true);
             }
         }
     }

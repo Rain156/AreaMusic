@@ -6,7 +6,10 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Predicate;
 
-/** Last step of an upload: make sure it really is audio, then move it into the music library. */
+/**
+ * Last step of an upload: check that the content starts like the audio type its name claims, then
+ * move it into the music library. The uploading client has already decoded it fully.
+ */
 public final class UploadFinisher {
     /** Rejection code sent to the uploader when the file cannot be decoded. */
     public static final String NOT_AUDIO = "not_audio";
@@ -31,7 +34,8 @@ public final class UploadFinisher {
             if (!transfer.complete()) {
                 throw new IllegalStateException("Upload is not complete");
             }
-            if (!AudioProbe.isDecodable(transfer.temporary())) {
+            String extension = musicIdHint.substring(musicIdHint.lastIndexOf('.') + 1);
+            if (!AudioSignature.matches(transfer.temporary(), extension)) {
                 throw new IllegalArgumentException(NOT_AUDIO);
             }
             String musicId = UploadNames.unique(

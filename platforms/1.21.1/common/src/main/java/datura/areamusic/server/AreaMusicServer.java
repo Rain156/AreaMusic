@@ -11,9 +11,18 @@ import datura.areamusic.edit.AreaEditService;
 import datura.areamusic.edit.AreaEdits;
 import datura.areamusic.edit.EditOp;
 import datura.areamusic.edit.EditResult;
+import datura.areamusic.edit.RejectReason;
 import datura.areamusic.music.MusicDirectory;
 import datura.areamusic.music.MusicLibrary;
+import datura.areamusic.net.ServerConfig;
+import datura.areamusic.net.ServerSync;
+import datura.areamusic.net.SyncCodec;
+import datura.areamusic.net.SyncMessage;
 import datura.areamusic.playback.PlaybackState;
+import datura.areamusic.sync.IncomingTransfer;
+import datura.areamusic.sync.MusicFingerprinter;
+import datura.areamusic.sync.MusicManifest;
+import datura.areamusic.sync.UploadFinisher;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
@@ -30,7 +39,9 @@ import org.slf4j.Logger;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -50,7 +61,12 @@ public final class AreaMusicServer {
         @Override
         public void sendPlayback(ServerPlayer player, long revision, PlaybackState state) {
         }
+
+        @Override
+        public void sendSync(ServerPlayer player, byte[] data) {
+        }
     };
+    private static final int LIBRARY_REFRESH_INTERVAL_TICKS = 100;
     private static final AreaMusicCommands.Operations COMMAND_OPERATIONS = new AreaMusicCommands.Operations() {
         @Override
         public Iterable<String> musicIds() {
@@ -111,6 +127,7 @@ public final class AreaMusicServer {
             UUID,
             PlayerAreaTracker> SERVER_LIFECYCLE =
             new ServerLifecycleCoordinator<>(NO_OP_NETWORK_SENDER);
+    private static final MusicFingerprinter FINGERPRINTER = new MusicFingerprinter();
     private static volatile ServerState serverState = ServerState.inactive();
 
     private AreaMusicServer() {
@@ -141,11 +158,16 @@ public final class AreaMusicServer {
 
         ServerLifecycleCoordinator.Lifecycle<MinecraftServer> lifecycle =
                 SERVER_LIFECYCLE.start(checkedServer, checkedSender);
+        ServerConfig config = ServerConfig.load(
+                normalizedConfigDirectory.resolve(ServerConfig.FILE_NAME));
+        config.warnings().forEach(warning -> LOGGER.warn("AreaMusic server config: {}", warning));
         serverState = ServerState.started(
                 lifecycle,
                 normalizedGameDirectory,
                 startedStorage,
-                legacyStorageDirectory(normalizedConfigDirectory, worldRoot)
+                legacyStorageDirectory(normalizedConfigDirectory, worldRoot),
+                worldRoot.resolve("areamusic").resolve("uploads"),
+                config
         );
         requestReload(null);
     }
@@ -156,14 +178,23 @@ public final class AreaMusicServer {
         }
         ServerState stopped = serverState;
         serverState = ServerState.inactive();
+        stopped.sync.close();
         stopped.finishPersistence();
     }
 
     public static void onPlayerEndTick(ServerPlayer player) {
         syncPlayer(player);
+        ServerState state = serverState;
+        if (state.belongsTo(player)) {
+            state.tickOncePerServerTick();
+        }
     }
 
     public static void onPlayerLogin(ServerPlayer player) {
+        ServerState state = serverState;
+        if (state.belongsTo(player)) {
+            state.sync.onJoin(player.getUUID());
+        }
         forceSync(player, true);
     }
 
@@ -171,7 +202,24 @@ public final class AreaMusicServer {
         ServerState state = serverState;
         if (state.belongsTo(player)) {
             SERVER_LIFECYCLE.removeTracker(state.lifecycle, player.getUUID());
+            state.sync.onLeave(player.getUUID());
         }
+    }
+
+    /** Handles the bytes of one serverbound {@code SyncMessage}. Call on the server thread. */
+    public static void onSyncMessage(ServerPlayer player, byte[] data) {
+        ServerState state = serverState;
+        if (!state.belongsTo(player)) {
+            return;
+        }
+        SyncMessage.Serverbound message;
+        try {
+            message = SyncCodec.decodeServerbound(data);
+        } catch (IllegalArgumentException exception) {
+            LOGGER.warn("Ignoring malformed AreaMusic message from {}", player.getGameProfile().getName());
+            return;
+        }
+        state.sync.onMessage(player.getUUID(), message);
     }
 
     public static void onPlayerRespawn(ServerPlayer player) {
@@ -476,12 +524,33 @@ public final class AreaMusicServer {
                 LOGGER.error("Failed to persist AreaMusic area {}", op.areaId(), exception);
             }
         });
-        SERVER_LIFECYCLE.clearTrackers(state.lifecycle);
+        // Trackers are kept: each one re-resolves for the new revision and only sends a player
+        // a new playback state if theirs actually changed, so unrelated edits never restart music.
         NetworkSender sender = SERVER_LIFECYCLE.senderFor(state.lifecycle);
         for (ServerPlayer player : state.lifecycle.server().getPlayerList().getPlayers()) {
             syncPlayerWithSender(state, player, sender);
         }
+        state.sync.areaChanged(op, result.revision());
         return result;
+    }
+
+    /** An edit from an open editor: the same checks a command gets, then {@link #applyEdit}. */
+    private static EditResult applyEditorEdit(ServerState state, EditOp op) {
+        if (SERVER_LIFECYCLE.reloadInFlight()) {
+            return EditResult.rejected(RejectReason.BUSY, op.areaId(), state.edits.revision());
+        }
+        if (op instanceof EditOp.Put put) {
+            AreaDefinition current = state.edits.find(put.area().id()).orElse(null);
+            boolean boundsChanged = current == null
+                    || !current.pos1().equals(put.area().pos1())
+                    || !current.pos2().equals(put.area().pos2())
+                    || !current.dimension().equals(put.area().dimension());
+            if (boundsChanged && !inBounds(state, put.area())) {
+                return EditResult.rejected(
+                        RejectReason.OUT_OF_BOUNDS, put.area().id(), state.edits.revision());
+            }
+        }
+        return applyEdit(state, op);
     }
 
     private static void reportRejection(CommandSourceStack source, EditResult result) {
@@ -489,6 +558,8 @@ public final class AreaMusicServer {
             case UNKNOWN_AREA -> "commands.areamusic.unknown_area";
             case UNKNOWN_MUSIC -> "commands.areamusic.create.unknown_music";
             case TOO_MANY_AREAS -> "commands.areamusic.too_many_areas";
+            case OUT_OF_BOUNDS -> "commands.areamusic.create.out_of_bounds";
+            case NOT_ALLOWED, BUSY -> "commands.areamusic.busy";
         };
         source.sendFailure(Component.translatable(key, result.detail()));
     }
@@ -557,7 +628,8 @@ public final class AreaMusicServer {
             }
             AreaStorage.LoadResult loaded = areaStorage.loadLenient();
             skipped.addAll(loaded.errors());
-            return new ReloadCandidate(candidateLibrary, loaded.areas(), skipped);
+            return new ReloadCandidate(
+                    candidateLibrary, loaded.areas(), skipped, FINGERPRINTER.fingerprint(candidateLibrary));
         } catch (Exception exception) {
             throw new ReloadFailure(exception);
         }
@@ -592,6 +664,7 @@ public final class AreaMusicServer {
 
         state.musicLibrary = candidate.musicLibrary();
         state.edits.replaceAll(candidate.areas());
+        state.sync.reloaded(candidate.manifest());
         long revision = state.edits.revision();
         SERVER_LIFECYCLE.clearTrackers(completion.lifecycle());
         for (ServerPlayer player : completion.server().getPlayerList().getPlayers()) {
@@ -682,19 +755,29 @@ public final class AreaMusicServer {
         private final Path legacyDirectory;
         private final ExecutorService persistence;
         private final AreaEditService edits;
+        private final Path uploadDirectory;
+        private final ServerConfig config;
+        private final ServerSync<UUID> sync;
         private volatile MusicLibrary musicLibrary;
+        private int lastTick = -1;
+        private boolean libraryRefreshInFlight;
 
         private ServerState(
                 ServerLifecycleCoordinator.Lifecycle<MinecraftServer> lifecycle,
                 Path gameDirectory,
                 AreaStorage storage,
                 Path legacyDirectory,
+                Path uploadDirectory,
+                ServerConfig config,
                 MusicLibrary musicLibrary
         ) {
             this.lifecycle = lifecycle;
             this.gameDirectory = gameDirectory;
             this.storage = storage;
             this.legacyDirectory = legacyDirectory;
+            this.uploadDirectory = uploadDirectory;
+            this.config = config;
+            sync = new ServerSync<>(new SyncHost(this), config.sync());
             this.musicLibrary = Objects.requireNonNull(musicLibrary, "musicLibrary");
             // One thread, so disk writes and reload reads happen in the order they were requested.
             persistence = lifecycle == null ? null : Executors.newSingleThreadExecutor(runnable -> {
@@ -711,6 +794,8 @@ public final class AreaMusicServer {
                     null,
                     null,
                     null,
+                    null,
+                    ServerConfig.DEFAULT,
                     MusicLibrary.empty(MusicDirectory.canonicalPath(Path.of(".")))
             );
         }
@@ -719,15 +804,55 @@ public final class AreaMusicServer {
                 ServerLifecycleCoordinator.Lifecycle<MinecraftServer> lifecycle,
                 Path gameDirectory,
                 AreaStorage storage,
-                Path legacyDirectory
+                Path legacyDirectory,
+                Path uploadDirectory,
+                ServerConfig config
         ) {
             return new ServerState(
                     Objects.requireNonNull(lifecycle, "lifecycle"),
                     Objects.requireNonNull(gameDirectory, "gameDirectory"),
                     Objects.requireNonNull(storage, "storage"),
                     Objects.requireNonNull(legacyDirectory, "legacyDirectory"),
+                    Objects.requireNonNull(uploadDirectory, "uploadDirectory"),
+                    Objects.requireNonNull(config, "config"),
                     MusicLibrary.empty(MusicDirectory.canonicalPath(gameDirectory))
             );
+        }
+
+        /** Runs the per-tick work once, however many players report their tick. */
+        private void tickOncePerServerTick() {
+            int tick = lifecycle.server().getTickCount();
+            if (tick == lastTick) {
+                return;
+            }
+            lastTick = tick;
+            sync.tick();
+            if (tick % LIBRARY_REFRESH_INTERVAL_TICKS != 0) {
+                return;
+            }
+            sync.refreshPermissions();
+            if (libraryRefreshInFlight || SERVER_LIFECYCLE.reloadInFlight()) {
+                return;
+            }
+            // Picks up music copied into the folder by hand, so nobody has to run a reload.
+            libraryRefreshInFlight = true;
+            persistence.execute(() -> {
+                LibraryCandidate candidate = null;
+                try {
+                    candidate = scanLibrary(gameDirectory);
+                } catch (Exception exception) {
+                    LOGGER.debug("AreaMusic library refresh failed", exception);
+                }
+                LibraryCandidate finalCandidate = candidate;
+                lifecycle.server().execute(() -> {
+                    libraryRefreshInFlight = false;
+                    if (finalCandidate != null
+                            && SERVER_LIFECYCLE.owns(lifecycle)
+                            && !SERVER_LIFECYCLE.reloadInFlight()) {
+                        applyLibrary(this, finalCandidate);
+                    }
+                });
+            });
         }
 
         /** Lets queued writes reach the disk before the server finishes stopping. */
@@ -758,11 +883,119 @@ public final class AreaMusicServer {
         }
     }
 
-    record ReloadCandidate(MusicLibrary musicLibrary, List<AreaDefinition> areas, List<String> skipped) {
+    record ReloadCandidate(
+            MusicLibrary musicLibrary, List<AreaDefinition> areas, List<String> skipped, MusicManifest manifest
+    ) {
         ReloadCandidate {
             areas = List.copyOf(areas);
             skipped = List.copyOf(skipped);
+            Objects.requireNonNull(manifest, "manifest");
         }
+    }
+
+    private record LibraryCandidate(MusicLibrary musicLibrary, MusicManifest manifest) {
+    }
+
+    /** Connects the loader-neutral sync session to this server's players, areas and library. */
+    private static final class SyncHost implements ServerSync.Host<UUID> {
+        private final ServerState state;
+
+        private SyncHost(ServerState state) {
+            this.state = state;
+        }
+
+        @Override
+        public void send(UUID playerId, SyncMessage.Clientbound message) {
+            ServerPlayer player = state.lifecycle.server().getPlayerList().getPlayer(playerId);
+            if (player != null) {
+                SERVER_LIFECYCLE.senderFor(state.lifecycle).sendSync(player, SyncCodec.encode(message));
+            }
+        }
+
+        @Override
+        public boolean canEdit(UUID playerId) {
+            MinecraftServer server = state.lifecycle.server();
+            ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+            return player != null
+                    && (player.hasPermissions(state.config.editPermissionLevel())
+                    || server.isSingleplayerOwner(player.getGameProfile()));
+        }
+
+        @Override
+        public EditResult applyEdit(UUID playerId, EditOp op) {
+            return applyEditorEdit(state, op);
+        }
+
+        @Override
+        public List<AreaDefinition> areas() {
+            return state.edits.areas();
+        }
+
+        @Override
+        public long revision() {
+            return state.edits.revision();
+        }
+
+        @Override
+        public MusicLibrary library() {
+            return state.musicLibrary;
+        }
+
+        @Override
+        public Path newUploadTemporaryPath(String extension) {
+            return state.uploadDirectory.resolve("." + UUID.randomUUID() + "." + extension);
+        }
+
+        @Override
+        public void finishUpload(
+                UUID playerId, int uploadId, IncomingTransfer transfer, String musicIdHint
+        ) {
+            MusicLibrary current = state.musicLibrary;
+            state.persistence.execute(() -> {
+                String musicId = null;
+                String rejection = null;
+                LibraryCandidate candidate = null;
+                try {
+                    HashSet<String> taken = new HashSet<>();
+                    current.ids().forEach(id -> taken.add(id.toLowerCase(Locale.ROOT)));
+                    musicId = UploadFinisher.install(transfer, musicIdHint, current.root(), taken::contains);
+                    candidate = scanLibrary(state.gameDirectory);
+                    LOGGER.info("Stored uploaded AreaMusic track {}", musicId);
+                } catch (IllegalArgumentException exception) {
+                    rejection = exception.getMessage();
+                } catch (Exception exception) {
+                    LOGGER.error("Failed to store an uploaded AreaMusic track", exception);
+                    rejection = "server_error";
+                }
+                String finalMusicId = musicId;
+                String finalRejection = rejection;
+                LibraryCandidate finalCandidate = candidate;
+                state.lifecycle.server().execute(() -> {
+                    if (!SERVER_LIFECYCLE.owns(state.lifecycle)) {
+                        return;
+                    }
+                    if (finalCandidate != null) {
+                        applyLibrary(state, finalCandidate);
+                    }
+                    state.sync.uploadFinished(playerId, uploadId, finalMusicId, finalRejection);
+                });
+            });
+        }
+    }
+
+    private static LibraryCandidate scanLibrary(Path gameDirectory) throws Exception {
+        MusicLibrary library = MusicLibrary.scan(MusicDirectory.prepare(gameDirectory));
+        return new LibraryCandidate(library, FINGERPRINTER.fingerprint(library));
+    }
+
+    /** Swaps in a rescanned music library without touching areas. */
+    private static void applyLibrary(ServerState state, LibraryCandidate candidate) {
+        if (candidate.manifest().equals(state.sync.manifest())) {
+            return;
+        }
+        state.musicLibrary = candidate.musicLibrary();
+        state.sync.reloaded(candidate.manifest());
+        LOGGER.info("AreaMusic library now has {} tracks", candidate.musicLibrary().ids().size());
     }
 
     private static final class ReloadFailure extends RuntimeException {

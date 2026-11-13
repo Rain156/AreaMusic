@@ -77,7 +77,7 @@ class AreaMusicNetworkTest {
     }
 
     @Test
-    void registrationUsesProtocolThreeTwoMainThreadClientboundPayloadsAndDispatchesHandlers() {
+    void registrationUsesProtocolFourMainThreadPayloadsAndDispatchesHandlers() {
         AtomicReference<String> protocol = new AtomicReference<>();
         AtomicReference<HandlerThread> thread = new AtomicReference<>();
         RecordingClientboundRegistrar registrar = new RecordingClientboundRegistrar();
@@ -88,9 +88,14 @@ class AreaMusicNetworkTest {
             return registrar;
         });
 
-        assertEquals("3", protocol.get());
+        assertEquals("4", protocol.get());
         assertSame(HandlerThread.MAIN, thread.get());
-        assertEquals(2, registrar.registrations.size());
+        assertEquals(3, registrar.registrations.size());
+        assertSame(AreaMusicNetwork.SyncToClientPayload.TYPE, registrar.registrations.get(2).type);
+        assertEquals(1, registrar.serverbound.size());
+        assertSame(AreaMusicNetwork.SyncToServerPayload.TYPE, registrar.serverbound.get(0).type);
+        assertEquals("areamusic:sync_s2c", AreaMusicNetwork.SyncToClientPayload.TYPE.id().toString());
+        assertEquals("areamusic:sync_c2s", AreaMusicNetwork.SyncToServerPayload.TYPE.id().toString());
         CapturedRegistration<?> playback = registrar.registrations.get(0);
         CapturedRegistration<?> reload = registrar.registrations.get(1);
         assertSame(AreaMusicNetwork.PlaybackPayload.TYPE, playback.type);
@@ -232,6 +237,16 @@ class AreaMusicNetworkTest {
     private static final class RecordingClientboundRegistrar
             implements AreaMusicNetwork.ClientboundRegistrar {
         private final List<CapturedRegistration<?>> registrations = new ArrayList<>();
+        private final List<CapturedRegistration<?>> serverbound = new ArrayList<>();
+
+        @Override
+        public <T extends CustomPacketPayload> void playToServer(
+                CustomPacketPayload.Type<T> type,
+                StreamCodec<? super RegistryFriendlyByteBuf, T> codec,
+                IPayloadHandler<T> handler
+        ) {
+            serverbound.add(new CapturedRegistration<>(type, codec, handler));
+        }
 
         @Override
         public <T extends CustomPacketPayload> void playToClient(

@@ -122,15 +122,15 @@ class FabricAreaMusicNetworkTest {
                 register,
                 "CALL:net/fabricmc/fabric/api/networking/v1/PayloadTypeRegistry#register"
         );
-        assertEquals(2, registryCalls.size(),
-                () -> "register must install exactly two typed payload codecs: "
+        assertEquals(4, registryCalls.size(),
+                () -> "register must install playback, reload and both sync payload codecs: "
                         + register.instructions);
         List<Integer> completions = instructionIndexesContaining(
                 register,
                 "CALL:" + GUARD_OWNER + "#register()V"
         );
         assertEquals(1, completions.size());
-        assertTrue(completions.get(0) > registryCalls.get(1),
+        assertTrue(completions.get(0) > registryCalls.get(3),
                 () -> "registration must be marked only after both codecs succeed: "
                         + register.instructions);
 
@@ -238,8 +238,8 @@ class FabricAreaMusicNetworkTest {
                 "CALL:net/fabricmc/fabric/api/client/networking/v1/ClientPlayNetworking"
                         + "#registerGlobalReceiver"
         );
-        assertEquals(2, registrations.size(),
-                () -> "exactly two typed receivers must be registered: "
+        assertEquals(3, registrations.size(),
+                () -> "playback, reload and sync receivers must be registered: "
                         + registration.instructions);
         assertHandle(registration, CLIENT_NETWORK_OWNER + "#receivePlayback");
         assertHandle(registration, CLIENT_NETWORK_OWNER + "#receiveReload");
@@ -250,7 +250,7 @@ class FabricAreaMusicNetworkTest {
         assertEquals(1, writes.size(),
                 () -> "receiver success flag must be written exactly once: "
                         + registration.instructions);
-        assertTrue(writes.get(0) > registrations.get(1),
+        assertTrue(writes.get(0) > registrations.get(2),
                 () -> "receiver success flag must remain false if either registration fails: "
                         + registration.instructions);
         assertEquals("INSN:" + Opcodes.ICONST_1,

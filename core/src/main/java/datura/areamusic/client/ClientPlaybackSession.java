@@ -56,6 +56,41 @@ public final class ClientPlaybackSession implements AutoCloseable {
         }
     }
 
+    /** Applies a playback state together with a newer library, as one step. */
+    public void apply(long revision, PlaybackState state, MusicLibrary library) {
+        validateRevision(revision);
+        if (revision < highestSeenRevision) {
+            return;
+        }
+        musicLibrary = Objects.requireNonNull(library, "library");
+        PlaybackUpdate update = new PlaybackUpdate(revision, Objects.requireNonNull(state, "state"));
+        latestUpdate = update;
+        highestSeenRevision = revision;
+        if (pendingReloadRevision < 0L) {
+            compatibleUpdate = update;
+            if (mixer != null) {
+                mixer.updateMusicLibraryAndApply(library, revision, state);
+            }
+        }
+    }
+
+    /**
+     * Switches to a library whose files changed outside a server reload, such as when a download
+     * finishes, and restarts the current state so tracks that were missing begin to play.
+     */
+    public void updateLibrary(MusicLibrary library) {
+        musicLibrary = Objects.requireNonNull(library, "library");
+        if (mixer == null || pendingReloadRevision >= 0L) {
+            return;
+        }
+        PlaybackUpdate update = compatibleUpdate;
+        if (update == null) {
+            mixer.updateMusicLibrary(library);
+        } else {
+            mixer.updateMusicLibraryAndApply(library, update.revision(), update.state());
+        }
+    }
+
     public void finishReload(MusicLibrary library) {
         musicLibrary = Objects.requireNonNull(library, "library");
         long completedRevision = pendingReloadRevision;

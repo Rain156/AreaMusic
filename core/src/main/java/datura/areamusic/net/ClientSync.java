@@ -68,6 +68,8 @@ public final class ClientSync {
     private final Set<String> failed = new HashSet<>();
     private final Deque<MusicFingerprint> queue = new ArrayDeque<>();
     private Download active;
+    private Map<String, Path> delivered = Map.of();
+    private boolean swept;
     private int nextUploadId = 1;
     private final Map<Integer, Upload> uploads = new LinkedHashMap<>();
 
@@ -81,13 +83,6 @@ public final class ClientSync {
         cache = new MusicCache(this.libraryRoot, cacheRoot);
         localLibrary = MusicLibrary.empty(this.libraryRoot);
         editor = new EditorModel(host::send);
-        io.execute(() -> {
-            try {
-                cache.sweepTemporaryFiles();
-            } catch (IOException ignored) {
-                // Leftovers are harmless; they are never treated as cache hits.
-            }
-        });
     }
 
     public EditorModel editor() {
@@ -124,17 +119,22 @@ public final class ClientSync {
         for (Upload upload : new ArrayList<>(uploads.values())) {
             failUpload(upload, "disconnected");
         }
+        swept = false;
         editor.reset();
     }
 
-    /** The result of scanning the player's own music folder. */
-    public void setLocalLibrary(MusicLibrary library) {
+    /**
+     * Takes the result of scanning the player's own music folder and returns the library to play
+     * from right now. If server-pinned tracks need re-checking, {@link Host#libraryChanged} follows.
+     */
+    public MusicLibrary setLocalLibrary(MusicLibrary library) {
         localLibrary = Objects.requireNonNull(library, "library");
-        if (needed.isEmpty()) {
-            host.libraryChanged(buildLibrary());
-        } else {
+        if (!needed.isEmpty()) {
             resolveNeeded();
         }
+        MusicLibrary built = buildLibrary();
+        delivered = files(built);
+        return built;
     }
 
     public void onMessage(SyncMessage.Clientbound message) {
@@ -356,7 +356,17 @@ public final class ClientSync {
         List<MusicFingerprint> wanted = needed;
         queue.clear();
         closeActive();
+        boolean sweep = !swept;
+        swept = true;
         io.execute(() -> {
+            if (sweep) {
+                try {
+                    // Unfinished downloads from an earlier session; none is in use right now.
+                    cache.sweepTemporaryFiles();
+                } catch (IOException ignored) {
+                    // Leftovers are harmless; they are never treated as cache hits.
+                }
+            }
             Map<String, Path> found = new HashMap<>();
             for (MusicFingerprint fingerprint : wanted) {
                 if (found.containsKey(fingerprint.sha256())) {
@@ -380,7 +390,7 @@ public final class ClientSync {
                         queue.add(fingerprint);
                     }
                 }
-                host.libraryChanged(buildLibrary());
+                deliver();
                 startNextDownload();
             });
         });
@@ -418,7 +428,7 @@ public final class ClientSync {
             Path stored = active.transfer.moveTo(cache.cachePath(fingerprint));
             closeActive();
             resolved.put(fingerprint.sha256(), stored);
-            host.libraryChanged(buildLibrary());
+            deliver();
         } catch (TransferException | IOException exception) {
             failed.add(fingerprint.sha256());
             closeActive();
@@ -443,6 +453,24 @@ public final class ClientSync {
         return MusicLibrary.of(libraryRoot, files);
     }
 
+    /** Tells the host about the current library unless it is the one it already has. */
+    private void deliver() {
+        MusicLibrary built = buildLibrary();
+        Map<String, Path> files = files(built);
+        if (!files.equals(delivered)) {
+            delivered = files;
+            host.libraryChanged(built);
+        }
+    }
+
+    private static Map<String, Path> files(MusicLibrary library) {
+        Map<String, Path> files = new HashMap<>();
+        for (String musicId : library.ids()) {
+            files.put(musicId, library.find(musicId).orElseThrow());
+        }
+        return files;
+    }
+
     private void closeActive() {
         if (active != null) {
             try {
@@ -457,7 +485,7 @@ public final class ClientSync {
     public interface Host {
         void send(SyncMessage.Serverbound message);
 
-        /** The set of playable files changed; playback should switch to this library. */
+        /** The set of playable files changed after the fact, e.g. a download finished. */
         void libraryChanged(MusicLibrary library);
     }
 

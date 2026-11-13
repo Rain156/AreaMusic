@@ -32,6 +32,7 @@
   "areamusic.mode.loop": "单曲循环",
   "areamusic.mode.playlist": "歌单",
   "areamusic.mode.layers": "多轨叠加",
+  "message.areamusic.downloading": "正在下载音乐 %s%%",
   "message.areamusic.missing_file": "未找到 MusicID 对应的本地音频文件：%s",
   "message.areamusic.decode_failed": "无法解码 MusicID 对应的音频：%s",
   "message.areamusic.device_failed": "无法打开音频输出设备。",

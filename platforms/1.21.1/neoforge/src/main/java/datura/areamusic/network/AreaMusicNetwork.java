@@ -1,6 +1,7 @@
 package datura.areamusic.network;
 
 import datura.areamusic.playback.PlaybackState;
+import datura.areamusic.server.AreaMusicServer;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -15,9 +16,9 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Registers only clientbound typed payloads and schedules their handling on the client thread. */
+/** Registers the typed payloads and schedules their handling on the main thread of each side. */
 public final class AreaMusicNetwork {
-    private static final String PROTOCOL_VERSION = "3";
+    private static final String PROTOCOL_VERSION = "4";
     private static final AtomicReference<ClientPacketHandler> CLIENT_HANDLER =
             new AtomicReference<>();
     private static final PayloadRegistration REGISTRATION = new PayloadRegistration();
@@ -44,6 +45,20 @@ public final class AreaMusicNetwork {
                 ReloadPayload.TYPE,
                 ReloadPayload.STREAM_CODEC,
                 (message, context) -> handleClientReload(message.message())
+        );
+        registrar.playToClient(
+                SyncToClientPayload.TYPE,
+                SyncToClientPayload.STREAM_CODEC,
+                (message, context) -> requireClientHandler().onSync(message.blob().data())
+        );
+        registrar.playToServer(
+                SyncToServerPayload.TYPE,
+                SyncToServerPayload.STREAM_CODEC,
+                (message, context) -> {
+                    if (context.player() instanceof ServerPlayer player) {
+                        AreaMusicServer.onSyncMessage(player, message.blob().data());
+                    }
+                }
         );
     }
 
@@ -73,6 +88,18 @@ public final class AreaMusicNetwork {
                 Objects.requireNonNull(player, "player"),
                 new ReloadPayload(new ClientboundReloadMusic(revision))
         );
+    }
+
+    public static void sendSync(ServerPlayer player, byte[] data) {
+        PacketDistributor.sendToPlayer(
+                Objects.requireNonNull(player, "player"),
+                new SyncToClientPayload(new SyncBlob(data))
+        );
+    }
+
+    /** Client only. */
+    public static void sendSyncToServer(byte[] data) {
+        PacketDistributor.sendToServer(new SyncToServerPayload(new SyncBlob(data)));
     }
 
     static void handleClientPlayback(ClientboundPlaybackState message) {
@@ -145,6 +172,12 @@ public final class AreaMusicNetwork {
                 StreamCodec<? super RegistryFriendlyByteBuf, T> codec,
                 IPayloadHandler<T> handler
         );
+
+        <T extends CustomPacketPayload> void playToServer(
+                CustomPacketPayload.Type<T> type,
+                StreamCodec<? super RegistryFriendlyByteBuf, T> codec,
+                IPayloadHandler<T> handler
+        );
     }
 
     private record NeoForgeClientboundRegistrar(PayloadRegistrar delegate)
@@ -160,6 +193,15 @@ public final class AreaMusicNetwork {
                 IPayloadHandler<T> handler
         ) {
             delegate.playToClient(type, codec, handler);
+        }
+
+        @Override
+        public <T extends CustomPacketPayload> void playToServer(
+                CustomPacketPayload.Type<T> type,
+                StreamCodec<? super RegistryFriendlyByteBuf, T> codec,
+                IPayloadHandler<T> handler
+        ) {
+            delegate.playToServer(type, codec, handler);
         }
     }
 
@@ -214,6 +256,46 @@ public final class AreaMusicNetwork {
 
         @Override
         public Type<ReloadPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record SyncToClientPayload(SyncBlob blob) implements CustomPacketPayload {
+        public static final Type<SyncToClientPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath("areamusic", "sync_s2c")
+        );
+        public static final StreamCodec<RegistryFriendlyByteBuf, SyncToClientPayload> STREAM_CODEC =
+                StreamCodec.of(
+                        (buffer, payload) -> SyncBlob.encode(payload.blob, buffer),
+                        buffer -> new SyncToClientPayload(SyncBlob.decodeClientbound(buffer))
+                );
+
+        public SyncToClientPayload {
+            Objects.requireNonNull(blob, "blob");
+        }
+
+        @Override
+        public Type<SyncToClientPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record SyncToServerPayload(SyncBlob blob) implements CustomPacketPayload {
+        public static final Type<SyncToServerPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath("areamusic", "sync_c2s")
+        );
+        public static final StreamCodec<RegistryFriendlyByteBuf, SyncToServerPayload> STREAM_CODEC =
+                StreamCodec.of(
+                        (buffer, payload) -> SyncBlob.encode(payload.blob, buffer),
+                        buffer -> new SyncToServerPayload(SyncBlob.decodeServerbound(buffer))
+                );
+
+        public SyncToServerPayload {
+            Objects.requireNonNull(blob, "blob");
+        }
+
+        @Override
+        public Type<SyncToServerPayload> type() {
             return TYPE;
         }
     }
