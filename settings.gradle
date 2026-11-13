@@ -28,6 +28,7 @@ include ':platforms:mc1_21_1:forge_1_21_1'
 include ':platforms:mc1_21_1:neoforge_1_21_1'
 include ':platforms:mc26_3:common'
 include ':platforms:mc26_3:fabric_26_3'
+include ':platforms:mc26_3:forge_26_3'
 include ':platforms:mc26_3:neoforge_26_3'
 
 project(':platforms').projectDir = file('platforms')
@@ -43,4 +44,5 @@ project(':platforms:mc1_21_1:neoforge_1_21_1').projectDir = file('platforms/1.21
 project(':platforms:mc26_3').projectDir = file('platforms/26.3')
 project(':platforms:mc26_3:common').projectDir = file('platforms/26.3/common')
 project(':platforms:mc26_3:fabric_26_3').projectDir = file('platforms/26.3/fabric')
+project(':platforms:mc26_3:forge_26_3').projectDir = file('platforms/26.3/forge')
 project(':platforms:mc26_3:neoforge_26_3').projectDir = file('platforms/26.3/neoforge')

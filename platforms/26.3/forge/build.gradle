@@ -1,0 +1,267 @@
+import datura.gradle.VerifyProductionJar
+import datura.gradle.ProductionRootsJvmArgumentProvider
+import org.gradle.api.tasks.PathSensitivity
+
+plugins {
+    id 'java'
+    id 'net.minecraftforge.gradle' version '7.0.40'
+}
+
+group = rootProject.group
+version = rootProject.version
+
+base {
+    archivesName = "${mod_id}-forge-${mc26_3_minecraft_version}"
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(25)
+}
+
+configurations {
+    embeddedCodecs {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    compileOnly.extendsFrom embeddedCodecs
+}
+
+def sharedAudioCodecResources = rootProject.layout.projectDirectory.dir('platforms/shared/audio-codecs')
+sourceSets.main.resources.srcDir(sharedAudioCodecResources)
+
+evaluationDependsOn(':core')
+evaluationDependsOn(':platforms:mc26_3:common')
+def coreSourceSets = project(':core').sourceSets
+def commonSourceSets = project(':platforms:mc26_3:common').sourceSets
+def coreMainJava25ClassesDir = layout.buildDirectory.dir('classes/java/coreMainJava25')
+def compileCoreMainJava25 = tasks.register('compileCoreMainJava25', JavaCompile) {
+    source(coreSourceSets.main.allJava)
+    classpath = coreSourceSets.main.compileClasspath
+    destinationDirectory.set(coreMainJava25ClassesDir)
+    javaCompiler.set(javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    })
+    options.encoding = 'UTF-8'
+    options.release = 25
+}
+def coreMainOutput = files(coreMainJava25ClassesDir).builtBy(compileCoreMainJava25)
+def coreTestOutput = coreSourceSets.test.output
+def commonMainOutput = commonSourceSets.main.output
+def commonTestOutput = commonSourceSets.test.output
+def forgeMainOutput = sourceSets.main.output
+def forgeTestOutput = sourceSets.test.output
+def dedicatedServerProductionRoots = files(
+        coreMainOutput,
+        commonMainOutput.classesDirs,
+        forgeMainOutput.classesDirs
+)
+
+minecraft {
+    mappings channel: mc26_3_mapping_channel,
+            version: mc26_3_mapping_version
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+}
+
+dependencies {
+    implementation minecraft.dependency(
+            "net.minecraftforge:forge:${mc26_3_minecraft_version}-${mc26_3_forge_version}"
+    )
+
+    implementation(project(':core')) {
+        transitive = false
+    }
+    implementation(project(':platforms:mc26_3:common')) {
+        transitive = false
+    }
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.ow2.asm:asm:9.9'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'org.jcraft:jorbis:0.0.17'
+
+    embeddedCodecs 'com.googlecode.soundlibs:mp3spi:1.9.5.4'
+    embeddedCodecs 'com.googlecode.soundlibs:jlayer:1.0.1.4'
+    embeddedCodecs 'com.googlecode.soundlibs:vorbisspi:1.0.3.3'
+    embeddedCodecs 'com.googlecode.soundlibs:tritonus-share:0.3.7.4'
+    embeddedCodecs 'org.jflac:jflac-codec:1.5.2'
+}
+
+def embeddedCodecsDir = layout.buildDirectory.dir('generated/embeddedCodecs')
+def syncEmbeddedCodecs = tasks.register('syncEmbeddedCodecs', Sync) {
+    into embeddedCodecsDir
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from({
+        configurations.embeddedCodecs.collect { zipTree(it) }
+    }) {
+        exclude 'META-INF/MANIFEST.MF'
+        exclude 'META-INF/*.SF'
+        exclude 'META-INF/*.RSA'
+        exclude 'META-INF/*.DSA'
+        exclude 'META-INF/services/**'
+        exclude 'module-info.class'
+        exclude 'META-INF/versions/**/module-info.class'
+    }
+}
+
+sourceSets.main.output.dir([builtBy: syncEmbeddedCodecs], embeddedCodecsDir)
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 25
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    def replaceProperties = [
+            mc26_3_minecraft_version_range: mc26_3_minecraft_version_range,
+            mc26_3_forge_version_range    : mc26_3_forge_version_range,
+            mc26_3_loader_version_range   : mc26_3_loader_version_range,
+            mod_id                          : mod_id,
+            mod_name                        : mod_name,
+            mod_license                     : mod_license,
+            mod_version                     : mod_version,
+            mod_authors                     : mod_authors,
+            mod_description                 : mod_description
+    ]
+
+    inputs.properties replaceProperties
+
+    filesMatching('META-INF/mods.toml') {
+        expand replaceProperties
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    dependsOn compileCoreMainJava25
+    dependsOn ':platforms:mc26_3:common:classes'
+    from coreMainOutput
+    from commonMainOutput
+
+    manifest {
+        attributes([
+                'Specification-Title'       : mod_id,
+                'Specification-Vendor'      : mod_authors,
+                'Specification-Version'     : '1',
+                'Implementation-Title'      : rootProject.name,
+                'Implementation-Version'    : archiveVersion,
+                'Implementation-Vendor'     : mod_authors
+        ])
+    }
+}
+
+def bundledAudioProviderEntries = [
+        'javazoom/spi/mpeg/sampled/file/MpegAudioFileReader.class',
+        'javazoom/spi/mpeg/sampled/convert/MpegFormatConversionProvider.class',
+        'javazoom/spi/vorbis/sampled/file/VorbisAudioFileReader.class',
+        'javazoom/spi/vorbis/sampled/convert/VorbisFormatConversionProvider.class',
+        'org/jflac/sound/spi/FlacAudioFileReader.class',
+        'org/jflac/sound/spi/FlacFormatConversionProvider.class'
+]
+
+def verifyBundledAudioCodecs = tasks.register('verifyBundledAudioCodecs') {
+    dependsOn syncEmbeddedCodecs
+    inputs.dir embeddedCodecsDir
+
+    doLast {
+        File codecRoot = embeddedCodecsDir.get().asFile
+        List<String> missingEntries = bundledAudioProviderEntries.findAll {
+            !new File(codecRoot, it).isFile()
+        }
+        boolean bundlesJorbis = new File(codecRoot, 'com/jcraft/jorbis').exists()
+        List<File> nestedJars = []
+        codecRoot.eachFileRecurse(groovy.io.FileType.FILES) { candidate ->
+            if (candidate.name.toLowerCase(Locale.ROOT).endsWith('.jar')) {
+                nestedJars.add(candidate)
+            }
+        }
+        nestedJars.sort { it.absolutePath }
+        if (!missingEntries.isEmpty() || bundlesJorbis || !nestedJars.isEmpty()) {
+            throw new GradleException(
+                    "Bundled audio codec verification failed for ${codecRoot}. " +
+                            "Missing provider classes: ${missingEntries}; " +
+                            "bundles JOrbis: ${bundlesJorbis}; nested JARs: ${nestedJars}"
+            )
+        }
+    }
+}
+
+def productionJarTask = tasks.named('jar', Jar)
+def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProductionJar) {
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    description = 'Audits the final Forge 26.3 production JAR.'
+
+    productionJar.set(productionJarTask.flatMap { it.archiveFile })
+    codecDirectory.set(embeddedCodecsDir)
+    coreMainClassRoots.from(coreMainOutput)
+    commonMainClassRoots.from(commonMainOutput.classesDirs)
+    forgeMainClassRoots.from(forgeMainOutput.classesDirs)
+    testOutputRoots.from(coreTestOutput, commonTestOutput, forgeTestOutput)
+    serviceSourceFiles.from(
+            sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.AudioFileReader'),
+            sharedAudioCodecResources.file('META-INF/services/javax.sound.sampled.spi.FormatConversionProvider')
+    )
+
+    expectedFileName.set("${mod_id}-forge-${mc26_3_minecraft_version}-${mod_version}.jar")
+    expectedModId.set(mod_id)
+    expectedModVersion.set(mod_version)
+    expectedImplementationTitle.set(rootProject.name)
+    expectedPackFormat.set(97)
+    expectedProjectClassMajor.set(69)
+    requiredProviderEntries.set(bundledAudioProviderEntries)
+    requiredResourceEntries.set([
+            'META-INF/MANIFEST.MF',
+            'META-INF/mods.toml',
+            'pack.mcmeta',
+            'assets/areamusic/lang/en_us.json',
+            'assets/areamusic/lang/zh_cn.json',
+            'META-INF/AREA_MUSIC_THIRD_PARTY_NOTICES.txt',
+            'META-INF/licenses/LGPL-2.1.txt',
+            'META-INF/services/javax.sound.sampled.spi.AudioFileReader',
+            'META-INF/services/javax.sound.sampled.spi.FormatConversionProvider'
+    ])
+    verifyReobfuscation.set(false)
+    namingEvidenceEntry.set('datura/areamusic/server/PlayerAreaTracker.class')
+    namingEvidenceMethodOwner.set('net/minecraft/core/BlockPos')
+    namingEvidenceMethodDescriptor.set('()I')
+    expectedMojangName.set('getX')
+    forbiddenSrgName.set('m_123341_')
+
+    dependsOn productionJarTask
+    dependsOn syncEmbeddedCodecs
+    dependsOn compileCoreMainJava25
+    dependsOn ':core:testClasses'
+    dependsOn ':platforms:mc26_3:common:classes', ':platforms:mc26_3:common:testClasses'
+    dependsOn tasks.named('classes'), tasks.named('testClasses')
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+    inputs.files(dedicatedServerProductionRoots)
+            .withPropertyName('dedicatedServerProductionClassRoots')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    dependsOn compileCoreMainJava25
+    dependsOn ':platforms:mc26_3:common:classes'
+    dependsOn tasks.named('classes')
+
+    def productionRootsArgumentProvider = objects.newInstance(
+            ProductionRootsJvmArgumentProvider
+    )
+    productionRootsArgumentProvider.propertyName.set(
+            'areamusic.forge.dedicatedServerProductionRoots'
+    )
+    productionRootsArgumentProvider.productionRoots.from(
+            dedicatedServerProductionRoots
+    )
+    jvmArgumentProviders.add(productionRootsArgumentProvider)
+}
+
+tasks.named('check') {
+    dependsOn verifyBundledAudioCodecs, verifyProductionJar
+}

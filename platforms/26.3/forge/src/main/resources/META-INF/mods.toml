@@ -1,0 +1,25 @@
+modLoader = "javafml"
+loaderVersion = "${mc26_3_loader_version_range}"
+license = "${mod_license}"
+
+[[mods]]
+modId = "${mod_id}"
+version = "${mod_version}"
+displayName = "${mod_name}"
+authors = "${mod_authors}"
+displayTest = "MATCH_VERSION"
+description = '''${mod_description}'''
+
+[[dependencies."${mod_id}"]]
+modId = "forge"
+mandatory = true
+versionRange = "${mc26_3_forge_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies."${mod_id}"]]
+modId = "minecraft"
+mandatory = true
+versionRange = "${mc26_3_minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"
