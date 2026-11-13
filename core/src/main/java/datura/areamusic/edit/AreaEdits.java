@@ -202,6 +202,71 @@ public final class AreaEdits {
         return area.withPlayback(new ParallelPlayback(remaining));
     }
 
+    /** Adds a track that plays at the same time as the others, whatever the current mode. */
+    public static AreaDefinition addLayer(AreaDefinition area, String musicId) {
+        Objects.requireNonNull(musicId, "musicId");
+        AreaDefinition layered = area.playback() instanceof ParallelPlayback
+                ? area
+                : withMode(area, SimpleMode.LAYERS);
+        List<AreaTrackDefinition> tracks = new ArrayList<>(layered.tracks());
+        requireLayerCount(tracks.size() + 1);
+        tracks.add(track(musicId, volumeOf(area), fadeInOf(area), fadeOutOf(area)));
+        return area.withPlayback(new ParallelPlayback(tracks));
+    }
+
+    /** Removes the track at a position. An area always keeps at least one track. */
+    public static AreaDefinition removeMusicAt(AreaDefinition area, int index) {
+        List<String> musicIds = area.musicIds();
+        if (index < 0 || index >= musicIds.size()) {
+            throw new IllegalArgumentException("No track at position " + (index + 1));
+        }
+        if (musicIds.size() == 1) {
+            throw new IllegalArgumentException(
+                    "An area needs at least one track; delete the area instead");
+        }
+        if (area.playback() instanceof PlaylistLoopPlayback playlist) {
+            List<String> remaining = new ArrayList<>(musicIds);
+            remaining.remove(index);
+            return area.withPlayback(new PlaylistLoopPlayback(
+                    remaining, playlist.volume(), playlist.fadeInMs(), playlist.fadeOutMs()));
+        }
+        List<AreaTrackDefinition> remaining = new ArrayList<>(area.tracks());
+        remaining.remove(index);
+        return area.withPlayback(new ParallelPlayback(remaining));
+    }
+
+    /** Replaces one track of a layered area, e.g. to change its own volume or delay. */
+    public static AreaDefinition withTrack(AreaDefinition area, int index, AreaTrackDefinition track) {
+        List<AreaTrackDefinition> tracks = new ArrayList<>(area.tracks());
+        if (index < 0 || index >= tracks.size()) {
+            throw new IllegalArgumentException("No track at position " + (index + 1));
+        }
+        tracks.set(index, Objects.requireNonNull(track, "track"));
+        return area.withPlayback(new ParallelPlayback(tracks));
+    }
+
+    /**
+     * Moves every face outwards by {@code blocks}, or inwards when negative. Shrinking stops at a
+     * single block per axis. Which corner is pos1 and which is pos2 does not change.
+     */
+    public static AreaDefinition grow(AreaDefinition area, int blocks) {
+        AreaPosition pos1 = area.pos1();
+        AreaPosition pos2 = area.pos2();
+        int[] x = grow(pos1.x(), pos2.x(), blocks);
+        int[] y = grow(pos1.y(), pos2.y(), blocks);
+        int[] z = grow(pos1.z(), pos2.z(), blocks);
+        return area.withBounds(
+                new AreaPosition(x[0], y[0], z[0]), new AreaPosition(x[1], y[1], z[1]));
+    }
+
+    private static int[] grow(int first, int second, int blocks) {
+        int shrinkLimit = Math.abs(first - second) / 2;
+        int amount = Math.max(blocks, -shrinkLimit);
+        return first <= second
+                ? new int[]{first - amount, second + amount}
+                : new int[]{first + amount, second - amount};
+    }
+
     private static AreaDefinition mapTracks(
             AreaDefinition area, UnaryOperator<AreaTrackDefinition> change
     ) {
