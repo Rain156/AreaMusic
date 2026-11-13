@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "${mod_description}",
+  "authors": [
+    "${mod_authors}"
+  ],
+  "license": "${mod_license}",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "datura.areamusic.fabric.AreaMusicFabric"
+    ],
+    "client": [
+      "datura.areamusic.fabric.client.FabricClientAreaMusic"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${mc26_3_fabric_loader_version}",
+    "minecraft": "${mc26_3_minecraft_version}",
+    "java": ">=25",
+    "fabric-api": ">=${mc26_3_fabric_api_version}"
+  },
+  "suggests": {
+    "axiom": "*"
+  }
+}

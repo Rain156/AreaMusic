@@ -35,6 +35,7 @@ public final class AreaMusicEditor implements PanelHost {
     public static final KeyMapping TOGGLE_KEY = new KeyMapping(
             "key.areamusic.editor", InputConstants.KEY_F7, KEY_CATEGORY);
     private static final double PICK_RANGE = 96.0;
+    private static final long EXTERNAL_SHOW_NANOS = 500_000_000L;
 
     private static AreaMusicEditor instance;
 
@@ -44,6 +45,7 @@ public final class AreaMusicEditor implements PanelHost {
     private final EditorPanel panel;
     private boolean active;
     private int ticks;
+    private long shownExternallyAt = System.nanoTime() - EXTERNAL_SHOW_NANOS;
 
     private AreaMusicEditor(ClientSync sync) {
         this.sync = sync;
@@ -76,10 +78,14 @@ public final class AreaMusicEditor implements PanelHost {
         }
     }
 
-    /** Emits the given boxes as gizmos for another front end, such as the Axiom tool. */
-    public static void emitBoxes(Vec3 camera, java.util.List<EditorOverlay.Box> boxes) {
-        try (var ignored = Minecraft.getInstance().collectPerTickGizmos()) {
-            WorldBoxRenderer.emit(camera, boxes);
+    /**
+     * Keeps the area boxes on screen for a moment even though the built-in panel is closed. A
+     * front end such as the Axiom tool calls this every frame while it is showing.
+     */
+    public static void keepBoxesVisible() {
+        AreaMusicEditor editor = instance;
+        if (editor != null) {
+            editor.shownExternallyAt = System.nanoTime();
         }
     }
 
@@ -109,10 +115,14 @@ public final class AreaMusicEditor implements PanelHost {
         if (active && minecraft.gui.screen() == null && ++ticks % 40 == 1) {
             hud(hint());
         }
-        if (active && minecraft.level != null && model.ready()) {
-            emitBoxes(
-                    minecraft.gameRenderer.mainCamera().position(),
-                    EditorOverlay.boxes(model, playerDimension()));
+        boolean shownExternally = System.nanoTime() - shownExternallyAt < EXTERNAL_SHOW_NANOS;
+        if ((active || shownExternally) && minecraft.level != null && model.ready()) {
+            // Gizmos emitted during a tick stay visible until the next one.
+            try (var ignored = minecraft.collectPerTickGizmos()) {
+                WorldBoxRenderer.emit(
+                        minecraft.gameRenderer.mainCamera().position(),
+                        EditorOverlay.boxes(model, playerDimension()));
+            }
         }
     }
 

@@ -211,7 +211,7 @@ def verifyProductionJar = tasks.register('verifyProductionJar', VerifyProduction
     expectedModId.set(mod_id)
     expectedModVersion.set(mod_version)
     expectedImplementationTitle.set(rootProject.name)
-    expectedPackFormat.set(34)
+    expectedPackFormat.set(97)
     expectedProjectClassMajor.set(69)
     metadataEntry.set('META-INF/neoforge.mods.toml')
     requiredProviderEntries.set(bundledAudioProviderEntries)
