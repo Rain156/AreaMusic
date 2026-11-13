@@ -1,6 +1,7 @@
 package datura.areamusic.client;
 
 import datura.areamusic.AreaMusic;
+import datura.areamusic.client.editor.AreaMusicEditor;
 import datura.areamusic.config.AreaMusicClientConfig;
 import datura.areamusic.network.AreaMusicNetwork;
 import net.neoforged.api.distmarker.Dist;
@@ -9,7 +10,10 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.minecraft.client.Minecraft;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.event.GameShuttingDownEvent;
 
 import java.nio.file.Path;
@@ -32,6 +36,7 @@ public final class NeoForgeClientAreaMusic {
         created.setSyncSender(AreaMusicNetwork::sendSyncToServer);
         instance = created;
         AreaMusicNetwork.setClientHandler(created);
+        AreaMusicEditor.install(created);
     }
 
     @EventBusSubscriber(
@@ -46,6 +51,11 @@ public final class NeoForgeClientAreaMusic {
         public static void onClientSetup(FMLClientSetupEvent event) {
             event.enqueueWork(NeoForgeClientAreaMusic::initialize);
         }
+
+        @SubscribeEvent
+        public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
+            event.register(AreaMusicEditor.TOGGLE_KEY);
+        }
     }
 
     @EventBusSubscriber(modid = AreaMusic.MOD_ID, value = Dist.CLIENT)
@@ -54,11 +64,28 @@ public final class NeoForgeClientAreaMusic {
         }
 
         @SubscribeEvent
+        public static void onClientTickStart(ClientTickEvent.Pre event) {
+            AreaMusicEditor.onClientTickStart();
+        }
+
+        @SubscribeEvent
         public static void onClientTick(ClientTickEvent.Post event) {
             ClientAreaMusic current = instance;
             if (current != null) {
                 current.tick();
             }
+            AreaMusicEditor.onClientTickEnd();
+        }
+
+        @SubscribeEvent
+        public static void onRenderLevel(RenderLevelStageEvent event) {
+            if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
+                return;
+            }
+            var buffers = Minecraft.getInstance().renderBuffers().bufferSource();
+            AreaMusicEditor.onRenderWorld(
+                    event.getPoseStack(), buffers, event.getCamera().getPosition());
+            buffers.endBatch();
         }
 
         @SubscribeEvent
@@ -85,6 +112,7 @@ public final class NeoForgeClientAreaMusic {
                 instance = null;
             }
             if (current != null) {
+                AreaMusicEditor.uninstall();
                 current.shutdown();
                 AreaMusicNetwork.clearClientHandler(current);
             }

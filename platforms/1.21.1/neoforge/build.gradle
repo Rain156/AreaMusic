@@ -66,6 +66,13 @@ neoForge {
             server()
             programArgument '--nogui'
         }
+        // A second game directory, so a client can join the dev server without sharing its
+        // music folder: this is how music distribution is tried out locally.
+        clientRemote {
+            client()
+            gameDirectory = project.file('run/client')
+            programArguments.addAll '--quickPlayMultiplayer', 'localhost:25598'
+        }
     }
 
     mods {
