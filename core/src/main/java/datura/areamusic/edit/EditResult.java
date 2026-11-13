@@ -18,11 +18,11 @@ public record EditResult(
         String detail,
         long revision
 ) {
-    static EditResult applied(boolean changed, EditOp inverse, long revision) {
+    public static EditResult applied(boolean changed, EditOp inverse, long revision) {
         return new EditResult(true, changed, inverse, null, "", revision);
     }
 
-    static EditResult rejected(RejectReason reason, String detail, long revision) {
+    public static EditResult rejected(RejectReason reason, String detail, long revision) {
         return new EditResult(false, false, null, reason, detail, revision);
     }
 }

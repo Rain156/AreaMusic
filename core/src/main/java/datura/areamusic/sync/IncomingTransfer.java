@@ -90,6 +90,11 @@ public final class IncomingTransfer implements AutoCloseable {
         return expectedSize;
     }
 
+    /** The file being written; holds the verified content once {@link #complete()} is true. */
+    public Path temporary() {
+        return temporary;
+    }
+
     /** Moves the verified file into place, replacing any file already there. */
     public Path moveTo(Path destination) throws IOException {
         if (!complete || moved) {
