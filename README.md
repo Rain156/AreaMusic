@@ -10,7 +10,7 @@
 
 > **English.** AreaMusic plays music inside areas you draw in the world. Areas are made and tuned with an in-game editor, and the server sends the audio files to players by itself. For Minecraft 1.20.1, 1.21.1 and 26.3 on Fabric, Forge and NeoForge.
 
-> **当前是 2.0.0-beta.1 测试版。** 功能已经做完，但还没有经过大范围实际游玩；已知哪些部分验证过、哪些没有，见[更新说明](CHANGELOG.md)。遇到问题欢迎提 issue。
+> **当前是 2.0.0-beta.2 测试版。** 功能已经做完，但还没有经过大范围实际游玩；已知哪些部分验证过、哪些没有，见[更新说明](CHANGELOG.md)。遇到问题欢迎提 issue。
 
 ## 它能做什么
 
@@ -49,11 +49,14 @@
 | 1.21.1 | Loader 0.19.3 + Fabric API 0.116.14 | 52.1.16 | 21.1.244 | 21 |
 | 26.3 | Loader 0.20.1 + Fabric API 0.166.2 | 66.1.8 | 26.3.0.103 | 25 |
 
-1. 在 [Releases](../../releases) 里按版本和加载器下载 `areamusic-<加载器>-<MC 版本>-<模组版本>.jar`。
+1. 在 [Releases](../../releases) 里找到 **v2.x** 的版本，按 Minecraft 版本和加载器下载 `areamusic-<加载器>-<MC 版本>-<模组版本>.jar`。
+   文件名里是 `0.0.1` 的是重写之前的旧版，没有编辑器，也不会自动分发音乐。
 2. 放进**服务端和每个客户端**的 `mods/`。单人游戏只放客户端。
 3. Fabric 还需要 Fabric API；Forge 和 NeoForge 不需要别的前置。
 
 服务端和客户端必须是同一个模组版本。
+
+> **按 `F7` 没反应？** 先看 `mods/` 里的文件名：`0.0.1` 是旧版，换成 2.x 的 JAR。用的是 2.x 时，屏幕下方会说明原因：没有权限，或者服务器上没有装 AreaMusic 2。
 
 ## 编辑器
 
@@ -172,11 +175,11 @@
 
 ## Axiom
 
-在 Fabric 上同时装了 Axiom 时，它的工具列表里会多一个 AreaMusic 工具，面板内容与内置面板相同：右键点方块放置角点，右键点空处选中区域，`Delete` 删除。
+在 Fabric 上同时装了 Axiom 时，它的工具面板最后会多一个 AreaMusic 工具，工具选项里的面板与内置面板相同：右键点方块放置角点，右键点空处选中区域，`Delete` 删除。Axiom 5 和 Axiom 6 都支持。
 
-Axiom 只有 Fabric 版，所以 Forge 和 NeoForge 上没有这个工具；内置编辑器在所有加载器上功能一样。
+这个工具只在 **Fabric 的 JAR** 里。Axiom 只有 Fabric 版，所以 Forge 和 NeoForge 上没有它；用信雅互联（Sinytra Connector）在 Forge 上运行 Axiom 时，Forge 的 JAR 同样不会往 Axiom 里加工具。这些情况下请用 `F7` 的内置编辑器，功能是一样的。
 
-> 这个工具已针对 Axiom 的接口编译通过，但还没有在真实的 Axiom 上运行过。它没出现时日志里会有一条警告，内置编辑器不受影响。
+> 在真实的 Axiom 里跑过的组合：Fabric 1.20.1 配 Axiom 5.1.1 和 6.1.5，Fabric 26.3 配 Axiom 6.1.5。Fabric 1.21.1 用的是同一份代码，但没有进游戏试过。工具没出现时日志里会有一条警告，内置编辑器不受影响。
 
 ## 服务器配置
 

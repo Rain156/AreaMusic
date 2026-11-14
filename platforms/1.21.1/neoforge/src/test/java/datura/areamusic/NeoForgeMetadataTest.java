@@ -19,7 +19,7 @@ class NeoForgeMetadataTest {
 
         assertTrue(metadata.contains("modLoader = \"javafml\""));
         assertTrue(metadata.contains("modId = \"areamusic\""));
-        assertTrue(metadata.contains("version = \"2.0.0-beta.1\""));
+        assertTrue(metadata.contains("version = \"2.0.0-beta.2\""));
         assertTrue(metadata.contains("modId = \"neoforge\""));
         assertTrue(metadata.contains("versionRange = \"[21.1.244,)\""));
         assertTrue(metadata.contains("modId = \"minecraft\""));

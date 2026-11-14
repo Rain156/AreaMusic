@@ -23,7 +23,7 @@ class ForgeMetadataTest {
         assertTrue(metadata.contains("modLoader = \"javafml\""));
         assertTrue(metadata.contains("loaderVersion = \"[52,)\""));
         assertTrue(metadata.contains("modId = \"areamusic\""));
-        assertTrue(metadata.contains("version = \"2.0.0-beta.1\""));
+        assertTrue(metadata.contains("version = \"2.0.0-beta.2\""));
         assertTrue(metadata.contains("modId = \"forge\""));
         assertTrue(metadata.contains("versionRange = \"[52,)\""));
         assertTrue(metadata.contains("modId = \"minecraft\""));
