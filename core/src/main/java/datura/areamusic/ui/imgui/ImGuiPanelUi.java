@@ -21,6 +21,7 @@ import java.util.Map;
 public final class ImGuiPanelUi implements PanelUi {
     private static final int TEXT_MUTED = 0xFF9A9A9A;
     private static final int TEXT_ERROR = 0xFF8080FF;
+    private static final int TEXT_OK = 0xFFB8E38F;
     private static final int BUTTON_PRIMARY = 0xFFAB6C2F;
 
     private final Map<String, ImString> texts = new HashMap<>();
@@ -29,10 +30,27 @@ public final class ImGuiPanelUi implements PanelUi {
     private final ImBoolean flag = new ImBoolean();
 
     @Override
-    public void heading(String text) {
-        ImGui.spacing();
-        ImGui.text(text);
+    public int header(String title, List<String> actions) {
+        // Axiom's own window already shows the tool name, so only the actions are drawn.
+        int clicked = -1;
+        for (int index = 0; index < actions.size(); index++) {
+            if (index > 0) {
+                ImGui.sameLine();
+            }
+            if (ImGui.smallButton(actions.get(index) + "##header" + index)) {
+                clicked = index;
+            }
+        }
         ImGui.separator();
+        return clicked;
+    }
+
+    @Override
+    public void section(String text) {
+        ImGui.spacing();
+        ImGui.pushStyleColor(ImGuiCol.Text, TEXT_MUTED);
+        ImGui.text(text);
+        ImGui.popStyleColor();
     }
 
     @Override
@@ -48,25 +66,20 @@ public final class ImGuiPanelUi implements PanelUi {
     }
 
     @Override
-    public void error(String text) {
-        ImGui.pushStyleColor(ImGuiCol.Text, TEXT_ERROR);
+    public void notice(String text, boolean error) {
+        ImGui.pushStyleColor(ImGuiCol.Text, error ? TEXT_ERROR : TEXT_OK);
         ImGui.textWrapped(text);
         ImGui.popStyleColor();
     }
 
     @Override
-    public void separator() {
+    public void space() {
         ImGui.spacing();
     }
 
     @Override
     public void sameRow() {
         ImGui.sameLine();
-    }
-
-    @Override
-    public boolean button(String id, String label) {
-        return ImGui.button(label + "##" + id);
     }
 
     @Override
@@ -78,12 +91,43 @@ public final class ImGuiPanelUi implements PanelUi {
     }
 
     @Override
-    public boolean selectable(String id, String label, boolean selected, int swatch) {
+    public boolean button(String id, String label) {
+        return ImGui.button(label + "##" + id);
+    }
+
+    @Override
+    public boolean quietButton(String id, String label) {
+        return ImGui.smallButton(label + "##" + id);
+    }
+
+    @Override
+    public boolean dangerButton(String id, String label) {
+        ImGui.pushStyleColor(ImGuiCol.Text, TEXT_ERROR);
+        boolean clicked = ImGui.smallButton(label + "##" + id);
+        ImGui.popStyleColor();
+        return clicked;
+    }
+
+    @Override
+    public boolean listRow(String id, String label, String meta, boolean selected, int swatch) {
         if (swatch >= 0) {
             swatch("##swatch_" + id, swatch);
             ImGui.sameLine();
         }
-        return ImGui.selectable(label + "##" + id, selected);
+        String text = meta.isEmpty() ? label : label + "    " + meta;
+        return ImGui.selectable(text + "##" + id, selected);
+    }
+
+    @Override
+    public void steps(List<String> labels, int current) {
+        StringBuilder line = new StringBuilder();
+        for (int index = 0; index < labels.size(); index++) {
+            if (index > 0) {
+                line.append("  >  ");
+            }
+            line.append(index == current ? "[" + labels.get(index) + "]" : labels.get(index));
+        }
+        ImGui.text(line.toString());
     }
 
     @Override

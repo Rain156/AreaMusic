@@ -21,7 +21,7 @@ final class WorldBoxRenderer {
     static void emit(Vec3 camera, List<EditorOverlay.Box> boxes) {
         for (EditorOverlay.Box box : boxes) {
             int stroke = 0xFF000000 | (box.selected() ? 0xFFFFFF : box.rgb());
-            int fill = (box.selected() ? 0x38000000 : 0x1A000000) | box.rgb();
+            int fill = (box.selected() ? 0x2E000000 : 0x12000000) | box.rgb();
             Gizmos.cuboid(
                     new AABB(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()),
                     GizmoStyle.strokeAndFill(stroke, box.selected() ? 3.0f : 2.0f, fill));
@@ -32,7 +32,7 @@ final class WorldBoxRenderer {
                     ? Math.min(box.maxY() - 0.6, camera.y + 2.0)
                     : box.maxY() + 0.4;
             double distance = Math.sqrt(camera.distanceToSqr(centerX, labelY, centerZ));
-            float scale = (float) Math.max(0.5, Math.min(12.0, distance * 0.09));
+            float scale = (float) Math.max(0.5, Math.min(10.0, distance * 0.072));
             Gizmos.billboardText(
                     box.label(), new Vec3(centerX, labelY, centerZ),
                     TextGizmo.Style.forColorAndCentered(stroke).withScale(scale)

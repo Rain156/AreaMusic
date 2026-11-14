@@ -65,7 +65,7 @@ class CanvasUiTest {
     void overlappingClickGoesToOneWidgetOnly() {
         List<String> hits = new ArrayList<>();
         Consumer<PanelUi> panel = p -> {
-            if (p.selectable("row", "Row", false, 0x123456)) {
+            if (p.listRow("row", "Row", "", false, 0x123456)) {
                 hits.add("row");
             }
             if (p.button("b", "Button")) {
@@ -169,14 +169,14 @@ class CanvasUiTest {
         Consumer<PanelUi> panel = p -> results.add(p.slider("v", "Volume", 80.0f, 0.0f, 100.0f, "%.0f%%"));
         frame(panel);
         int[] value = canvas.rectOf("80%");
-        int trackLeft = X + 8 + (WIDTH - 16) * 2 / 5;
-        int trackWidth = WIDTH - 16 - (WIDTH - 16) * 2 / 5;
+        int trackLeft = CanvasUi.sliderTrack(X, WIDTH)[0];
+        int travel = CanvasUi.sliderTrack(X, WIDTH)[1] - 6;
 
-        int offset = (trackWidth - 4) / 4;
-        input.mousePressed(trackLeft + 2 + offset, value[1]);
+        int offset = travel / 4;
+        input.mousePressed(trackLeft + 3 + offset, value[1]);
         frame(panel);
         assertNull(results.get(results.size() - 1));
-        String expected = String.format(java.util.Locale.ROOT, "%.0f%%", 100.0f * offset / (trackWidth - 4));
+        String expected = String.format(java.util.Locale.ROOT, "%.0f%%", 100.0f * offset / travel);
         assertTrue(canvas.texts().contains(expected), canvas.texts().toString());
         assertFalse(expected.equals("80%"));
 
@@ -323,7 +323,7 @@ class CanvasUiTest {
     void longTextWrapsInsideThePanelAndLongLabelsAreShortened() {
         frame(p -> {
             p.hint("这是一段很长的提示文字用来测试在面板里面自动换行不会画到面板外面去也不会被截断丢失任何内容");
-            p.selectable("row", "an-extremely-long-area-name-that-cannot-possibly-fit-in-the-row", false, -1);
+            p.listRow("row", "an-extremely-long-area-name-that-cannot-possibly-fit-in-the-row", "3 tracks", false, -1);
         });
 
         for (FakeCanvas.Text text : canvas.drawn) {
@@ -331,6 +331,66 @@ class CanvasUiTest {
         }
         assertTrue(canvas.drawn.size() >= 3);
         assertTrue(canvas.texts().stream().anyMatch(text -> text.endsWith("…")));
+    }
+
+    @Test
+    void wrappingNeverStartsALineWithClosingPunctuation() {
+        // 30 characters fill the row exactly, so the comma is the one that overflows.
+        frame(p -> p.hint("一".repeat(30) + "，" + "二".repeat(5)));
+
+        assertEquals(List.of("一".repeat(29), "一，" + "二".repeat(5)), canvas.texts());
+    }
+
+    @Test
+    void headerReportsWhichActionWasClicked() {
+        List<Integer> clicks = new ArrayList<>();
+        Consumer<PanelUi> panel = p -> clicks.add(p.header("AreaMusic", List.of("Undo", "Redo", "×")));
+        frame(panel);
+        int[] title = canvas.rectOf("AreaMusic");
+        int[] close = canvas.rectOf("×");
+        assertEquals(title[1], close[1]);
+        assertTrue(close[0] > canvas.rectOf("Redo")[0] && canvas.rectOf("Redo")[0] > canvas.rectOf("Undo")[0]);
+
+        press(panel, canvas.rectOf("Redo"));
+        release(panel);
+        press(panel, title);
+
+        assertEquals(List.of(-1, 1, -1, -1), clicks);
+    }
+
+    @Test
+    void panelIsOnlyAsTallAsItsContent() {
+        Consumer<PanelUi> panel = p -> p.button("b", "Only");
+        frame(panel);
+        frame(panel);
+        int bottom = canvas.rectOf("Only")[1] + 13 + CanvasUi.PADDING;
+
+        input.mouseMoved(X + 20, bottom - 1);
+        frame(panel);
+        assertTrue(ui.containsMouse());
+        input.mouseMoved(X + 20, bottom);
+        frame(panel);
+        assertFalse(ui.containsMouse(), "below the card the pointer is over the world");
+    }
+
+    @Test
+    void listRowShowsItsMetaOnTheRightAndStepsShowEveryLabel() {
+        List<Boolean> clicks = new ArrayList<>();
+        Consumer<PanelUi> panel = p -> {
+            p.steps(List.of("Corner 1", "Corner 2", "Music"), 1);
+            clicks.add(p.listRow("row", "Village", "day", true, 0x33AA55));
+        };
+        frame(panel);
+        int[] label = canvas.rectOf("Village");
+        int[] meta = canvas.rectOf("day");
+        assertEquals(label[1], meta[1]);
+        assertTrue(meta[0] > label[0] + label[2]);
+        assertTrue(meta[0] + meta[2] <= X + WIDTH);
+        assertTrue(canvas.rectOf("Corner 1")[0] < canvas.rectOf("Corner 2")[0]);
+        assertTrue(canvas.rectOf("Corner 2")[0] < canvas.rectOf("Music")[0]);
+
+        press(panel, meta);
+        assertEquals(List.of(false, true), clicks);
     }
 
     private void click(Consumer<PanelUi> panel, int[] rect) {
@@ -351,7 +411,7 @@ class CanvasUiTest {
     /** A point inside the control that sits to the right of a row label. */
     private int[] fieldBeside(String label) {
         int[] labelRect = canvas.rectOf(label);
-        return new int[]{X + 8 + (WIDTH - 16) * 2 / 5 + 4, labelRect[1]};
+        return new int[]{CanvasUi.sliderTrack(X, WIDTH)[0] + 4, labelRect[1]};
     }
 
     private void frame(Consumer<PanelUi> panel) {

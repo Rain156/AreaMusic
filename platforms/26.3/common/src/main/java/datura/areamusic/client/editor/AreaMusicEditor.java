@@ -23,8 +23,9 @@ import net.minecraft.world.phys.Vec3;
 import java.util.Optional;
 
 /**
- * The built-in editor: a key opens the panel, and while edit mode is on, area boxes are drawn in
- * the world and clicks on blocks place corners instead of breaking or placing anything.
+ * The built-in editor. One key turns it on and off. While it is on, area boxes are drawn in the
+ * world and the panel is open; the panel steps aside only while corners are being clicked in the
+ * world, and comes back by itself or with the same key.
  *
  * <p>Loaders register {@link #TOGGLE_KEY} and call the two tick hooks; everything else is the
  * same on every loader. The boxes are drawn as gizmos from the tick, so no render hook is needed.
@@ -43,9 +44,18 @@ public final class AreaMusicEditor implements PanelHost {
     private final ClientSync sync;
     private final EditorModel model;
     private final EditorPanel panel;
-    private boolean active;
+    private State state = State.CLOSED;
+    private boolean hidHud;
     private int ticks;
     private long shownExternallyAt = System.nanoTime() - EXTERNAL_SHOW_NANOS;
+
+    private enum State {
+        CLOSED,
+        /** The panel is on screen. */
+        PANEL,
+        /** The panel is out of the way and clicks on blocks set corners. */
+        PICKING
+    }
 
     private AreaMusicEditor(ClientSync sync) {
         this.sync = sync;
@@ -99,7 +109,9 @@ public final class AreaMusicEditor implements PanelHost {
 
     private void tick() {
         if (minecraft.player == null || !sync.serverPresent()) {
-            active = false;
+            if (state != State.CLOSED) {
+                close();
+            }
             while (TOGGLE_KEY.consumeClick()) {
                 // Nothing to open outside a world with the mod on the server.
             }
@@ -112,11 +124,11 @@ public final class AreaMusicEditor implements PanelHost {
                 openPanel();
             }
         }
-        if (active && minecraft.gui.screen() == null && ++ticks % 40 == 1) {
+        if (state == State.PICKING && minecraft.gui.screen() == null && ++ticks % 40 == 1) {
             hud(hint());
         }
         boolean shownExternally = System.nanoTime() - shownExternallyAt < EXTERNAL_SHOW_NANOS;
-        if ((active || shownExternally) && minecraft.level != null && model.ready()) {
+        if ((state != State.CLOSED || shownExternally) && minecraft.level != null && model.ready()) {
             // Gizmos emitted during a tick stay visible until the next one.
             try (var ignored = minecraft.collectPerTickGizmos()) {
                 WorldBoxRenderer.emit(
@@ -127,18 +139,53 @@ public final class AreaMusicEditor implements PanelHost {
     }
 
     private void openPanel() {
-        if (!active) {
-            active = true;
+        if (state == State.CLOSED) {
             model.open();
         }
+        state = State.PANEL;
+        hideHud(true);
         minecraft.gui.setScreen(new AreaMusicEditorScreen(this, panel));
+    }
+
+    /** Leaves the editor: the panel closes and the boxes disappear. */
+    private void close() {
+        boolean panelOpen = state == State.PANEL;
+        state = State.CLOSED;
+        hideHud(false);
+        model.close();
+        if (panelOpen && minecraft.gui.screen() instanceof AreaMusicEditorScreen) {
+            minecraft.gui.setScreen(null);
+        }
+    }
+
+    /** The panel screen went away. Unless it stepped aside for corner picking, editing is over. */
+    void panelRemoved() {
+        if (state == State.PANEL) {
+            state = State.CLOSED;
+            hideHud(false);
+            model.close();
+        }
+    }
+
+    /** Keeps hotbar, hearts and chat out of the picture while the panel is open. */
+    private void hideHud(boolean hide) {
+        if (hide && !hidHud && !minecraft.gui.hud.isHidden()) {
+            minecraft.gui.hud.toggle();
+            hidHud = true;
+        } else if (!hide && hidHud) {
+            if (minecraft.gui.hud.isHidden()) {
+                minecraft.gui.hud.toggle();
+            }
+            hidHud = false;
+        }
     }
 
     private Component hint() {
         String key = TOGGLE_KEY.getTranslatedKeyMessage().getString();
         EditorModel.Draft draft = model.draft();
-        if (draft != null && !draft.complete()) {
-            return Component.translatable("areamusic.hud.draft", key);
+        if (draft != null) {
+            boolean one = draft.pos1() != null || draft.pos2() != null;
+            return Component.translatable(one ? "areamusic.hud.draft" : "areamusic.hud.idle", key);
         }
         Optional<String> selected = model.selected().map(area -> area.label());
         return selected.isPresent()
@@ -149,7 +196,7 @@ public final class AreaMusicEditor implements PanelHost {
     /** Turns left, right and middle clicks into editor actions before the game can use them. */
     private void handleWorldClicks() {
         LocalPlayer player = minecraft.player;
-        if (!active || minecraft.gui.screen() != null || player == null || !model.ready()) {
+        if (state != State.PICKING || minecraft.gui.screen() != null || player == null || !model.ready()) {
             return;
         }
         Options options = minecraft.options;
@@ -230,15 +277,15 @@ public final class AreaMusicEditor implements PanelHost {
 
     @Override
     public void pickCornersInWorld() {
+        state = State.PICKING;
+        hideHud(false);
         minecraft.gui.setScreen(null);
         ticks = 0;
     }
 
     @Override
     public void finishEditing() {
-        active = false;
-        model.close();
-        minecraft.gui.setScreen(null);
+        close();
     }
 
     @Override

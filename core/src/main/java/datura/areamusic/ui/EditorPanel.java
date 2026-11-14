@@ -22,6 +22,8 @@ import java.util.Objects;
 public final class EditorPanel {
     private static final int FILTER_THRESHOLD = 8;
     private static final long NOTICE_NANOS = 8_000_000_000L;
+    private static final String CLOSE = "\u00d7";
+    private static final String REMOVE = "\u00d7";
 
     private final ClientSync sync;
     private final EditorModel model;
@@ -57,36 +59,41 @@ public final class EditorPanel {
     }
 
     public void build(PanelUi ui) {
-        ui.heading(t("areamusic.editor.title"));
+        boolean usable = sync.serverPresent() && sync.canEdit() && model.ready();
+        List<String> actions = new ArrayList<>();
+        if (usable) {
+            actions.add(t("areamusic.editor.undo"));
+            actions.add(t("areamusic.editor.redo"));
+        }
+        if (host.closable()) {
+            actions.add(CLOSE);
+        }
+        int action = ui.header(t("areamusic.editor.title"), actions);
+        if (host.closable() && action == actions.size() - 1) {
+            host.finishEditing();
+            return;
+        }
         if (!sync.serverPresent()) {
-            ui.error(t("areamusic.editor.no_server"));
-            closeButton(ui);
+            ui.notice(t("areamusic.editor.no_server"), true);
             return;
         }
         if (!sync.canEdit()) {
-            ui.error(t("areamusic.editor.no_permission"));
-            closeButton(ui);
+            ui.notice(t("areamusic.editor.no_permission"), true);
             return;
         }
         if (!model.ready()) {
             ui.hint(t("areamusic.editor.loading"));
-            closeButton(ui);
             return;
         }
-
-        if (ui.button("undo", t("areamusic.editor.undo")) && model.canUndo()) {
+        if (action == 0 && model.canUndo()) {
             model.undo();
-        }
-        ui.sameRow();
-        if (ui.button("redo", t("areamusic.editor.redo")) && model.canRedo()) {
+        } else if (action == 1 && model.canRedo()) {
             model.redo();
         }
-        ui.sameRow();
-        closeButton(ui);
 
         model.lastError().ifPresent(error -> {
-            ui.error(describe(error));
-            if (ui.button("dismiss_error", t("areamusic.editor.dismiss"))) {
+            ui.notice(describe(error), true);
+            if (ui.quietButton("dismiss_error", t("areamusic.editor.dismiss"))) {
                 model.clearError();
             }
         });
@@ -94,85 +101,78 @@ public final class EditorPanel {
             notice = null;
         }
         if (notice != null) {
-            if (noticeIsError) {
-                ui.error(notice);
-                if (ui.button("dismiss_notice", t("areamusic.editor.dismiss"))) {
-                    notice = null;
-                }
-            } else {
-                ui.hint(notice);
+            ui.notice(notice, noticeIsError);
+            if (noticeIsError && ui.quietButton("dismiss_notice", t("areamusic.editor.dismiss"))) {
+                notice = null;
             }
         }
         for (ClientSync.UploadView upload : sync.uploads()) {
             ui.progress(t("areamusic.upload.progress", upload.fileName()), upload.progress());
         }
 
-        ui.separator();
-        buildDraft(ui);
-        ui.separator();
+        buildCreate(ui);
         buildAreaList(ui);
-        model.selected().ifPresent(area -> {
-            ui.separator();
-            buildSelected(ui, area);
-        });
+        model.selected().ifPresent(area -> buildSelected(ui, area));
     }
 
-    private void closeButton(PanelUi ui) {
-        if (ui.button("done", t("areamusic.editor.done"))) {
-            host.finishEditing();
-        }
-    }
-
-    private void buildDraft(PanelUi ui) {
+    /** The one way to make an area: a button, then three guided steps. */
+    private void buildCreate(PanelUi ui) {
         EditorModel.Draft draft = model.draft();
         if (draft == null) {
             if (ui.primaryButton("new_area", t("areamusic.editor.new_area"))) {
                 model.startDraft(host.playerDimension());
                 host.pickCornersInWorld();
             }
-            ui.sameRow();
-            if (ui.button("around_me", t("areamusic.editor.around_me"))) {
+            if (ui.quietButton("around_me", t("areamusic.editor.around_me"))) {
                 model.draftAround(
                         host.playerDimension(), host.playerPosition(), EditorModel.DEFAULT_AROUND_RADIUS);
             }
-            ui.hint(t(host.crosshairPicking()
-                    ? "areamusic.editor.new_hint.crosshair"
-                    : "areamusic.editor.new_hint.cursor"));
+            if (model.areas().isEmpty()) {
+                ui.hint(t("areamusic.editor.first_hint"));
+            }
             return;
         }
 
-        ui.heading(t("areamusic.editor.new_area"));
+        int corners = (draft.pos1() == null ? 0 : 1) + (draft.pos2() == null ? 0 : 1);
+        ui.steps(List.of(
+                t("areamusic.editor.step.corner1"),
+                t("areamusic.editor.step.corner2"),
+                t("areamusic.editor.step.music")
+        ), draft.complete() ? 2 : corners);
         if (!draft.complete()) {
-            int done = (draft.pos1() == null ? 0 : 1) + (draft.pos2() == null ? 0 : 1);
-            ui.label(t("areamusic.editor.draft.corners", done));
-            if (host.crosshairPicking() && ui.button("pick", t("areamusic.editor.draft.pick"))) {
-                host.pickCornersInWorld();
+            ui.label(t(host.crosshairPicking()
+                    ? "areamusic.editor.draft.pick_crosshair"
+                    : "areamusic.editor.draft.pick_cursor"));
+            if (host.crosshairPicking()) {
+                if (ui.button("pick", t("areamusic.editor.draft.pick"))) {
+                    host.pickCornersInWorld();
+                }
+                ui.sameRow();
             }
         } else {
             ui.label(t("areamusic.editor.draft.size", size(draft.pos1(), draft.pos2())));
             if (model.musicIds().isEmpty()) {
-                ui.label(t("areamusic.editor.draft.no_music"));
+                ui.hint(t("areamusic.editor.draft.no_music"));
             } else {
                 String chosen = ui.combo(
-                        "draft_music", t("areamusic.editor.draft.choose_music"), model.musicIds(), null);
+                        "draft_music", t("areamusic.editor.music"), model.musicIds(), null);
                 if (chosen != null) {
                     model.completeDraft(chosen);
                 }
+                ui.hint(t("areamusic.editor.drop_hint"));
             }
-            ui.hint(t("areamusic.editor.drop_hint"));
         }
-        if (ui.button("cancel_draft", t("areamusic.editor.cancel"))) {
+        if (ui.quietButton("cancel_draft", t("areamusic.editor.cancel"))) {
             model.cancelDraft();
         }
     }
 
     private void buildAreaList(PanelUi ui) {
         List<AreaDefinition> areas = model.areas();
-        ui.heading(t("areamusic.editor.areas", areas.size()));
         if (areas.isEmpty()) {
-            ui.hint(t("areamusic.editor.areas.empty"));
             return;
         }
+        ui.section(t("areamusic.editor.areas", areas.size()));
         if (areas.size() > FILTER_THRESHOLD) {
             String typed = ui.textInput("filter", t("areamusic.editor.search"), filter, 64);
             if (typed != null) {
@@ -189,22 +189,23 @@ public final class EditorPanel {
                     && !area.id().contains(needle)) {
                 continue;
             }
-            StringBuilder label = new StringBuilder(area.label());
-            if (!area.dimension().equals(here)) {
-                label.append("  ·  ").append(area.dimension().substring(area.dimension().indexOf(':') + 1));
-            }
-            if (!area.enabled()) {
-                label.append("  ·  ").append(t("areamusic.editor.disabled"));
-            }
+            String label = area.enabled()
+                    ? area.label()
+                    : area.label() + "  \u00b7  " + t("areamusic.editor.disabled");
+            String meta = !area.dimension().equals(here)
+                    ? area.dimension().substring(area.dimension().indexOf(':') + 1)
+                    : area.musicIds().size() == 1
+                    ? shortName(area.musicIds().get(0))
+                    : t("areamusic.editor.track_count", area.musicIds().size());
             boolean selected = area.id().equals(model.selectedId());
-            if (ui.selectable("area:" + area.id(), label.toString(), selected, area.effectiveColor())) {
+            if (ui.listRow("area:" + area.id(), label, meta, selected, area.effectiveColor())) {
                 model.select(selected ? null : area.id());
             }
         }
     }
 
     private void buildSelected(PanelUi ui, AreaDefinition area) {
-        ui.heading(area.label());
+        ui.section(t("areamusic.editor.selected"));
 
         String name = ui.textInput("name", t("areamusic.editor.name"), area.displayName(), AreaDefinition.MAX_DISPLAY_NAME_LENGTH);
         if (name != null) {
@@ -233,20 +234,25 @@ public final class EditorPanel {
             model.apply(current -> AreaEdits.withVolume(current, Math.round(volume) / 100.0f));
         }
 
+        ui.space();
         if (ui.button("teleport", t("areamusic.editor.teleport"))) {
             host.teleportTo(area.id());
         }
         ui.sameRow();
+        if (ui.button("repick", t("areamusic.editor.repick"))) {
+            host.pickCornersInWorld();
+        }
+        ui.sameRow();
         boolean hidden = model.hidden(area.id());
-        if (ui.button("toggle_hidden", t(hidden ? "areamusic.editor.show" : "areamusic.editor.hide"))) {
+        if (ui.quietButton("toggle_hidden", t(hidden ? "areamusic.editor.show" : "areamusic.editor.hide"))) {
             model.setHidden(area.id(), !hidden);
         }
         ui.sameRow();
-        if (ui.button("duplicate", t("areamusic.editor.duplicate"))) {
+        if (ui.quietButton("duplicate", t("areamusic.editor.duplicate"))) {
             model.duplicateSelected();
         }
         ui.sameRow();
-        if (ui.button("delete", t("areamusic.editor.delete"))) {
+        if (ui.dangerButton("delete", t("areamusic.editor.delete"))) {
             model.deleteSelected();
             return;
         }
@@ -265,18 +271,14 @@ public final class EditorPanel {
                 model.apply(current -> AreaEdits.withOnlyMusic(current, chosen));
             }
         } else {
-            ui.label(t(shown == SimpleMode.PLAYLIST
-                    ? "areamusic.editor.tracks.playlist"
-                    : "areamusic.editor.tracks.layers"));
             for (int index = 0; index < playing.size(); index++) {
                 int position = index;
-                ui.label((index + 1) + ". " + playing.get(index));
-                if (playing.size() > 1) {
-                    ui.sameRow();
-                    if (ui.button("remove_track:" + index, t("areamusic.editor.remove"))) {
-                        model.apply(current -> AreaEdits.removeMusicAt(current, position));
-                        return;
-                    }
+                boolean removable = playing.size() > 1;
+                if (ui.listRow(
+                        "track:" + index, (index + 1) + "  " + shortName(playing.get(index)),
+                        removable ? REMOVE : "", false, -1) && removable) {
+                    model.apply(current -> AreaEdits.removeMusicAt(current, position));
+                    return;
                 }
             }
             String added = ui.combo("add_track", t("areamusic.editor.add_track"), library, null);
@@ -288,10 +290,9 @@ public final class EditorPanel {
         }
         for (String musicId : new ArrayList<>(playing)) {
             if (!library.contains(musicId)) {
-                ui.error(t("areamusic.editor.missing_music", musicId));
+                ui.notice(t("areamusic.editor.missing_music", musicId), true);
             }
         }
-        ui.hint(t("areamusic.editor.drop_hint"));
     }
 
     private void buildAdvanced(PanelUi ui, AreaDefinition area, SimpleMode shown) {
@@ -319,7 +320,7 @@ public final class EditorPanel {
             model.apply(current -> current.withEnabled(enabled));
         }
 
-        ui.label(t("areamusic.editor.color"));
+        ui.section(t("areamusic.editor.color"));
         List<Integer> colors = new ArrayList<>();
         colors.add(AreaDefinition.AUTO_COLOR);
         colors.addAll(AreaPalette.colors());
@@ -328,7 +329,7 @@ public final class EditorPanel {
             model.apply(current -> current.withColor(color));
         }
 
-        ui.label(t("areamusic.editor.bounds", size(area.pos1(), area.pos2())));
+        ui.section(t("areamusic.editor.bounds", size(area.pos1(), area.pos2())));
         if (ui.button("grow", t("areamusic.editor.grow"))) {
             model.apply(current -> AreaEdits.grow(current, 1));
         }
@@ -340,8 +341,7 @@ public final class EditorPanel {
         buildCorner(ui, area, 2);
 
         if (shown == SimpleMode.LAYERS && area.tracks().size() > 1) {
-            ui.separator();
-            ui.label(t("areamusic.editor.per_track"));
+            ui.section(t("areamusic.editor.per_track"));
             for (int index = 0; index < area.tracks().size(); index++) {
                 buildTrack(ui, index, area.tracks().get(index));
             }
@@ -373,7 +373,7 @@ public final class EditorPanel {
     }
 
     private void buildTrack(PanelUi ui, int index, AreaTrackDefinition track) {
-        ui.label((index + 1) + ". " + track.musicId());
+        ui.label((index + 1) + "  " + shortName(track.musicId()));
         Float volume = ui.slider(
                 "track_volume:" + index, t("areamusic.editor.volume"), track.volume() * 100.0f, 0.0f, 100.0f, "%.0f%%");
         if (volume != null) {
@@ -419,6 +419,19 @@ public final class EditorPanel {
             return t("areamusic.editor.error.invalid", error.detail());
         }
         return t("areamusic.editor.error." + error.reason().name().toLowerCase(Locale.ROOT), error.detail());
+    }
+
+    /** A track's file name without its folder and extension, for places where space is tight. */
+    private static String shortName(String musicId) {
+        String name = musicId.substring(musicId.lastIndexOf('/') + 1);
+        int dot = name.lastIndexOf('.');
+        if (dot > 0) {
+            name = name.substring(0, dot);
+        }
+        int limit = 18;
+        return name.codePointCount(0, name.length()) <= limit
+                ? name
+                : name.substring(0, name.offsetByCodePoints(0, limit - 1)) + "\u2026";
     }
 
     private static String size(AreaPosition first, AreaPosition second) {

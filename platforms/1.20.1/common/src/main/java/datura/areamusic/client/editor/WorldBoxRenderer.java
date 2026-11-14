@@ -30,7 +30,7 @@ final class WorldBoxRenderer {
             double maxZ = box.maxZ() - camera.z;
             DebugRenderer.renderFilledBox(
                     poseStack, buffers, minX, minY, minZ, maxX, maxY, maxZ,
-                    red, green, blue, box.selected() ? 0.22f : 0.10f);
+                    red, green, blue, box.selected() ? 0.18f : 0.07f);
             LevelRenderer.renderLineBox(
                     poseStack, buffers.getBuffer(RenderType.lines()),
                     minX, minY, minZ, maxX, maxY, maxZ,
@@ -43,7 +43,7 @@ final class WorldBoxRenderer {
                     ? Math.min(box.maxY() - 0.6, camera.y + 2.0)
                     : box.maxY() + 0.4;
             double distance = Math.sqrt(camera.distanceToSqr(centerX, labelY, centerZ));
-            float scale = (float) Math.max(0.025, Math.min(0.5, distance * 0.0035));
+            float scale = (float) Math.max(0.02, Math.min(0.4, distance * 0.0028));
             DebugRenderer.renderFloatingText(
                     poseStack, buffers, box.label(), centerX, labelY, centerZ,
                     0xFF000000 | (box.selected() ? 0xFFFFFF : box.rgb()), scale, true, 0.0f, true);

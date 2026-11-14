@@ -20,6 +20,14 @@ public interface PanelHost {
     /** Ends editing: closes the panel and hides the area boxes. */
     void finishEditing();
 
+    /**
+     * Whether the panel has a close button of its own. False when it lives inside someone else's
+     * window, such as Axiom's tool options, which the panel has no business closing.
+     */
+    default boolean closable() {
+        return true;
+    }
+
     /** Whether corners are picked with the crosshair (true) or a free cursor such as Axiom's. */
     boolean crosshairPicking();
 }

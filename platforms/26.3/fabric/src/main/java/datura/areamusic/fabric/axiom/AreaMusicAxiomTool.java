@@ -148,4 +148,9 @@ public final class AreaMusicAxiomTool implements CustomTool, PanelHost {
     public boolean crosshairPicking() {
         return false;
     }
+
+    @Override
+    public boolean closable() {
+        return false;
+    }
 }

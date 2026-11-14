@@ -11,28 +11,52 @@ import java.util.List;
  * pressing Enter or leaving a text field) and {@code null} otherwise.
  */
 public interface PanelUi {
-    void heading(String text);
+    /**
+     * The title row, with a few small actions at its right edge.
+     *
+     * @return the index of the action clicked this frame, or -1
+     */
+    int header(String title, List<String> actions);
+
+    /** A quiet label that starts a group of controls. */
+    void section(String text);
 
     /** Normal wrapped text. */
     void label(String text);
 
-    /** Quieter, smaller-feeling text for guidance. */
+    /** Quieter text for guidance. */
     void hint(String text);
 
-    void error(String text);
+    /** A message that should be noticed: something went wrong, or something just finished. */
+    void notice(String text, boolean error);
 
-    void separator();
+    /** Extra vertical room between groups. */
+    void space();
 
     /** Puts the next widget on the same row as the previous one. */
     void sameRow();
 
-    boolean button(String id, String label);
-
-    /** The one emphasized action on screen. */
+    /** The one emphasized action on screen; spans the full width. */
     boolean primaryButton(String id, String label);
 
-    /** A list row. {@code swatch} is an RGB color shown as a dot, or -1 for none. */
-    boolean selectable(String id, String label, boolean selected, int swatch);
+    boolean button(String id, String label);
+
+    /** A text-only button for secondary actions. */
+    boolean quietButton(String id, String label);
+
+    /** A text-only button for an action that removes something. */
+    boolean dangerButton(String id, String label);
+
+    /**
+     * A row in a list.
+     *
+     * @param meta   short secondary text at the right edge, or an empty string
+     * @param swatch an RGB color shown as a dot, or -1 for none
+     */
+    boolean listRow(String id, String label, String meta, boolean selected, int swatch);
+
+    /** Progress through a short sequence of steps; {@code current} is zero-based. */
+    void steps(List<String> labels, int current);
 
     String textInput(String id, String label, String value, int maxLength);
 

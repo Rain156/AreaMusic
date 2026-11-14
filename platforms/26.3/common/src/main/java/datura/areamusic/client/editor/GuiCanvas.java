@@ -5,14 +5,24 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 
-/** Draws the editor panel with the vanilla GUI renderer. */
+/**
+ * Draws the editor panel with the vanilla GUI renderer, at the panel's own scale so that it stays
+ * compact however large the game's GUI scale is.
+ */
 final class GuiCanvas implements UiCanvas {
     private final Minecraft minecraft = Minecraft.getInstance();
     private final Font font = minecraft.font;
     private GuiGraphicsExtractor graphics;
 
-    void target(GuiGraphicsExtractor graphics) {
+    /** @param factor how many GUI pixels one panel pixel covers */
+    void begin(GuiGraphicsExtractor graphics, float factor) {
         this.graphics = graphics;
+        graphics.pose().pushMatrix();
+        graphics.pose().scale(factor, factor);
+    }
+
+    void end() {
+        graphics.pose().popMatrix();
     }
 
     @Override
@@ -37,6 +47,7 @@ final class GuiCanvas implements UiCanvas {
 
     @Override
     public void clip(int x, int y, int width, int height) {
+        // The scissor rectangle goes through the current transform, so panel pixels are right.
         graphics.enableScissor(x, y, x + width, y + height);
     }
 
