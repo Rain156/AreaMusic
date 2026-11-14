@@ -6,10 +6,12 @@ import datura.areamusic.ui.CanvasUi;
 import datura.areamusic.ui.EditorPanel;
 import datura.areamusic.ui.UiInput;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.IMEPreeditOverlay;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.PreeditEvent;
 import net.minecraft.network.chat.Component;
 
 import java.nio.file.Path;
@@ -32,6 +34,8 @@ final class AreaMusicEditorScreen extends Screen {
     private final UiInput input = new UiInput();
     private final WorldControls controls;
     private GuiCanvas canvas;
+    private boolean textInputOn;
+    private IMEPreeditOverlay preedit;
 
     AreaMusicEditorScreen(AreaMusicEditor editor, EditorPanel panel) {
         super(Component.translatable("areamusic.editor.title"));
@@ -59,6 +63,39 @@ final class AreaMusicEditorScreen extends Screen {
         ui.end();
         input.endFrame();
         canvas.end();
+        updateTextInput(graphics, factor);
+    }
+
+    /**
+     * The game only delivers typed characters while text input is switched on, which it leaves to
+     * whoever owns the focused field. Without this nothing can be typed into the panel at all.
+     * The input method is also told where the caret is, and its composition is shown there.
+     */
+    private void updateTextInput(GuiGraphicsExtractor graphics, float factor) {
+        boolean typing = ui.editingText();
+        if (typing != textInputOn) {
+            textInputOn = typing;
+            minecraft.onTextInputFocusChange(this, typing);
+        }
+        int[] caret = ui.caret();
+        if (!typing || caret == null) {
+            return;
+        }
+        int x = Math.round(caret[0] * factor);
+        int y = Math.round(caret[1] * factor);
+        int height = Math.max(1, Math.round(caret[2] * factor));
+        if (preedit == null) {
+            minecraft.textInputManager().setTextInputArea(x, y, x + 1, y + height);
+        } else {
+            preedit.updateInputPosition(x, y);
+            graphics.setPreeditOverlay(preedit);
+        }
+    }
+
+    @Override
+    public boolean preeditUpdated(PreeditEvent event) {
+        preedit = event == null ? null : new IMEPreeditOverlay(event, font, font.lineHeight + 1);
+        return true;
     }
 
     /**
@@ -90,6 +127,10 @@ final class AreaMusicEditorScreen extends Screen {
     @Override
     public void removed() {
         controls.release();
+        if (textInputOn) {
+            textInputOn = false;
+            minecraft.onTextInputFocusChange(this, false);
+        }
         editor.panelRemoved();
     }
 
@@ -145,10 +186,12 @@ final class AreaMusicEditorScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent event) {
         if (event.isEscape()) {
-            if (ui.dismiss()) {
-                return true;
+            if (ui.editingText()) {
+                // Leaves the field or drop-down first; a second press closes the panel.
+                input.keyPressed(UiInput.Key.ESCAPE);
+            } else {
+                onClose();
             }
-            onClose();
             return true;
         }
         if (AreaMusicEditor.TOGGLE_KEY.matches(event) && !ui.editingText()) {

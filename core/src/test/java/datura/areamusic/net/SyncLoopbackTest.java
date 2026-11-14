@@ -12,6 +12,9 @@ import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.sync.IncomingTransfer;
 import datura.areamusic.sync.MusicFingerprinter;
 import datura.areamusic.sync.UploadFinisher;
+import datura.areamusic.ui.EditorPanel;
+import datura.areamusic.ui.PanelHost;
+import datura.areamusic.ui.PanelUi;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -353,6 +356,187 @@ class SyncLoopbackTest {
 
     private static List<String> ids(EditorModel editor) {
         return editor.areas().stream().map(AreaDefinition::id).toList();
+    }
+
+    @Test
+    void aTypedNameStaysWithItsAreaWhenTheSameClickSelectsAnotherOrClosesThePanel() throws Exception {
+        server.addMusic("day.ogg", 1_000);
+        server.rescan();
+        server.put(area("village", "day.ogg"));
+        server.put(area("cave", "day.ogg"));
+        Client alice = server.join("alice", true);
+        EditorModel editor = alice.sync.editor();
+        editor.open();
+        pump(3);
+        editor.select("village");
+        ScriptedHost host = new ScriptedHost();
+        EditorPanel panel = new EditorPanel(alice.sync, host);
+
+        // The click on the other row is also what commits the name being typed.
+        ScriptedUi ui = new ScriptedUi();
+        ui.typedName = "Plaza";
+        ui.clickedRow = "area:cave";
+        panel.build(ui);
+        pump(3);
+
+        assertEquals("Plaza", editor.find("village").orElseThrow().displayName());
+        assertEquals("", editor.find("cave").orElseThrow().displayName());
+        assertEquals("cave", editor.selectedId());
+
+        ui = new ScriptedUi();
+        ui.typedName = "Mine";
+        ui.close = true;
+        panel.build(ui);
+        pump(3);
+
+        assertEquals("Mine", editor.find("cave").orElseThrow().displayName());
+        assertEquals(1, host.finished);
+    }
+
+    private static final class ScriptedHost implements PanelHost {
+        private int finished;
+
+        @Override
+        public String text(String key, Object... args) {
+            return key;
+        }
+
+        @Override
+        public String playerDimension() {
+            return "minecraft:overworld";
+        }
+
+        @Override
+        public AreaPosition playerPosition() {
+            return A;
+        }
+
+        @Override
+        public void teleportTo(String areaId) {
+        }
+
+        @Override
+        public void pickCornersInWorld() {
+        }
+
+        @Override
+        public void finishEditing() {
+            finished++;
+        }
+
+        @Override
+        public boolean crosshairPicking() {
+            return true;
+        }
+    }
+
+    /** A panel front end that reports one frame's worth of scripted input and draws nothing. */
+    private static final class ScriptedUi implements PanelUi {
+        private String typedName;
+        private String clickedRow;
+        private boolean close;
+
+        @Override
+        public int header(String title, List<String> actions) {
+            return close ? actions.size() - 1 : -1;
+        }
+
+        @Override
+        public String textInput(String id, String label, String value, int maxLength) {
+            return id.equals("name") ? typedName : null;
+        }
+
+        @Override
+        public boolean listRow(String id, String label, String meta, boolean selected, int swatch) {
+            return id.equals(clickedRow);
+        }
+
+        @Override
+        public void section(String text) {
+        }
+
+        @Override
+        public void label(String text) {
+        }
+
+        @Override
+        public void hint(String text) {
+        }
+
+        @Override
+        public void notice(String text, boolean error) {
+        }
+
+        @Override
+        public void space() {
+        }
+
+        @Override
+        public void sameRow() {
+        }
+
+        @Override
+        public boolean primaryButton(String id, String label) {
+            return false;
+        }
+
+        @Override
+        public boolean button(String id, String label) {
+            return false;
+        }
+
+        @Override
+        public boolean quietButton(String id, String label) {
+            return false;
+        }
+
+        @Override
+        public boolean dangerButton(String id, String label) {
+            return false;
+        }
+
+        @Override
+        public void steps(List<String> labels, int current) {
+        }
+
+        @Override
+        public Integer intInput(String id, String label, int value, int min, int max) {
+            return null;
+        }
+
+        @Override
+        public Float slider(String id, String label, float value, float min, float max, String format) {
+            return null;
+        }
+
+        @Override
+        public Boolean checkbox(String id, String label, boolean value) {
+            return null;
+        }
+
+        @Override
+        public Integer choice(String id, List<String> options, int selected) {
+            return null;
+        }
+
+        @Override
+        public String combo(String id, String label, List<String> options, String selected) {
+            return null;
+        }
+
+        @Override
+        public Integer swatches(String id, List<Integer> colors, int selected) {
+            return null;
+        }
+
+        @Override
+        public boolean collapsing(String id, String label, boolean openByDefault) {
+            return false;
+        }
+
+        @Override
+        public void progress(String label, float fraction) {
+        }
     }
 
     private static AreaDefinition area(String id, String musicId) {

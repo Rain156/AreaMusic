@@ -64,6 +64,7 @@ public final class CanvasUi implements PanelUi {
     private String buffer = "";
     private boolean replaceOnType;
     private int[] focusRect;
+    private int[] caret;
     private String committedId;
     private String committedValue;
     private String activeSlider;
@@ -88,6 +89,7 @@ public final class CanvasUi implements PanelUi {
         sameRowNext = false;
         lastWidth = 0;
         committedId = null;
+        caret = null;
 
         if (focusId != null && input.pressed && focusRect != null && !inside(focusRect)) {
             commitFocus();
@@ -132,18 +134,12 @@ public final class CanvasUi implements PanelUi {
         return focusId != null;
     }
 
-    /** Closes the open drop-down or text field. Returns false when there was nothing to close. */
-    public boolean dismiss() {
-        if (openCombo != null) {
-            openCombo = null;
-            focusId = null;
-            return true;
-        }
-        if (focusId != null) {
-            focusId = null;
-            return true;
-        }
-        return false;
+    /**
+     * Where the text caret was drawn this frame, as {@code {x, y, height}}, or null when nothing
+     * is being typed into. Hosts use it to place the input method's candidate window.
+     */
+    public int[] caret() {
+        return caret == null ? null : caret.clone();
     }
 
     // ---- widgets ----
@@ -409,6 +405,7 @@ public final class CanvasUi implements PanelUi {
         }
 
         comboFilter = buffer;
+        caret = new int[]{field[0] + 6 + canvas.textWidth(fit(comboFilter, field[2] - 20)), field[1] + 4, field[3] - 8};
         String needle = comboFilter.toLowerCase(Locale.ROOT);
         List<String> matches = new ArrayList<>();
         for (String option : options) {
@@ -532,7 +529,8 @@ public final class CanvasUi implements PanelUi {
         String shown = fitEnd(focused ? buffer : value, field[2] - 12);
         canvas.text(shown, field[0] + 5, textY(field), TEXT);
         if (focused) {
-            canvas.fill(field[0] + 6 + canvas.textWidth(shown), field[1] + 4, 1, field[3] - 8, TEXT);
+            caret = new int[]{field[0] + 6 + canvas.textWidth(shown), field[1] + 4, field[3] - 8};
+            canvas.fill(caret[0], caret[1], 1, caret[2], TEXT);
         }
 
         if (id.equals(committedId)) {
@@ -586,8 +584,8 @@ public final class CanvasUi implements PanelUi {
                     }
                 }
                 case ESCAPE -> {
-                    focusId = null;
-                    openCombo = null;
+                    // Leaving a field keeps what was typed; undo is there for second thoughts.
+                    commitFocus();
                 }
                 default -> {
                 }

@@ -103,7 +103,7 @@ class CanvasUiTest {
     }
 
     @Test
-    void textInputCommitsWhenClickingElsewhereAndCancelsOnEscape() {
+    void textInputKeepsWhatWasTypedWhenClickingElsewhereOrPressingEscape() {
         List<String> results = new ArrayList<>();
         Consumer<PanelUi> panel = p -> {
             results.add(p.textInput("name", "Name", "old", 20));
@@ -124,9 +124,10 @@ class CanvasUiTest {
         input.charTyped('y');
         input.keyPressed(UiInput.Key.ESCAPE);
         frame(panel);
+        assertEquals("y", results.get(results.size() - 1));
+        assertFalse(ui.editingText());
         frame(panel);
         assertNull(results.get(results.size() - 1));
-        assertFalse(ui.editingText());
     }
 
     @Test
@@ -266,7 +267,7 @@ class CanvasUiTest {
     }
 
     @Test
-    void comboClosesWhenClickingOutsideOrDismissing() {
+    void comboClosesWhenClickingOutsideOrPressingEscape() {
         Consumer<PanelUi> panel = p -> {
             p.combo("music", "Music", List.of("a.ogg", "b.ogg"), null);
             p.button("after", "After");
@@ -275,10 +276,11 @@ class CanvasUiTest {
         click(panel, canvas.rectOf("…"));
         frame(panel);
         assertTrue(canvas.texts().contains("b.ogg"));
-        assertTrue(ui.dismiss());
+        assertTrue(ui.editingText());
+        input.keyPressed(UiInput.Key.ESCAPE);
         frame(panel);
         assertFalse(canvas.texts().contains("b.ogg"));
-        assertFalse(ui.dismiss());
+        assertFalse(ui.editingText());
 
         click(panel, canvas.rectOf("…"));
         frame(panel);
@@ -339,6 +341,29 @@ class CanvasUiTest {
         frame(p -> p.hint("一".repeat(30) + "，" + "二".repeat(5)));
 
         assertEquals(List.of("一".repeat(29), "一，" + "二".repeat(5)), canvas.texts());
+    }
+
+    @Test
+    void caretIsReportedOnlyWhileTypingAndFollowsTheText() {
+        Consumer<PanelUi> panel = p -> p.textInput("name", "Name", "old", 20);
+        frame(panel);
+        assertNull(ui.caret());
+
+        click(panel, canvas.rectOf("old"));
+        int[] atStart = ui.caret();
+        input.charTyped('a');
+        input.charTyped('b');
+        frame(panel);
+        int[] afterTyping = ui.caret();
+        // "old" is replaced by "ab": one character narrower on the six-pixel test font.
+        assertEquals(atStart[0] - 6, afterTyping[0]);
+        assertEquals(atStart[1], afterTyping[1]);
+        assertTrue(afterTyping[2] > 0);
+
+        input.keyPressed(UiInput.Key.ENTER);
+        frame(panel);
+        frame(panel);
+        assertNull(ui.caret());
     }
 
     @Test

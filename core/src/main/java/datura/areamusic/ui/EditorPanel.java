@@ -35,6 +35,13 @@ public final class EditorPanel {
     /** Area for which "layers" was chosen while it still has a single track. */
     private String layersIntent;
 
+    /**
+     * Clicks that change what the panel is about: another area, a new one, closing. They take
+     * effect once the whole panel has been built, because the same click is also what commits a
+     * name still being typed, and that name belongs to the area it was typed for.
+     */
+    private final List<Runnable> afterBuild = new ArrayList<>();
+
     public EditorPanel(ClientSync sync, PanelHost host) {
         this.sync = Objects.requireNonNull(sync, "sync");
         this.host = Objects.requireNonNull(host, "host");
@@ -69,7 +76,8 @@ public final class EditorPanel {
             actions.add(CLOSE);
         }
         int action = ui.header(t("areamusic.editor.title"), actions);
-        if (host.closable() && action == actions.size() - 1) {
+        boolean close = host.closable() && action == actions.size() - 1;
+        if (close && !usable) {
             host.finishEditing();
             return;
         }
@@ -119,6 +127,13 @@ public final class EditorPanel {
             ui.space();
             ui.hint(footer);
         }
+
+        if (close) {
+            afterBuild.add(host::finishEditing);
+        }
+        List<Runnable> actionsNow = List.copyOf(afterBuild);
+        afterBuild.clear();
+        actionsNow.forEach(Runnable::run);
     }
 
     /** The one way to make an area: a button, then three guided steps. */
@@ -126,12 +141,14 @@ public final class EditorPanel {
         EditorModel.Draft draft = model.draft();
         if (draft == null) {
             if (ui.primaryButton("new_area", t("areamusic.editor.new_area"))) {
-                model.startDraft(host.playerDimension());
-                host.pickCornersInWorld();
+                afterBuild.add(() -> {
+                    model.startDraft(host.playerDimension());
+                    host.pickCornersInWorld();
+                });
             }
             if (ui.quietButton("around_me", t("areamusic.editor.around_me"))) {
-                model.draftAround(
-                        host.playerDimension(), host.playerPosition(), EditorModel.DEFAULT_AROUND_RADIUS);
+                afterBuild.add(() -> model.draftAround(
+                        host.playerDimension(), host.playerPosition(), EditorModel.DEFAULT_AROUND_RADIUS));
             }
             if (model.areas().isEmpty()) {
                 ui.hint(t("areamusic.editor.first_hint"));
@@ -205,7 +222,7 @@ public final class EditorPanel {
                     : t("areamusic.editor.track_count", area.musicIds().size());
             boolean selected = area.id().equals(model.selectedId());
             if (ui.listRow("area:" + area.id(), label, meta, selected, area.effectiveColor())) {
-                model.select(selected ? null : area.id());
+                afterBuild.add(() -> model.select(selected ? null : area.id()));
             }
         }
     }

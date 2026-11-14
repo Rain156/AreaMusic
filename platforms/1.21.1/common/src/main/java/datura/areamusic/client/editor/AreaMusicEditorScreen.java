@@ -142,7 +142,10 @@ final class AreaMusicEditorScreen extends Screen {
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
-            if (!ui.dismiss()) {
+            if (ui.editingText()) {
+                // Leaves the field or drop-down first; a second press closes the panel.
+                input.keyPressed(UiInput.Key.ESCAPE);
+            } else {
                 onClose();
             }
             return true;
