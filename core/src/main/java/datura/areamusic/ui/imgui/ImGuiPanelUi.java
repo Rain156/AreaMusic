@@ -1,5 +1,6 @@
 package datura.areamusic.ui.imgui;
 
+import datura.areamusic.edit.TrackTime;
 import datura.areamusic.ui.PanelUi;
 import imgui.ImGui;
 import imgui.flag.ImGuiCol;
@@ -170,6 +171,23 @@ public final class ImGuiPanelUi implements PanelUi {
         }
         if (!changed && !ImGui.isItemActive()) {
             buffer[0] = value;
+        }
+        return null;
+    }
+
+    @Override
+    public Integer timeline(String id, String label, int valueMs, int durationMs) {
+        float[] buffer = floats.computeIfAbsent(id, ignored -> new float[]{valueMs / 1000.0f});
+        float seconds = Math.max(0.1f, durationMs / 1000.0f);
+        boolean changed = ImGui.sliderFloat(
+                label + "##" + id, buffer, 0.0f, seconds,
+                TrackTime.format(Math.round(buffer[0]) * 1000));
+        if (ImGui.isItemDeactivatedAfterEdit()) {
+            int picked = Math.max(0, Math.min(durationMs - 1, Math.round(buffer[0]) * 1000));
+            return picked == valueMs ? null : picked;
+        }
+        if (!changed && !ImGui.isItemActive()) {
+            buffer[0] = valueMs / 1000.0f;
         }
         return null;
     }

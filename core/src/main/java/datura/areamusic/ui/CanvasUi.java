@@ -1,10 +1,13 @@
 package datura.areamusic.ui;
 
+import datura.areamusic.edit.TrackTime;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
  * {@link PanelUi} drawn with plain rectangles and text, so the panel looks and behaves the same on
@@ -312,8 +315,39 @@ public final class CanvasUi implements PanelUi {
 
     @Override
     public Float slider(String id, String label, float value, float min, float max, String format) {
+        return slide(
+                id, label, value, min, max,
+                shown -> String.format(Locale.ROOT, format, shown), SLIDER_VALUE_WIDTH);
+    }
+
+    @Override
+    public Integer timeline(String id, String label, int valueMs, int durationMs) {
+        int duration = Math.max(1, durationMs);
+        // Whole seconds are precise enough to drag to, except in a short track.
+        int step = duration > 60_000 ? 1000 : 100;
+        int latest = Math.max(0, (duration - 1) / step * step);
+        int valueWidth = Math.max(SLIDER_VALUE_WIDTH, canvas.textWidth(TrackTime.format(latest)) + 4);
+        Float picked = slide(
+                id, label, Math.min(valueMs, duration), 0.0f, duration,
+                shown -> TrackTime.format(snap(shown, step, latest)), valueWidth);
+        if (picked == null) {
+            return null;
+        }
+        int snapped = snap(picked, step, latest);
+        return snapped == valueMs ? null : snapped;
+    }
+
+    private static int snap(float millis, int step, int latest) {
+        return Math.max(0, Math.min(latest, Math.round(millis / step) * step));
+    }
+
+    /** A labelled track with a knob; commits where the knob is when the mouse lets go. */
+    private Float slide(
+            String id, String label, float value, float min, float max,
+            Function<Float, String> text, int valueWidth
+    ) {
         int[] control = labelledRow(label);
-        int[] track = {control[0], control[1], control[2] - SLIDER_VALUE_WIDTH, control[3]};
+        int[] track = {control[0], control[1], control[2] - valueWidth, control[3]};
         boolean active = id.equals(activeSlider);
         if (pressed(track)) {
             activeSlider = id;
@@ -334,8 +368,8 @@ public final class CanvasUi implements PanelUi {
         canvas.fill(track[0], lineY, track[2], 2, BORDER);
         canvas.fill(track[0], lineY, knob - track[0], 2, ACCENT);
         round(knob - 3, track[1] + 3, 6, track[3] - 6, active || inside(track) ? PRIMARY_HOVER : TEXT);
-        String text = String.format(Locale.ROOT, format, shown);
-        canvas.text(text, control[0] + control[2] - canvas.textWidth(text), textY(control), SECONDARY);
+        String shownText = text.apply(shown);
+        canvas.text(shownText, control[0] + control[2] - canvas.textWidth(shownText), textY(control), SECONDARY);
         return committed;
     }
 

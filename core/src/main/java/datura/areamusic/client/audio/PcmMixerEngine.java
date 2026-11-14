@@ -120,7 +120,9 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
             incoming = createIncomingSession(revision, state, previous);
         }
         if (previous != null) {
-            transferContinuingTracks(previous, incoming, projectedTimeline);
+            if (!state.preview()) {
+                transferContinuingTracks(previous, incoming, projectedTimeline);
+            }
             moveToOutgoing(previous);
         }
         currentSession = incoming;
@@ -420,7 +422,7 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
     }
 
     private static boolean canProjectTimeline(AreaSession previous, PlaybackState state) {
-        return previous != null && previous.state.areaId().equals(state.areaId());
+        return previous != null && !state.preview() && previous.state.areaId().equals(state.areaId());
     }
 
     private static AreaPlaybackTimeline projectTimeline(

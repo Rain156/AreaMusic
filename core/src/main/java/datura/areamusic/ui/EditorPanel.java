@@ -42,7 +42,13 @@ public final class EditorPanel {
      * effect once the whole panel has been built, because the same click is also what commits a
      * name still being typed, and that name belongs to the area it was typed for.
      */
+    /** A jingle shorter than this has nowhere worth starting from but its beginning. */
+    private static final int SHORTEST_TRACK_WITH_BAR_MS = 2_000;
+
     private final List<Runnable> afterBuild = new ArrayList<>();
+    /** The area being auditioned and the version of it that is playing, or null for none. */
+    private String previewedId;
+    private AreaDefinition previewed;
 
     public EditorPanel(ClientSync sync, PanelHost host) {
         this.sync = Objects.requireNonNull(sync, "sync");
@@ -120,6 +126,7 @@ public final class EditorPanel {
             ui.progress(t("areamusic.upload.progress", upload.fileName()), upload.progress());
         }
 
+        maintainPreview();
         buildCreate(ui);
         buildAreaList(ui);
         model.selected().ifPresent(area -> buildSelected(ui, area));
@@ -258,6 +265,7 @@ public final class EditorPanel {
         if (volume != null) {
             model.apply(current -> AreaEdits.withVolume(current, Math.round(volume) / 100.0f));
         }
+        buildStartAndPreview(ui, area);
 
         ui.space();
         if (ui.button("teleport", t("areamusic.editor.teleport"))) {
@@ -284,6 +292,65 @@ public final class EditorPanel {
 
         if (ui.collapsing("advanced", t("areamusic.editor.advanced"), false)) {
             buildAdvanced(ui, area, shown);
+        }
+    }
+
+    /**
+     * Where the music begins, as a bar that is dragged like in a music player, and a button to
+     * hear the area without walking into it. The bar needs the length of the first track, which
+     * takes a moment to work out the first time; until then only the button shows.
+     */
+    private void buildStartAndPreview(PanelUi ui, AreaDefinition area) {
+        OptionalInt duration = host.trackDurationMs(area.musicIds().get(0));
+        if (duration.isPresent() && duration.getAsInt() >= SHORTEST_TRACK_WITH_BAR_MS) {
+            int length = duration.getAsInt();
+            // A start past the end plays from where that leads once the music has gone round.
+            Integer picked = ui.timeline(
+                    "start_bar", t("areamusic.editor.start"), area.startOffsetMs() % length, length);
+            if (picked != null) {
+                model.apply(current -> current.withStartOffsetMs(picked));
+            }
+        }
+        if (!host.canPreview(area)) {
+            return;
+        }
+        boolean playing = host.previewing() && area.id().equals(previewedId);
+        if (ui.button("preview", t(playing ? "areamusic.editor.preview_stop" : "areamusic.editor.preview"))) {
+            if (playing) {
+                stopPreview();
+            } else {
+                previewedId = area.id();
+                previewed = area;
+                host.startPreview(area);
+            }
+        }
+        if (duration.isPresent()) {
+            ui.sameRow();
+            ui.label(t("areamusic.editor.track_length", TrackTime.format(duration.getAsInt() / 1000 * 1000)));
+        }
+    }
+
+    /** Keeps an audition in step with the panel: it follows edits and ends with its area. */
+    private void maintainPreview() {
+        if (previewedId == null) {
+            return;
+        }
+        AreaDefinition selected = model.selected().orElse(null);
+        if (!host.previewing() || selected == null || !selected.id().equals(previewedId)
+                || !host.canPreview(selected)) {
+            stopPreview();
+        } else if (!selected.equals(previewed)) {
+            // Something about the area changed: hear the new version from its start.
+            previewed = selected;
+            host.startPreview(selected);
+        }
+    }
+
+    private void stopPreview() {
+        previewedId = null;
+        previewed = null;
+        if (host.previewing()) {
+            host.stopPreview();
         }
     }
 
@@ -322,7 +389,7 @@ public final class EditorPanel {
 
     private void buildAdvanced(PanelUi ui, AreaDefinition area, SimpleMode shown) {
         String start = ui.textInput(
-                "start", t("areamusic.editor.start"), TrackTime.format(area.startOffsetMs()), 12);
+                "start", t("areamusic.editor.start_exact"), TrackTime.format(area.startOffsetMs()), 12);
         if (start != null) {
             OptionalInt millis = TrackTime.parseMillis(start);
             if (millis.isPresent()) {

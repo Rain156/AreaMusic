@@ -41,6 +41,7 @@ public final class AreaMusicAxiomTool implements CustomTool, PanelHost {
 
     private final Minecraft minecraft = Minecraft.getInstance();
     private final ToolService tools;
+    private final ClientAreaMusic client;
     private final ClientSync sync;
     private final EditorModel model;
     private final EditorPanel panel;
@@ -51,6 +52,7 @@ public final class AreaMusicAxiomTool implements CustomTool, PanelHost {
 
     private AreaMusicAxiomTool(ClientAreaMusic client, ToolService tools) {
         this.tools = tools;
+        this.client = client;
         sync = client.sync();
         model = sync.editor();
         panel = new EditorPanel(sync, this);
@@ -195,5 +197,10 @@ public final class AreaMusicAxiomTool implements CustomTool, PanelHost {
     @Override
     public boolean closable() {
         return false;
+    }
+
+    @Override
+    public java.util.OptionalInt trackDurationMs(String musicId) {
+        return client.trackDurationMs(musicId);
     }
 }

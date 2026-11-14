@@ -45,6 +45,56 @@ class ClientPlaybackSessionTest {
     }
 
     @Test
+    void previewPlaysInsteadOfTheServersStateAndHandsBackAfterwards() {
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(
+                MusicLibrary.empty(tempDir.resolve("music")), ignored -> mixer);
+        PlaybackState village = playing("village", "day.mp3", 1.0f, true, 0, 0);
+        PlaybackState cave = playing("cave", "night.mp3", 1.0f, true, 0, 0);
+        PlaybackState audition = PlaybackState.preview(village.definition().orElseThrow(), 30_000);
+        session.connect();
+        session.apply(3, village);
+        mixer.appliedStates.clear();
+
+        session.setPreview(audition);
+        assertTrue(session.previewing());
+        assertEquals(List.of(new AppliedState(3, audition)), mixer.appliedStates);
+
+        // The player walks into another area meanwhile: still the audition, on the new revision.
+        session.apply(4, cave);
+        assertEquals(new AppliedState(4, audition), mixer.appliedStates.get(1));
+        session.setPreview(audition);
+        assertEquals(2, mixer.appliedStates.size(), "the same audition is not applied twice");
+
+        session.setPreview(null);
+        assertFalse(session.previewing());
+        assertEquals(new AppliedState(4, cave), mixer.appliedStates.get(2));
+
+        session.setPreview(audition);
+        session.disconnect();
+        assertFalse(session.previewing());
+        session.close();
+    }
+
+    @Test
+    void previewWorksBeforeTheServerHasSaidAnythingAndStopsToSilence() {
+        FakeMixer mixer = new FakeMixer();
+        ClientPlaybackSession session = new ClientPlaybackSession(
+                MusicLibrary.empty(tempDir.resolve("music")), ignored -> mixer);
+        PlaybackState audition = PlaybackState.preview(
+                playing("village", "day.mp3", 1.0f, true, 0, 0).definition().orElseThrow(), 0);
+        session.connect();
+
+        session.setPreview(audition);
+        session.setPreview(null);
+
+        assertEquals(
+                List.of(new AppliedState(0, audition), new AppliedState(0, PlaybackState.stopped())),
+                mixer.appliedStates);
+        session.close();
+    }
+
+    @Test
     void playbackForReloadRevisionWaitsForTheNewLibrary() {
         MusicLibrary oldLibrary = MusicLibrary.empty(tempDir.resolve("old"));
         MusicLibrary newLibrary = MusicLibrary.empty(tempDir.resolve("new"));

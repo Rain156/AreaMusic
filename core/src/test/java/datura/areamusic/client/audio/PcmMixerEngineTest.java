@@ -254,6 +254,35 @@ class PcmMixerEngineTest {
     }
 
     @Test
+    void previewStartsFromItsOwnPositionEvenWhileTheSameMusicIsPlaying() throws Exception {
+        Path root = tempDir.resolve("music");
+        writeWav(root.resolve("theme.wav"), increasingFrames(1000, 200));
+        AreaTrackDefinition theme = track("theme.wav", 0, true, 0, 0);
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(1L, state("village", false, theme));
+            assertEquals(1000, leftSample(engine.renderFrames(3, 1.0f), 0));
+
+            // Walking into another area with the same music would carry on at frame 3. An
+            // audition does not: it begins where it says, here one millisecond (44 frames) in.
+            engine.apply(1L, PlaybackState.preview(new ParallelPlayback(List.of(theme)), 1));
+            assertEquals(1044, firstNonSilentSample(engine));
+
+            // Moving the start position restarts the audition from the new place.
+            engine.apply(1L, PlaybackState.preview(new ParallelPlayback(List.of(theme)), 2));
+            int restarted = 0;
+            for (int attempt = 0; attempt < 2000 && restarted != 1088; attempt++) {
+                restarted = leftSample(engine.renderFrames(1, 1.0f), 0);
+                if (restarted == 0) {
+                    java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L);
+                }
+            }
+            assertEquals(1088, restarted);
+        }
+    }
+
+    @Test
     void loopRestartAdvancesOnlyTheTrackThatReachedEof() throws Exception {
         Path root = tempDir.resolve("music");
         writeWav(root.resolve("short-loop.wav"), new short[]{100, 200});

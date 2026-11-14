@@ -192,6 +192,55 @@ class CanvasUiTest {
     }
 
     @Test
+    void timelineIsDraggedLikeAProgressBarAndCommitsWholeSecondsOnRelease() {
+        List<Integer> results = new ArrayList<>();
+        // A three-minute track, starting at 0:30.
+        Consumer<PanelUi> panel = p -> results.add(p.timeline("start", "Start", 30_000, 180_000));
+        frame(panel);
+        int[] value = canvas.rectOf("0:30");
+        int trackLeft = CanvasUi.sliderTrack(X, WIDTH)[0];
+        int travel = CanvasUi.sliderTrack(X, WIDTH)[1] - 6;
+
+        // Wherever the knob lands, the position is a whole number of seconds.
+        int halfway = Math.round(180.0f * (travel / 2) / travel) * 1000;
+        String halfwayText = datura.areamusic.edit.TrackTime.format(halfway);
+        input.mousePressed(trackLeft + 3 + travel / 2, value[1]);
+        frame(panel);
+        assertNull(results.get(results.size() - 1), "nothing is committed while dragging");
+        assertTrue(canvas.texts().contains(halfwayText), canvas.texts().toString());
+        assertTrue(halfway >= 88_000 && halfway <= 92_000, halfwayText);
+
+        input.mouseMoved(trackLeft + 5000, value[1]);
+        frame(panel);
+        assertTrue(canvas.texts().contains("2:59"), "the last second, not the very end: " + canvas.texts());
+        input.mouseMoved(trackLeft + 3 + travel / 2, value[1]);
+        input.mouseReleased(trackLeft + 3 + travel / 2, value[1]);
+        frame(panel);
+        assertEquals(halfway, results.get(results.size() - 1));
+        frame(panel);
+        assertNull(results.get(results.size() - 1));
+    }
+
+    @Test
+    void timelineOfAShortTrackMovesInTenthsOfASecond() {
+        List<Integer> results = new ArrayList<>();
+        Consumer<PanelUi> panel = p -> results.add(p.timeline("start", "Start", 0, 4_000));
+        frame(panel);
+        int[] value = canvas.rectOf("0:00");
+        int trackLeft = CanvasUi.sliderTrack(X, WIDTH)[0];
+        int travel = CanvasUi.sliderTrack(X, WIDTH)[1] - 6;
+
+        input.mousePressed(trackLeft + 3 + travel / 8, value[1]);
+        frame(panel);
+        input.mouseReleased(trackLeft + 3 + travel / 8, value[1]);
+        frame(panel);
+
+        int picked = results.get(results.size() - 1);
+        assertEquals(0, picked % 100);
+        assertTrue(picked >= 400 && picked <= 600, Integer.toString(picked));
+    }
+
+    @Test
     void checkboxChoiceSwatchesAndCollapsingRespondToClicks() {
         List<Object> results = new ArrayList<>();
         boolean[] sectionOpen = {false};

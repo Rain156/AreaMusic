@@ -1,9 +1,13 @@
 package datura.areamusic.client;
 
 import com.mojang.logging.LogUtils;
+import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.client.audio.AudioFailure;
+import datura.areamusic.client.audio.AudioStreamFactory;
 import datura.areamusic.client.audio.ClientAudioMixer;
 import datura.areamusic.client.audio.PcmAudioMixer;
+import datura.areamusic.client.audio.TrackDurations;
+import datura.areamusic.edit.AreaEdits;
 import datura.areamusic.music.MusicDirectory;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.net.ClientSync;
@@ -18,6 +22,7 @@ import org.slf4j.Logger;
 
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +35,8 @@ import java.util.function.DoubleSupplier;
 /** Owns client playback; its public lifecycle methods are client-thread confined. */
 public final class ClientAreaMusic implements ClientPacketHandler {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final int PREVIEW_FADE_IN_MS = 120;
+    private static final int PREVIEW_FADE_OUT_MS = 250;
 
     private final Path gameDirectory;
     private final DoubleSupplier independentVolume;
@@ -40,6 +47,8 @@ public final class ClientAreaMusic implements ClientPacketHandler {
     private final Set<String> reportedErrors = ConcurrentHashMap.newKeySet();
     private final AtomicLong scanGeneration = new AtomicLong();
     private final ClientSync sync;
+    /** Made on first use: it brings in the audio decoders, which not every caller needs. */
+    private TrackDurations durations;
     private volatile Consumer<byte[]> syncSender = data -> { };
     private volatile boolean closed;
     private PlaybackState currentState = PlaybackState.stopped();
@@ -102,6 +111,58 @@ public final class ClientAreaMusic implements ClientPacketHandler {
     /** The editor and music distribution session for the current connection. */
     public ClientSync sync() {
         return sync;
+    }
+
+    // ---- for the editor ----
+
+    /** How long a track is, or empty while that is still being worked out or it is not here. */
+    public OptionalInt trackDurationMs(String musicId) {
+        if (durations == null) {
+            durations = new TrackDurations(new AudioStreamFactory(), scanExecutor);
+        }
+        return newestLibrary().find(musicId).map(durations::millis).orElse(OptionalInt.empty());
+    }
+
+    /** Whether every track of the area is on this computer, so that it can be auditioned. */
+    public boolean canPreview(AreaDefinition area) {
+        if (closed || !sync.serverPresent()) {
+            return false;
+        }
+        MusicLibrary library = newestLibrary();
+        return area.musicIds().stream().allMatch(library::contains);
+    }
+
+    /**
+     * Plays the area the way walking into it sounds, wherever the player is, until
+     * {@link #stopPreview()}. Fades are shortened so that it answers at once.
+     */
+    public void startPreview(AreaDefinition area) {
+        if (!canPreview(area)) {
+            return;
+        }
+        MusicLibrary newer = deferredLibrary;
+        if (newer != null) {
+            // A download that finished since the music last changed; the audition may need it.
+            deferredLibrary = null;
+            activeLibrary = newer;
+            playbackSession.updateLibrary(newer);
+        }
+        AreaDefinition prompt = AreaEdits.withFadeOut(
+                AreaEdits.withFadeIn(area, PREVIEW_FADE_IN_MS), PREVIEW_FADE_OUT_MS);
+        playbackSession.setPreview(PlaybackState.preview(prompt.playback(), area.startOffsetMs()));
+    }
+
+    public void stopPreview() {
+        playbackSession.setPreview(null);
+    }
+
+    public boolean previewing() {
+        return playbackSession.previewing();
+    }
+
+    private MusicLibrary newestLibrary() {
+        MusicLibrary newer = deferredLibrary;
+        return newer != null ? newer : activeLibrary;
     }
 
     /** Installs the loader's way of sending serverbound sync bytes. */

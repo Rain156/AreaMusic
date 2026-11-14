@@ -170,6 +170,10 @@
   "areamusic.editor.repick": "Re-pick",
   "areamusic.editor.move_hint": "Walk as usual. Drag off the panel to look.",
   "areamusic.editor.start": "Start at",
-  "areamusic.editor.start_hint": "Where the music begins when a player walks in, e.g. 1:30. It loops from the beginning.",
-  "areamusic.editor.start_invalid": "\"%s\" is not a time. Write it like 1:30 or 90 (seconds)."
+  "areamusic.editor.start_hint": "Where the music begins when a player walks in, e.g. 1:30. It loops from the beginning. You can also drag the bar above.",
+  "areamusic.editor.start_invalid": "\"%s\" is not a time. Write it like 1:30 or 90 (seconds).",
+  "areamusic.editor.start_exact": "Exact start",
+  "areamusic.editor.preview": "▶ Listen",
+  "areamusic.editor.preview_stop": "■ Stop",
+  "areamusic.editor.track_length": "%s long"
 }

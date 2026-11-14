@@ -65,6 +65,12 @@ public interface PanelUi {
     /** {@code format} is a {@link String#format} pattern for the value, e.g. {@code "%.0f%%"}. */
     Float slider(String id, String label, float value, float min, float max, String format);
 
+    /**
+     * A position in a track, dragged like the progress bar of a music player and shown as a
+     * time. Returns the new position in milliseconds when the drag ends, otherwise null.
+     */
+    Integer timeline(String id, String label, int valueMs, int durationMs);
+
     Boolean checkbox(String id, String label, boolean value);
 
     /** A few mutually exclusive options shown side by side. Returns the newly chosen index. */

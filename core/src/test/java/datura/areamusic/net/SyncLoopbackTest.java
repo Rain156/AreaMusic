@@ -468,8 +468,93 @@ class SyncLoopbackTest {
         assertEquals(1, host.finished);
     }
 
+    @Test
+    void theStartBarSetsTheStartAndAnAuditionFollowsThePanel() throws Exception {
+        server.addMusic("day.ogg", 1_000);
+        server.rescan();
+        server.put(area("village", "day.ogg"));
+        server.put(area("cave", "day.ogg"));
+        Client alice = server.join("alice", true);
+        EditorModel editor = alice.sync.editor();
+        editor.open();
+        pump(3);
+        editor.select("village");
+        ScriptedHost host = new ScriptedHost();
+        host.durationMs = 180_000;
+        EditorPanel panel = new EditorPanel(alice.sync, host);
+
+        // Dragging the bar to 1:30 is all it takes to set the start.
+        ScriptedUi ui = new ScriptedUi();
+        ui.draggedTo = 90_000;
+        panel.build(ui);
+        pump(3);
+        assertEquals(90_000, editor.find("village").orElseThrow().startOffsetMs());
+        assertEquals(List.of(), host.auditions);
+
+        ui = new ScriptedUi();
+        ui.clickedButton = "preview";
+        panel.build(ui);
+        assertEquals(List.of(editor.find("village").orElseThrow()), host.auditions);
+        assertTrue(host.auditioning);
+
+        // Changing the area while it plays restarts the audition with the new version.
+        ui = new ScriptedUi();
+        ui.draggedTo = 30_000;
+        panel.build(ui);
+        pump(3);
+        panel.build(new ScriptedUi());
+        assertEquals(2, host.auditions.size());
+        assertEquals(30_000, host.auditions.get(1).startOffsetMs());
+        panel.build(new ScriptedUi());
+        assertEquals(2, host.auditions.size(), "an unchanged area is not restarted every frame");
+
+        // Selecting another area ends it.
+        ui = new ScriptedUi();
+        ui.clickedRow = "area:cave";
+        panel.build(ui);
+        panel.build(new ScriptedUi());
+        assertFalse(host.auditioning);
+
+        // Without the length of the track there is no bar, and the start cannot be dragged.
+        host.durationMs = -1;
+        ui = new ScriptedUi();
+        ui.draggedTo = 5_000;
+        panel.build(ui);
+        pump(3);
+        assertEquals(0, editor.find("cave").orElseThrow().startOffsetMs());
+    }
+
     private static final class ScriptedHost implements PanelHost {
         private int finished;
+        private int durationMs = -1;
+        private boolean auditioning;
+        private final List<AreaDefinition> auditions = new ArrayList<>();
+
+        @Override
+        public java.util.OptionalInt trackDurationMs(String musicId) {
+            return durationMs < 0 ? java.util.OptionalInt.empty() : java.util.OptionalInt.of(durationMs);
+        }
+
+        @Override
+        public boolean canPreview(AreaDefinition area) {
+            return true;
+        }
+
+        @Override
+        public void startPreview(AreaDefinition area) {
+            auditions.add(area);
+            auditioning = true;
+        }
+
+        @Override
+        public void stopPreview() {
+            auditioning = false;
+        }
+
+        @Override
+        public boolean previewing() {
+            return auditioning;
+        }
 
         @Override
         public String text(String key, Object... args) {
@@ -509,7 +594,14 @@ class SyncLoopbackTest {
     private static final class ScriptedUi implements PanelUi {
         private String typedName;
         private String clickedRow;
+        private String clickedButton;
+        private Integer draggedTo;
         private boolean close;
+
+        @Override
+        public Integer timeline(String id, String label, int valueMs, int durationMs) {
+            return draggedTo;
+        }
 
         @Override
         public int header(String title, List<String> actions) {
@@ -557,7 +649,7 @@ class SyncLoopbackTest {
 
         @Override
         public boolean button(String id, String label) {
-            return false;
+            return id.equals(clickedButton);
         }
 
         @Override

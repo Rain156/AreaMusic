@@ -170,6 +170,10 @@
   "areamusic.editor.repick": "重选范围",
   "areamusic.editor.move_hint": "照常走动；在面板外按住鼠标拖动转视角。",
   "areamusic.editor.start": "开始位置",
-  "areamusic.editor.start_hint": "进入区域时从这里开始播，例如 1:30。循环后回到开头。",
-  "areamusic.editor.start_invalid": "“%s”不是一个时间，请写成 1:30 或 90（秒）。"
+  "areamusic.editor.start_hint": "进入区域时从这里开始播，例如 1:30。循环后回到开头。也可以在上面直接拖动。",
+  "areamusic.editor.start_invalid": "“%s”不是一个时间，请写成 1:30 或 90（秒）。",
+  "areamusic.editor.start_exact": "精确开始时间",
+  "areamusic.editor.preview": "▶ 试听",
+  "areamusic.editor.preview_stop": "■ 停止试听",
+  "areamusic.editor.track_length": "时长 %s"
 }

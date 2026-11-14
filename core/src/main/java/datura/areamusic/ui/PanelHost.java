@@ -1,6 +1,9 @@
 package datura.areamusic.ui;
 
+import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
+
+import java.util.OptionalInt;
 
 /** What the editor panel needs from the game it runs in. */
 public interface PanelHost {
@@ -26,6 +29,27 @@ public interface PanelHost {
      */
     default boolean closable() {
         return true;
+    }
+
+    /** How long a track is in milliseconds, or empty while that is not known (yet). */
+    default OptionalInt trackDurationMs(String musicId) {
+        return OptionalInt.empty();
+    }
+
+    /** Whether the area can be auditioned right now: its music is here and there is sound. */
+    default boolean canPreview(AreaDefinition area) {
+        return false;
+    }
+
+    /** Plays the area as a player walking in would hear it, wherever the player is standing. */
+    default void startPreview(AreaDefinition area) {
+    }
+
+    default void stopPreview() {
+    }
+
+    default boolean previewing() {
+        return false;
     }
 
     /** A line of help shown at the bottom of the panel, or an empty string for none. */

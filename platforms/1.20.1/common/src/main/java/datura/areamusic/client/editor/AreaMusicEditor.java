@@ -2,6 +2,7 @@ package datura.areamusic.client.editor;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.vertex.PoseStack;
+import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
 import datura.areamusic.client.ClientAreaMusic;
 import datura.areamusic.editor.EditorModel;
@@ -22,6 +23,7 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Optional;
+import java.util.OptionalInt;
 
 /**
  * The built-in editor. One key turns it on and off. While it is on, area boxes are drawn in the
@@ -40,6 +42,7 @@ public final class AreaMusicEditor implements PanelHost {
     private static AreaMusicEditor instance;
 
     private final Minecraft minecraft = Minecraft.getInstance();
+    private final ClientAreaMusic client;
     private final ClientSync sync;
     private final EditorModel model;
     private final EditorPanel panel;
@@ -57,15 +60,16 @@ public final class AreaMusicEditor implements PanelHost {
         PICKING
     }
 
-    private AreaMusicEditor(ClientSync sync) {
-        this.sync = sync;
+    private AreaMusicEditor(ClientAreaMusic client) {
+        this.client = client;
+        sync = client.sync();
         model = sync.editor();
         panel = new EditorPanel(sync, this);
     }
 
     /** Connects the editor to the client session. Call once the client is set up. */
     public static synchronized void install(ClientAreaMusic client) {
-        instance = new AreaMusicEditor(client.sync());
+        instance = new AreaMusicEditor(client);
     }
 
     public static synchronized void uninstall() {
@@ -170,6 +174,8 @@ public final class AreaMusicEditor implements PanelHost {
 
     /** The panel screen went away. Unless it stepped aside for corner picking, editing is over. */
     void panelRemoved() {
+        // An audition belongs to the panel: it ends when the panel goes, whatever the reason.
+        client.stopPreview();
         if (state == State.PANEL) {
             state = State.CLOSED;
             hideHud(false);
@@ -298,6 +304,31 @@ public final class AreaMusicEditor implements PanelHost {
     @Override
     public boolean crosshairPicking() {
         return true;
+    }
+
+    @Override
+    public OptionalInt trackDurationMs(String musicId) {
+        return client.trackDurationMs(musicId);
+    }
+
+    @Override
+    public boolean canPreview(AreaDefinition area) {
+        return client.canPreview(area);
+    }
+
+    @Override
+    public void startPreview(AreaDefinition area) {
+        client.startPreview(area);
+    }
+
+    @Override
+    public void stopPreview() {
+        client.stopPreview();
+    }
+
+    @Override
+    public boolean previewing() {
+        return client.previewing();
     }
 
     @Override

@@ -87,6 +87,25 @@ public record PlaybackState(
         );
     }
 
+    /**
+     * What auditioning an area in the editor plays. It is never a real area's ID, so it cannot be
+     * mistaken for one, and it always starts from scratch: see {@link #preview()}.
+     */
+    public static final String PREVIEW_AREA_ID = "#preview";
+
+    public static PlaybackState preview(PlaybackDefinition definition, int startOffsetMs) {
+        return playing(PREVIEW_AREA_ID, definition, false, startOffsetMs);
+    }
+
+    /**
+     * Whether this is an audition rather than an area the player is standing in. An audition
+     * begins at its start position every time; it never carries on a stream that is already
+     * playing, which is what walking between two areas with the same music does.
+     */
+    public boolean preview() {
+        return playing && areaId.equals(PREVIEW_AREA_ID);
+    }
+
     public static PlaybackState fromArea(AreaDefinition area) {
         Objects.requireNonNull(area, "area");
         return playing(area.id(), area.playback(), area.resumeOnReenter(), area.startOffsetMs());
