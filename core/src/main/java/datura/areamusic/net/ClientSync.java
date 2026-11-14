@@ -61,6 +61,9 @@ public final class ClientSync {
     private boolean canEdit;
     private boolean distributeMusic;
     private long maxUploadBytes;
+    /** Counts connections, so work started for an earlier one is dropped. */
+    private long session;
+    /** Counts lookups of the needed tracks, so only the newest one is applied. */
     private long generation;
     private MusicLibrary localLibrary;
     private List<MusicFingerprint> needed = List.of();
@@ -68,6 +71,8 @@ public final class ClientSync {
     private final Set<String> failed = new HashSet<>();
     private final Deque<MusicFingerprint> queue = new ArrayDeque<>();
     private Download active;
+    /** Files downloaded in this session, by hash. A lookup that started earlier cannot know them. */
+    private final Map<String, Path> downloaded = new HashMap<>();
     private Map<String, Path> delivered = Map.of();
     private boolean swept;
     private int nextUploadId = 1;
@@ -107,6 +112,7 @@ public final class ClientSync {
     }
 
     public void disconnect() {
+        session++;
         generation++;
         serverPresent = false;
         canEdit = false;
@@ -115,6 +121,7 @@ public final class ClientSync {
         resolved.clear();
         failed.clear();
         queue.clear();
+        downloaded.clear();
         closeActive();
         for (Upload upload : new ArrayList<>(uploads.values())) {
             failUpload(upload, "disconnected");
@@ -250,7 +257,7 @@ public final class ClientSync {
         Upload upload = new Upload(nextUploadId++, file, listener);
         uploads.put(upload.id, upload);
         long limit = maxUploadBytes;
-        long startedIn = generation;
+        long startedIn = session;
         io.execute(() -> {
             String rejection = null;
             String sha256 = null;
@@ -274,7 +281,7 @@ public final class ClientSync {
             String finalSha256 = sha256;
             long finalSize = size;
             clientThread.execute(() -> {
-                if (startedIn != generation || !uploads.containsKey(upload.id)) {
+                if (startedIn != session || !uploads.containsKey(upload.id)) {
                     return;
                 }
                 if (finalRejection != null) {
@@ -321,7 +328,7 @@ public final class ClientSync {
                 upload.closeTransfer();
                 String musicId = reply.detail();
                 MusicFingerprint fingerprint = new MusicFingerprint(musicId, upload.size, upload.sha256);
-                long startedIn = generation;
+                long startedIn = session;
                 // Keep a copy under its hash so this client never downloads its own upload back.
                 io.execute(() -> {
                     try {
@@ -336,7 +343,7 @@ public final class ClientSync {
                         // Falling back to a normal download is fine.
                     }
                     clientThread.execute(() -> {
-                        if (startedIn == generation) {
+                        if (startedIn == session) {
                             upload.listener.finished(musicId, null);
                         }
                     });
@@ -355,8 +362,14 @@ public final class ClientSync {
         long startedIn = ++generation;
         List<MusicFingerprint> wanted = needed;
         queue.clear();
-        closeActive();
-        boolean sweep = !swept;
+        if (active != null && !wants(wanted, active.fingerprint.sha256())) {
+            closeActive();
+        }
+        // A download that is still wanted keeps running. Looking the tracks up again happens for
+        // reasons that have nothing to do with it, such as the scan of the player's own folder
+        // finishing just after joining; starting it over would only confuse the server, which is
+        // already sending it.
+        boolean sweep = !swept && active == null;
         swept = true;
         io.execute(() -> {
             if (sweep) {
@@ -385,8 +398,17 @@ public final class ClientSync {
                 resolved.clear();
                 resolved.putAll(found);
                 Set<String> queued = new HashSet<>();
+                if (active != null) {
+                    queued.add(active.fingerprint.sha256());
+                }
                 for (MusicFingerprint fingerprint : wanted) {
-                    if (!resolved.containsKey(fingerprint.sha256()) && queued.add(fingerprint.sha256())) {
+                    String sha256 = fingerprint.sha256();
+                    Path landed = downloaded.get(sha256);
+                    if (landed != null) {
+                        // Finished while this lookup was running.
+                        resolved.putIfAbsent(sha256, landed);
+                    }
+                    if (!resolved.containsKey(sha256) && queued.add(sha256)) {
                         queue.add(fingerprint);
                     }
                 }
@@ -394,6 +416,15 @@ public final class ClientSync {
                 startNextDownload();
             });
         });
+    }
+
+    private static boolean wants(List<MusicFingerprint> wanted, String sha256) {
+        for (MusicFingerprint fingerprint : wanted) {
+            if (fingerprint.sha256().equals(sha256)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void startNextDownload() {
@@ -420,13 +451,25 @@ public final class ClientSync {
             return;
         }
         MusicFingerprint fingerprint = active.fingerprint;
+        if (active.transfer.received() == 0 && chunk.offset() != 0) {
+            // Left over from an earlier request for the same file; the server starts over from
+            // the beginning when it sees the new request.
+            return;
+        }
         try {
+            if (chunk.offset() == 0 && active.transfer.received() > 0) {
+                // The server started over after what had arrived so far; so does this side.
+                active.transfer.close();
+                active = new Download(fingerprint, new IncomingTransfer(
+                        cache.newTemporaryPath(fingerprint), fingerprint.size(), fingerprint.sha256()));
+            }
             active.transfer.accept(chunk.offset(), chunk.data(), chunk.last());
             if (!active.transfer.complete()) {
                 return;
             }
             Path stored = active.transfer.moveTo(cache.cachePath(fingerprint));
             closeActive();
+            downloaded.put(fingerprint.sha256(), stored);
             resolved.put(fingerprint.sha256(), stored);
             deliver();
         } catch (TransferException | IOException exception) {

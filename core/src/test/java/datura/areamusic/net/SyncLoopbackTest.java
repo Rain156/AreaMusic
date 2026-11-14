@@ -82,6 +82,81 @@ class SyncLoopbackTest {
     }
 
     @Test
+    void scanningTheLocalFolderMidDownloadDoesNotLoseTheDownload() throws Exception {
+        byte[] day = server.addMusic("day.ogg", 2_000_000);
+        server.rescan();
+        server.put(area("village", "day.ogg"));
+        Client client = server.join("alice", false);
+        pump(2);
+        assertTrue(client.sync.awaiting("day.ogg"));
+
+        // The scan of the player's own folder finishing a moment after joining, as it does the
+        // first time the game is started with the mod.
+        client.scanLocal();
+        pump(40);
+
+        assertArrayEquals(day, Files.readAllBytes(client.library.find("day.ogg").orElseThrow()));
+        assertFalse(client.sync.awaiting("day.ogg"));
+        assertEquals(1, client.sentOfType(SyncMessage.MusicRequest.class));
+    }
+
+    @Test
+    void aChangedManifestMidDownloadDoesNotLoseTheDownload() throws Exception {
+        byte[] day = server.addMusic("day.ogg", 2_000_000);
+        byte[] night = server.addMusic("night.ogg", 50_000);
+        server.rescan();
+        server.put(area("village", "day.ogg"));
+        Client client = server.join("alice", false);
+        pump(2);
+        assertTrue(client.sync.awaiting("day.ogg"));
+
+        server.put(area("cave", "night.ogg"));
+        pump(40);
+
+        assertArrayEquals(day, Files.readAllBytes(client.library.find("day.ogg").orElseThrow()));
+        assertArrayEquals(night, Files.readAllBytes(client.library.find("night.ogg").orElseThrow()));
+        assertEquals(2, client.sentOfType(SyncMessage.MusicRequest.class));
+    }
+
+    @Test
+    void aTrackDroppedAndWantedAgainMidDownloadStillArrives() throws Exception {
+        byte[] day = server.addMusic("day.ogg", 2_000_000);
+        server.addMusic("night.ogg", 50_000);
+        server.rescan();
+        server.put(area("village", "day.ogg"));
+        Client client = server.join("alice", false);
+        pump(2);
+        assertTrue(client.sync.awaiting("day.ogg"));
+
+        // The area switches to another track and back while the first one is still coming in.
+        server.put(area("village", "night.ogg"));
+        pump(1);
+        assertFalse(client.sync.awaiting("day.ogg"));
+        server.put(area("village", "day.ogg"));
+        pump(60);
+
+        assertArrayEquals(day, Files.readAllBytes(client.library.find("day.ogg").orElseThrow()));
+        assertFalse(client.sync.awaiting("day.ogg"));
+    }
+
+    @Test
+    void aDownloadTheServerStartsOverIsStartedOverHereToo() throws Exception {
+        byte[] day = server.addMusic("day.ogg", 2_000_000);
+        server.rescan();
+        server.put(area("village", "day.ogg"));
+        Client client = server.join("alice", false);
+        pump(2);
+        String sha256 = client.lastReceived(SyncMessage.MusicChunk.class).sha256();
+
+        // A second request for the file being sent makes the server begin again from byte zero,
+        // while this client has already taken in the first part.
+        server.sync.onMessage("alice", new SyncMessage.MusicRequest(sha256));
+        pump(40);
+
+        assertArrayEquals(day, Files.readAllBytes(client.library.find("day.ogg").orElseThrow()));
+    }
+
+    @Test
     void matchingLocalFileIsUsedWithoutDownloading() throws Exception {
         byte[] day = server.addMusic("village/day.ogg", 40_000);
         server.rescan();

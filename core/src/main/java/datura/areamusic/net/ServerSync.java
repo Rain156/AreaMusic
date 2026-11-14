@@ -262,6 +262,11 @@ public final class ServerSync<P> {
         }
         if (state.queued.add(sha256)) {
             state.downloads.add(fingerprint.get());
+        } else if (state.active != null && state.activeFingerprint.sha256().equals(sha256)) {
+            // The client gave up on this file and wants it again: it is waiting for the first
+            // byte, so carrying on from the middle would never complete. Start it over, next.
+            state.closeActive();
+            state.downloads.addFirst(fingerprint.get());
         }
     }
 
