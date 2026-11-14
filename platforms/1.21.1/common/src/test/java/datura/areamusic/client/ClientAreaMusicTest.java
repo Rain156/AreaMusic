@@ -168,6 +168,33 @@ class ClientAreaMusicTest {
     }
 
     @Test
+    void gameMusicIsSilencedOnlyWhileAreaMusicPlays() {
+        FakeClientRuntime client = new FakeClientRuntime();
+        ClientAreaMusic service = service(
+                tempDir.resolve("game"),
+                () -> 1.0,
+                client,
+                new ManualExecutor(),
+                ignored -> MusicLibrary.empty(tempDir.resolve("music")),
+                (library, listener) -> new FakeMixer()
+        );
+        service.connect();
+
+        service.tick();
+        assertEquals(0, client.gameMusicSilenced);
+
+        service.onPlayback(1, PlaybackState.playingPlaylistLoop(
+                "village", List.of("day.ogg"), 1.0f, 0, 0, false));
+        service.tick();
+        service.tick();
+        assertEquals(2, client.gameMusicSilenced);
+
+        service.onPlayback(2, PlaybackState.stopped());
+        service.tick();
+        assertEquals(2, client.gameMusicSilenced);
+    }
+
+    @Test
     void disconnectInvalidatesQueuedScans() {
         ManualExecutor background = new ManualExecutor();
         FakeClientRuntime client = new FakeClientRuntime();
@@ -302,6 +329,12 @@ class ClientAreaMusicTest {
         private final List<Component> messages = new ArrayList<>();
         private float masterVolume = 1.0f;
         private boolean paused;
+        private int gameMusicSilenced;
+
+        @Override
+        public void silenceGameMusic() {
+            gameMusicSilenced++;
+        }
 
         @Override
         public void execute(Runnable task) {

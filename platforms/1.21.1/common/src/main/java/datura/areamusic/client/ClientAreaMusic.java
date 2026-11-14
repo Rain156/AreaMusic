@@ -250,6 +250,10 @@ public final class ClientAreaMusic implements ClientPacketHandler {
                 independentVolume.getAsDouble()
         ));
         playbackSession.setPaused(clientRuntime.paused());
+        if (currentState.playing() || playbackSession.previewing()) {
+            // The game's own background music would play on top of the area's.
+            clientRuntime.silenceGameMusic();
+        }
         sync.tick();
         if (++ticks % 10 == 0 && currentState.playing()) {
             sync.downloadPercent(currentState.musicIds()).ifPresent(percent ->
@@ -371,6 +375,13 @@ public final class ClientAreaMusic implements ClientPacketHandler {
         /** Shows a short line above the hotbar. */
         default void displayOverlayMessage(Component message) {
         }
+
+        /**
+         * Stops the game's own background music if it is playing. Called every tick while area
+         * music plays; the game picks its music up again by itself once that stops.
+         */
+        default void silenceGameMusic() {
+        }
     }
 
     @FunctionalInterface
@@ -390,6 +401,12 @@ public final class ClientAreaMusic implements ClientPacketHandler {
         @Override
         public void execute(Runnable task) {
             Minecraft.getInstance().execute(task);
+        }
+
+        @Override
+        public void silenceGameMusic() {
+            // Only what plays on the Music slider: jukeboxes and note blocks are left alone.
+            Minecraft.getInstance().getSoundManager().stop(null, SoundSource.MUSIC);
         }
 
         @Override
