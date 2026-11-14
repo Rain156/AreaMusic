@@ -125,6 +125,22 @@ jobs:
           fi
           (cd dist && sha256sum ./*.jar | sort -k2 > SHA256SUMS)
 
+      # The notes for this version are its section of CHANGELOG.md, up to the next version.
+      - name: Extract release notes
+        env:
+          MOD_VERSION: ${{ steps.release.outputs.mod_version }}
+        run: |
+          set -euo pipefail
+          awk -v heading="## ${MOD_VERSION}" '
+            $0 == heading { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > dist/RELEASE_NOTES.md
+          if [[ ! -s dist/RELEASE_NOTES.md ]]; then
+            echo "CHANGELOG.md has no section for ${MOD_VERSION}" >&2
+            exit 1
+          fi
+
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
@@ -151,11 +167,17 @@ jobs:
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
         run: |
           set -euo pipefail
+          # A version with a suffix, such as 2.0.0-beta.1, is published as a pre-release.
+          prerelease=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/* --clobber
+            gh release upload "$RELEASE_TAG" dist/*.jar dist/SHA256SUMS --clobber
           else
-            gh release create "$RELEASE_TAG" dist/* \
+            gh release create "$RELEASE_TAG" dist/*.jar dist/SHA256SUMS \
               --verify-tag \
-              --title "$RELEASE_TAG" \
-              --generate-notes
+              --title "AreaMusic ${RELEASE_TAG#v}" \
+              --notes-file dist/RELEASE_NOTES.md \
+              "${prerelease[@]}"
           fi
