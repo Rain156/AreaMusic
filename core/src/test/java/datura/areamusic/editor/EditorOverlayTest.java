@@ -55,6 +55,23 @@ class EditorOverlayTest {
     }
 
     @Test
+    void aBoxAroundThePlayerStaysInsideTheBuildHeight() {
+        // Standing on a superflat floor four blocks above the bottom of the world.
+        model.draftAround(OVERWORLD, new AreaPosition(0, -60, 0), 16, -64, 319);
+        assertEquals(new EditorModel.Draft(OVERWORLD, new AreaPosition(-16, -64, -16), new AreaPosition(16, -44, 16)),
+                model.draft());
+
+        model.draftAround(NETHER, new AreaPosition(0, 250, 0), 16, 0, 255);
+        assertEquals(new EditorModel.Draft(NETHER, new AreaPosition(-16, 234, -16), new AreaPosition(16, 255, 16)),
+                model.draft());
+
+        // A player outside the build height still gets a box, the nearest one that fits.
+        model.draftAround(OVERWORLD, new AreaPosition(0, 400, 0), 16, -64, 319);
+        assertEquals(new EditorModel.Draft(OVERWORLD, new AreaPosition(-16, 319, -16), new AreaPosition(16, 319, 16)),
+                model.draft());
+    }
+
+    @Test
     void draftShowsAsOneBlockThenAsTheFullBox() {
         model.startDraft(OVERWORLD);
         assertEquals(3, EditorOverlay.boxes(model, OVERWORLD).size());

@@ -15,6 +15,16 @@ public interface PanelHost {
 
     AreaPosition playerPosition();
 
+    /** The lowest block of the player's dimension that can be built on. */
+    default int minBuildY() {
+        return Integer.MIN_VALUE;
+    }
+
+    /** The highest block of the player's dimension that can be built on. */
+    default int maxBuildY() {
+        return Integer.MAX_VALUE;
+    }
+
     void teleportTo(String areaId);
 
     /** Leaves the panel so the two corners of a new area can be clicked in the world. */

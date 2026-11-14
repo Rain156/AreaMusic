@@ -125,8 +125,13 @@ public final class AreaMusicEditor implements PanelHost {
             if (state != State.CLOSED) {
                 close();
             }
+            boolean pressed = false;
             while (TOGGLE_KEY.consumeClick()) {
-                // Nothing to open outside a world with the mod on the server.
+                pressed = true;
+            }
+            if (pressed && minecraft.player != null && minecraft.gui.screen() == null) {
+                // Say why nothing opens, instead of leaving the key looking broken.
+                hud(Component.translatable("areamusic.editor.no_server"));
             }
             return;
         }
@@ -283,6 +288,16 @@ public final class AreaMusicEditor implements PanelHost {
     public AreaPosition playerPosition() {
         BlockPos pos = minecraft.player == null ? BlockPos.ZERO : minecraft.player.blockPosition();
         return new AreaPosition(pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    @Override
+    public int minBuildY() {
+        return minecraft.level == null ? Integer.MIN_VALUE : minecraft.level.getMinY();
+    }
+
+    @Override
+    public int maxBuildY() {
+        return minecraft.level == null ? Integer.MAX_VALUE : minecraft.level.getMaxY();
     }
 
     @Override

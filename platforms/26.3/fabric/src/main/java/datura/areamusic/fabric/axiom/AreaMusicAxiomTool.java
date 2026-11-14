@@ -12,7 +12,7 @@ import datura.areamusic.editor.EditorOverlay;
 import datura.areamusic.net.ClientSync;
 import datura.areamusic.ui.EditorPanel;
 import datura.areamusic.ui.PanelHost;
-import datura.areamusic.ui.imgui.ImGuiPanelUi;
+import datura.areamusic.ui.PanelUi;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.language.I18n;
 import net.minecraft.core.BlockPos;
@@ -38,11 +38,12 @@ public final class AreaMusicAxiomTool implements CustomTool, PanelHost {
     private final ClientSync sync;
     private final EditorModel model;
     private final EditorPanel panel;
-    private final ImGuiPanelUi ui = new ImGuiPanelUi();
+    private final PanelUi ui;
     private int nextCorner = 1;
 
-    private AreaMusicAxiomTool(ClientAreaMusic client, ToolService tools) {
+    private AreaMusicAxiomTool(ClientAreaMusic client, ToolService tools, PanelUi ui) {
         this.tools = tools;
+        this.ui = ui;
         this.client = client;
         sync = client.sync();
         model = sync.editor();
@@ -50,12 +51,12 @@ public final class AreaMusicAxiomTool implements CustomTool, PanelHost {
     }
 
     /** Called reflectively by {@link AxiomIntegration} once Axiom is known to be present. */
-    public static void register(ClientAreaMusic client) {
+    public static void register(ClientAreaMusic client) throws ReflectiveOperationException, java.io.IOException {
         ToolRegistryService registry = ServiceLoader.load(ToolRegistryService.class).findFirst()
                 .orElseThrow(() -> new IllegalStateException("Axiom did not provide its tool registry"));
         ToolService tools = ServiceLoader.load(ToolService.class).findFirst()
                 .orElseThrow(() -> new IllegalStateException("Axiom did not provide its tool service"));
-        registry.register(new AreaMusicAxiomTool(client, tools));
+        registry.register(new AreaMusicAxiomTool(client, tools, AxiomImGui.createPanelUi()));
     }
 
     @Override
@@ -90,6 +91,10 @@ public final class AreaMusicAxiomTool implements CustomTool, PanelHost {
         if (hit == null) {
             Vec3 eye = minecraft.gameRenderer.mainCamera().position();
             Vec3 look = tools.getLookDirection();
+            if (look == null) {
+                // Axiom has no pointer in the world right now, so there is nothing to pick.
+                return false;
+            }
             Optional<String> area = EditorOverlay.pick(
                     model, playerDimension(), eye.x, eye.y, eye.z, look.x, look.y, look.z, PICK_RANGE);
             model.select(area.orElse(null));
@@ -127,6 +132,16 @@ public final class AreaMusicAxiomTool implements CustomTool, PanelHost {
     public AreaPosition playerPosition() {
         BlockPos pos = minecraft.player == null ? BlockPos.ZERO : minecraft.player.blockPosition();
         return new AreaPosition(pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    @Override
+    public int minBuildY() {
+        return minecraft.level == null ? Integer.MIN_VALUE : minecraft.level.getMinY();
+    }
+
+    @Override
+    public int maxBuildY() {
+        return minecraft.level == null ? Integer.MAX_VALUE : minecraft.level.getMaxY();
     }
 
     @Override

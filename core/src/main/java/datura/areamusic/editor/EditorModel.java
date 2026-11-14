@@ -344,11 +344,26 @@ public final class EditorModel {
 
     /** A ready-made draft: a cube of the given radius centered on a position. */
     public void draftAround(String dimension, AreaPosition center, int radius) {
+        draftAround(dimension, center, radius, Integer.MIN_VALUE, Integer.MAX_VALUE);
+    }
+
+    /**
+     * A ready-made draft around a position, cut off at the lowest and highest block of the
+     * dimension. The server turns down corners outside the build height, and a player standing
+     * on a superflat floor or near bedrock is always within reach of it.
+     */
+    public void draftAround(String dimension, AreaPosition center, int radius, int minY, int maxY) {
+        int bottom = clamp((long) center.y() - radius, minY, maxY);
+        int top = clamp((long) center.y() + radius, minY, maxY);
         draft = new Draft(
                 dimension,
-                new AreaPosition(center.x() - radius, center.y() - radius, center.z() - radius),
-                new AreaPosition(center.x() + radius, center.y() + radius, center.z() + radius));
+                new AreaPosition(center.x() - radius, bottom, center.z() - radius),
+                new AreaPosition(center.x() + radius, top, center.z() + radius));
         selectedId = null;
+    }
+
+    private static int clamp(long value, int min, int max) {
+        return (int) Math.max(min, Math.min(max, value));
     }
 
     public void cancelDraft() {

@@ -160,7 +160,8 @@ public final class EditorPanel {
             }
             if (ui.quietButton("around_me", t("areamusic.editor.around_me"))) {
                 afterBuild.add(() -> model.draftAround(
-                        host.playerDimension(), host.playerPosition(), EditorModel.DEFAULT_AROUND_RADIUS));
+                        host.playerDimension(), host.playerPosition(), EditorModel.DEFAULT_AROUND_RADIUS,
+                        host.minBuildY(), host.maxBuildY()));
             }
             ui.sameRow();
             if (ui.quietButton("whole_dimension", t("areamusic.editor.whole_dimension"))) {
