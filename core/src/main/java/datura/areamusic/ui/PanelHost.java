@@ -28,6 +28,11 @@ public interface PanelHost {
         return true;
     }
 
+    /** A line of help shown at the bottom of the panel, or an empty string for none. */
+    default String footerHint() {
+        return "";
+    }
+
     /** Whether corners are picked with the crosshair (true) or a free cursor such as Axiom's. */
     boolean crosshairPicking();
 }

@@ -43,6 +43,7 @@ public final class AreaMusicEditor implements PanelHost {
     private final ClientSync sync;
     private final EditorModel model;
     private final EditorPanel panel;
+    private final WorldControls controls = new WorldControls();
     private State state = State.CLOSED;
     private boolean hidHud;
     private boolean hudWasHidden;
@@ -108,6 +109,10 @@ public final class AreaMusicEditor implements PanelHost {
         WorldBoxRenderer.render(poseStack, buffers, camera, boxes);
     }
 
+    WorldControls controls() {
+        return controls;
+    }
+
     void undo() {
         model.undo();
     }
@@ -117,6 +122,10 @@ public final class AreaMusicEditor implements PanelHost {
     }
 
     private void tick() {
+        if (controls.attached() && !(minecraft.screen instanceof AreaMusicEditorScreen)) {
+            // The panel is gone, however it went: the game gets its own input back.
+            controls.release();
+        }
         if (minecraft.player == null || !sync.serverPresent()) {
             if (state != State.CLOSED) {
                 close();
@@ -288,5 +297,10 @@ public final class AreaMusicEditor implements PanelHost {
     @Override
     public boolean crosshairPicking() {
         return true;
+    }
+
+    @Override
+    public String footerHint() {
+        return controls.used() ? "" : I18n.get("areamusic.editor.move_hint");
     }
 }

@@ -113,6 +113,12 @@ public final class EditorPanel {
         buildCreate(ui);
         buildAreaList(ui);
         model.selected().ifPresent(area -> buildSelected(ui, area));
+
+        String footer = host.footerHint();
+        if (!footer.isEmpty()) {
+            ui.space();
+            ui.hint(footer);
+        }
     }
 
     /** The one way to make an area: a button, then three guided steps. */

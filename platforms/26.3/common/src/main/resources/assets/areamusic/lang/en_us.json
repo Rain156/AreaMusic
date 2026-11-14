@@ -122,5 +122,6 @@
   "areamusic.editor.draft.pick_cursor": "Right-click two corners in the world, one after the other.",
   "areamusic.editor.selected": "Selected area",
   "areamusic.editor.track_count": "%s tracks",
-  "areamusic.editor.repick": "Re-pick"
+  "areamusic.editor.repick": "Re-pick",
+  "areamusic.editor.move_hint": "Walk as usual. Drag off the panel to look."
 }

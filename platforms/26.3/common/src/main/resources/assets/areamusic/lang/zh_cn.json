@@ -122,5 +122,6 @@
   "areamusic.editor.draft.pick_cursor": "在世界里依次右键点两个角。",
   "areamusic.editor.selected": "选中的区域",
   "areamusic.editor.track_count": "%s 首",
-  "areamusic.editor.repick": "重选范围"
+  "areamusic.editor.repick": "重选范围",
+  "areamusic.editor.move_hint": "照常走动；在面板外按住鼠标拖动转视角。"
 }

@@ -17,7 +17,8 @@ import java.util.List;
 
 /**
  * Hosts the editor panel as a floating card at the right edge. The world stays visible and keeps
- * running behind it, with the game's own HUD out of the way.
+ * running behind it, with the game's own HUD out of the way, and the player can still walk and
+ * look around: see {@link WorldControls}.
  */
 final class AreaMusicEditorScreen extends Screen {
     /** The panel is laid out as if the screen were at least this many panel pixels wide. */
@@ -29,12 +30,14 @@ final class AreaMusicEditorScreen extends Screen {
     private final EditorPanel panel;
     private final CanvasUi ui = new CanvasUi();
     private final UiInput input = new UiInput();
+    private final WorldControls controls;
     private GuiCanvas canvas;
 
     AreaMusicEditorScreen(AreaMusicEditor editor, EditorPanel panel) {
         super(Component.translatable("areamusic.editor.title"));
         this.editor = editor;
         this.panel = panel;
+        controls = editor.controls();
     }
 
     @Override
@@ -47,7 +50,10 @@ final class AreaMusicEditorScreen extends Screen {
         int uiHeight = Math.round(height / factor);
         int panelWidth = Math.min(PANEL_WIDTH, uiWidth - MARGIN * 2);
         canvas.begin(graphics, factor);
-        input.mouseMoved((int) (mouseX / factor), (int) (mouseY / factor));
+        if (!controls.looking()) {
+            // While the view is being dragged the pointer is not pointing at anything.
+            input.mouseMoved((int) (mouseX / factor), (int) (mouseY / factor));
+        }
         ui.begin(canvas, input, uiWidth - panelWidth - MARGIN, MARGIN, panelWidth, uiHeight - MARGIN * 2);
         panel.build(ui);
         ui.end();
@@ -77,21 +83,43 @@ final class AreaMusicEditorScreen extends Screen {
     }
 
     @Override
+    public void tick() {
+        controls.tick(ui.editingText());
+    }
+
+    @Override
     public void removed() {
+        controls.release();
         editor.panelRemoved();
     }
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-            float factor = factor();
-            input.mousePressed((int) (event.x() / factor), (int) (event.y() / factor));
+        float factor = factor();
+        int x = (int) (event.x() / factor);
+        int y = (int) (event.y() / factor);
+        boolean left = event.button() == InputConstants.MOUSE_BUTTON_LEFT;
+        input.mouseMoved(x, y);
+        boolean onPanel = ui.containsMouse();
+        if (left) {
+            // Also when it lands off the panel: that is what closes an open field or drop-down.
+            input.mousePressed(x, y);
+        }
+        if (!onPanel && (left || event.button() == InputConstants.MOUSE_BUTTON_RIGHT)) {
+            controls.startLooking(event.button());
         }
         return true;
     }
 
     @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        controls.dragged(event.button(), dragX, dragY);
+        return true;
+    }
+
+    @Override
     public boolean mouseReleased(MouseButtonEvent event) {
+        controls.stopLooking(event.button());
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             float factor = factor();
             input.mouseReleased((int) (event.x() / factor), (int) (event.y() / factor));
@@ -144,6 +172,13 @@ final class AreaMusicEditorScreen extends Screen {
             editor.redo();
             return true;
         }
+        controls.keyPressed(event);
+        return true;
+    }
+
+    @Override
+    public boolean keyReleased(KeyEvent event) {
+        controls.keyReleased(event);
         return true;
     }
 
