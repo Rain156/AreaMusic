@@ -267,7 +267,8 @@ public final class EditorModel {
                 new AreaPosition(pos1.x() + shift, pos1.y(), pos1.z()),
                 new AreaPosition(pos2.x() + shift, pos2.y(), pos2.z()),
                 source.playback(), source.resumeOnReenter(), source.priority(),
-                source.displayName(), AreaDefinition.AUTO_COLOR, source.enabled());
+                source.displayName(), AreaDefinition.AUTO_COLOR, source.enabled(),
+                source.startOffsetMs());
         request(new EditOp.Put(copy), Kind.NORMAL);
         selectedId = id;
         return Optional.of(id);

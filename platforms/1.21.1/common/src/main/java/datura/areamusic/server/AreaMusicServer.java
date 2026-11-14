@@ -329,10 +329,7 @@ public final class AreaMusicServer {
             reportRejection(source, result);
             return 0;
         }
-        source.sendSuccess(
-                () -> Component.translatable("commands.areamusic.create.success", area.id()),
-                true
-        );
+        source.sendSuccess(() -> CommandReplies.created(area), true);
         return 1;
     }
 
@@ -341,15 +338,13 @@ public final class AreaMusicServer {
         if (state == null) {
             return 0;
         }
+        String label = state.edits.find(areaId).map(AreaDefinition::label).orElse(areaId);
         EditResult result = applyEdit(state, new EditOp.Remove(areaId));
         if (!result.applied()) {
             reportRejection(source, result);
             return 0;
         }
-        source.sendSuccess(
-                () -> Component.translatable("commands.areamusic.delete.success", areaId),
-                true
-        );
+        source.sendSuccess(() -> CommandReplies.deleted(label), true);
         return 1;
     }
 
@@ -370,6 +365,9 @@ public final class AreaMusicServer {
         AreaDefinition updated;
         try {
             updated = change.apply(current);
+        } catch (AreaMusicCommands.InvalidValue exception) {
+            source.sendFailure(Component.translatable(exception.translationKey()));
+            return 0;
         } catch (IllegalArgumentException exception) {
             source.sendFailure(Component.translatable(
                     "commands.areamusic.edit.invalid",
@@ -389,10 +387,7 @@ public final class AreaMusicServer {
             reportRejection(source, result);
             return 0;
         }
-        String key = result.changed()
-                ? "commands.areamusic.edit.success"
-                : "commands.areamusic.edit.unchanged";
-        source.sendSuccess(() -> Component.translatable(key, updated.label()), result.changed());
+        source.sendSuccess(() -> CommandReplies.updated(current, updated), result.changed());
         return 1;
     }
 
@@ -407,22 +402,7 @@ public final class AreaMusicServer {
             source.sendSuccess(() -> Component.translatable("commands.areamusic.list.empty"), false);
             return 0;
         }
-        source.sendSuccess(
-                () -> Component.translatable("commands.areamusic.list.header", areas.size()),
-                false
-        );
-        MusicLibrary library = state.musicLibrary;
-        for (AreaDefinition area : areas) {
-            MutableComponent line = Component.translatable(
-                    "commands.areamusic.list.entry",
-                    area.label(), area.id(), area.dimension(), size(area), area.musicIds().size()
-            );
-            if (!area.enabled()) {
-                line.append(Component.translatable("commands.areamusic.list.disabled"));
-            }
-            if (!area.musicIds().stream().allMatch(library::contains)) {
-                line.append(Component.translatable("commands.areamusic.list.missing_music"));
-            }
+        for (Component line : CommandReplies.list(areas, state.musicLibrary)) {
             source.sendSuccess(() -> line, false);
         }
         return areas.size();
@@ -439,26 +419,7 @@ public final class AreaMusicServer {
             source.sendFailure(Component.translatable("commands.areamusic.unknown_area", areaId));
             return 0;
         }
-        AreaPosition pos1 = area.pos1();
-        AreaPosition pos2 = area.pos2();
-        List<Component> lines = List.of(
-                Component.translatable(
-                        "commands.areamusic.info.header", area.label(), area.id(), area.dimension()),
-                Component.translatable(
-                        "commands.areamusic.info.bounds",
-                        pos1.x(), pos1.y(), pos1.z(), pos2.x(), pos2.y(), pos2.z(), size(area)),
-                Component.translatable(
-                        "commands.areamusic.info.playback",
-                        Component.translatable("areamusic.mode." + AreaEdits.modeOf(area).id()),
-                        Math.round(AreaEdits.volumeOf(area) * 100.0f),
-                        AreaEdits.fadeInOf(area),
-                        AreaEdits.fadeOutOf(area)),
-                Component.translatable(
-                        "commands.areamusic.info.music", String.join(", ", area.musicIds())),
-                Component.translatable(
-                        "commands.areamusic.info.flags",
-                        area.priority(), area.resumeOnReenter(), area.enabled())
-        );
+        List<Component> lines = CommandReplies.info(area, state.musicLibrary);
         for (Component line : lines) {
             source.sendSuccess(() -> line, false);
         }
@@ -504,10 +465,7 @@ public final class AreaMusicServer {
                 player.getYRot(),
                 player.getXRot()
         );
-        source.sendSuccess(
-                () -> Component.translatable("commands.areamusic.tp.success", area.label()),
-                false
-        );
+        source.sendSuccess(() -> CommandReplies.teleported(area), false);
         return 1;
     }
 
@@ -596,13 +554,6 @@ public final class AreaMusicServer {
     private static ServerLevel levelOf(MinecraftServer server, String dimension) {
         ResourceLocation id = ResourceLocation.tryParse(dimension);
         return id == null ? null : server.getLevel(ResourceKey.create(Registries.DIMENSION, id));
-    }
-
-    private static String size(AreaDefinition area) {
-        AreaPosition min = area.min();
-        AreaPosition max = area.max();
-        return (max.x() - min.x() + 1L) + "\u00d7" + (max.y() - min.y() + 1L)
-                + "\u00d7" + (max.z() - min.z() + 1L);
     }
 
     static Path storageDirectory(Path worldRoot) {

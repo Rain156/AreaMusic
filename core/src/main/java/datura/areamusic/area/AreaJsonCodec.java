@@ -53,12 +53,12 @@ public final class AreaJsonCodec {
     );
     private static final Set<String> V4_PARALLEL_ROOT_FIELDS = Set.of(
             "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "tracks",
-            "resumeOnReenter", "priority", "displayName", "color", "enabled"
+            "resumeOnReenter", "priority", "displayName", "color", "enabled", "startOffsetMs"
     );
     private static final Set<String> V4_PLAYLIST_LOOP_ROOT_FIELDS = Set.of(
             "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "playlist",
             "volume", "fadeInMs", "fadeOutMs", "resumeOnReenter", "priority",
-            "displayName", "color", "enabled"
+            "displayName", "color", "enabled", "startOffsetMs"
     );
     private static final Pattern COLOR_PATTERN = Pattern.compile("#[0-9a-fA-F]{6}");
     private static final Set<String> TRACK_FIELDS = Set.of(
@@ -101,6 +101,7 @@ public final class AreaJsonCodec {
         String displayName = root.has("displayName") ? requireString(root, "displayName") : "";
         int color = optionalColor(root, "color");
         boolean enabled = optionalBoolean(root, "enabled", true);
+        int startOffsetMs = optionalInt(root, "startOffsetMs", 0);
 
         try {
             PlaybackDefinition playback;
@@ -130,7 +131,7 @@ public final class AreaJsonCodec {
             }
             return new AreaDefinition(
                     areaId, dimension, pos1, pos2, playback, resumeOnReenter, priority,
-                    displayName, color, enabled
+                    displayName, color, enabled, startOffsetMs
             );
         } catch (IllegalArgumentException exception) {
             throw new JsonParseException("Invalid area '" + areaId + "': " + exception.getMessage(), exception);
@@ -177,6 +178,9 @@ public final class AreaJsonCodec {
             root.addProperty("color", String.format(Locale.ROOT, "#%06X", area.color()));
         }
         root.addProperty("enabled", area.enabled());
+        if (area.startOffsetMs() != 0) {
+            root.addProperty("startOffsetMs", area.startOffsetMs());
+        }
         return GSON.toJson(root) + System.lineSeparator();
     }
 

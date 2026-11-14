@@ -16,10 +16,24 @@ public final class AreaPlaybackTimeline {
     }
 
     public static AreaPlaybackTimeline fresh(List<AreaTrackDefinition> definitions, int sampleRate) {
+        return fresh(definitions, sampleRate, 0L);
+    }
+
+    /**
+     * @param startFrames where in its music every track begins. Tracks keep in step with each
+     *                    other; a track's delay still comes first.
+     */
+    public static AreaPlaybackTimeline fresh(
+            List<AreaTrackDefinition> definitions, int sampleRate, long startFrames
+    ) {
+        if (startFrames < 0) {
+            throw new IllegalArgumentException("startFrames must not be negative");
+        }
         List<AreaTrackDefinition> checkedDefinitions = validateDefinitions(definitions, sampleRate);
         List<TrackState> tracks = new ArrayList<>(checkedDefinitions.size());
         for (AreaTrackDefinition definition : checkedDefinitions) {
-            tracks.add(new TrackState(definition.delayFrames(sampleRate), 0, false, false, false));
+            tracks.add(new TrackState(
+                    definition.delayFrames(sampleRate), startFrames, false, false, false));
         }
         return new AreaPlaybackTimeline(tracks);
     }
@@ -110,6 +124,18 @@ public final class AreaPlaybackTimeline {
             throw new IllegalStateException("track " + trackIndex + " is not due yet");
         }
         track.started = true;
+    }
+
+    /**
+     * Starts a track by taking over a stream that is already playing, which is wherever it is
+     * and not where a fresh start would have been.
+     */
+    public void markStartedAt(int trackIndex, long positionFrames) {
+        if (positionFrames < 0) {
+            throw new IllegalArgumentException("positionFrames must not be negative");
+        }
+        markStarted(trackIndex);
+        trackAt(trackIndex).positionInLoopFrames = positionFrames;
     }
 
     public void recordFramesRead(int trackIndex, long frames) {
@@ -217,9 +243,6 @@ public final class AreaPlaybackTimeline {
         }
         if (track.started() && track.remainingDelayFrames() != 0) {
             throw invalidSnapshot(index, "a started track must have no remaining delay");
-        }
-        if (!track.started() && track.positionInLoopFrames() != 0) {
-            throw invalidSnapshot(index, "an unstarted track cannot have a loop position");
         }
         if (track.completed() && !track.started()) {
             throw invalidSnapshot(index, "a completed track must have started");

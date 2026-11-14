@@ -11,7 +11,8 @@ public record PlaybackState(
         boolean playing,
         String areaId,
         Optional<PlaybackDefinition> definition,
-        boolean resumeOnReenter
+        boolean resumeOnReenter,
+        int startOffsetMs
 ) {
     public PlaybackState {
         Objects.requireNonNull(areaId, "areaId");
@@ -20,6 +21,7 @@ public record PlaybackState(
             areaId = "";
             definition = Optional.empty();
             resumeOnReenter = false;
+            startOffsetMs = 0;
         } else {
             if (areaId.isBlank()) {
                 throw new IllegalArgumentException("Area ID must not be blank");
@@ -27,11 +29,16 @@ public record PlaybackState(
             if (definition.isEmpty()) {
                 throw new IllegalArgumentException("Playing state must contain a playback definition");
             }
+            if (startOffsetMs < 0 || startOffsetMs > AreaDefinition.MAX_START_OFFSET_MS) {
+                throw new IllegalArgumentException(
+                        "startOffsetMs must be between 0 and " + AreaDefinition.MAX_START_OFFSET_MS
+                );
+            }
         }
     }
 
     public static PlaybackState stopped() {
-        return new PlaybackState(false, "", Optional.empty(), false);
+        return new PlaybackState(false, "", Optional.empty(), false, 0);
     }
 
     public static PlaybackState playing(
@@ -47,9 +54,21 @@ public record PlaybackState(
             PlaybackDefinition definition,
             boolean resumeOnReenter
     ) {
+        return playing(areaId, definition, resumeOnReenter, 0);
+    }
+
+    /**
+     * @param startOffsetMs where in the music playback begins, unless it is being resumed
+     */
+    public static PlaybackState playing(
+            String areaId,
+            PlaybackDefinition definition,
+            boolean resumeOnReenter,
+            int startOffsetMs
+    ) {
         return new PlaybackState(
                 true, areaId, Optional.of(Objects.requireNonNull(definition, "definition")),
-                resumeOnReenter
+                resumeOnReenter, startOffsetMs
         );
     }
 
@@ -70,7 +89,12 @@ public record PlaybackState(
 
     public static PlaybackState fromArea(AreaDefinition area) {
         Objects.requireNonNull(area, "area");
-        return playing(area.id(), area.playback(), area.resumeOnReenter());
+        return playing(area.id(), area.playback(), area.resumeOnReenter(), area.startOffsetMs());
+    }
+
+    /** {@link #startOffsetMs} in audio frames. */
+    public long startOffsetFrames(int sampleRate) {
+        return (long) startOffsetMs * sampleRate / 1000L;
     }
 
     public Optional<PlaybackMode> mode() {

@@ -29,8 +29,16 @@ public final class PlaylistPlaybackTimeline {
     }
 
     public static PlaylistPlaybackTimeline fresh(int entryCount) {
+        return fresh(entryCount, 0L);
+    }
+
+    /** @param startFrames where in the first entry playback begins */
+    public static PlaylistPlaybackTimeline fresh(int entryCount, long startFrames) {
         validateEntryCount(entryCount);
-        return new PlaylistPlaybackTimeline(entryCount, 0, 0, new BitSet(entryCount));
+        if (startFrames < 0) {
+            throw new IllegalArgumentException("startFrames must not be negative");
+        }
+        return new PlaylistPlaybackTimeline(entryCount, 0, startFrames, new BitSet(entryCount));
     }
 
     public static PlaylistPlaybackTimeline restore(Snapshot snapshot, int expectedEntryCount) {

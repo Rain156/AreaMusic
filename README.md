@@ -54,6 +54,7 @@
 
 **“高级”里的内容**（默认折叠）
 
+- 开始位置：玩家走进区域时从音乐的哪一刻开始播，写成 `1:30` 或 `90`（秒），默认从头。播到结尾循环时仍回到开头；歌单只对第一首生效。超过曲长时按循环折算。
 - 淡入、淡出时长。
 - 优先级：区域重叠时数值高的播放；相同则体积小的优先。
 - 离开后再进来是否接着播。
@@ -88,22 +89,24 @@ Axiom 只有 Fabric 版，所以 Forge 和 NeoForge 上没有这个工具，内�
 
 ## 命令
 
-所有命令需要权限等级 2。`<区域>` 是区域 ID，可以 Tab 补全。
+所有命令需要权限等级 2。`<区域>` 是区域 ID，可以 Tab 补全。只输入 `/areamusic` 或 `/areamusic help` 会列出全部命令，点击其中一条即可填入聊天栏。
 
 ```text
-/areamusic create <区域> <角1> <角2> <音乐>
-/areamusic delete <区域>
+/areamusic help
 /areamusic list
 /areamusic info <区域>
+/areamusic create <区域> <角1> <角2> <音乐>
+/areamusic delete <区域>
 /areamusic tp <区域>
 /areamusic set <区域> name <名称>
 /areamusic set <区域> volume <0-100>
 /areamusic set <区域> mode <loop|playlist|layers>
+/areamusic set <区域> start <时间>
+/areamusic set <区域> fadein <毫秒>
+/areamusic set <区域> fadeout <毫秒>
 /areamusic set <区域> priority <整数>
 /areamusic set <区域> resume <true|false>
 /areamusic set <区域> enabled <true|false>
-/areamusic set <区域> fadein <毫秒>
-/areamusic set <区域> fadeout <毫秒>
 /areamusic set <区域> color <#RRGGBB|auto>
 /areamusic set <区域> pos1 <坐标>
 /areamusic set <区域> pos2 <坐标>
@@ -112,7 +115,11 @@ Axiom 只有 Fabric 版，所以 Forge 和 NeoForge 上没有这个工具，内�
 /areamusic reload
 ```
 
-`reload` 只在你手动改了区域文件之后才需要。
+- `list` 每行是区域的颜色、名称、大小和它播的音乐；点击名称直接看详情。
+- `info` 按“范围、播放、音乐、渐变、其他”分行列出全部设置，旁边的“[传送]”可以点。
+- 每次修改都会回报改了什么，例如“已更新 ■ 南门广场：音量 → 55%”。
+- `start` 的时间写成 `1:30`、`1:02:03` 或秒数 `90`、`12.5`，最长 6 小时；`0` 表示从头。
+- `reload` 只在你手动改了区域文件之后才需要。
 
 ## 服务器配置
 
@@ -147,13 +154,14 @@ Axiom 只有 Fabric 版，所以 Forge 和 NeoForge 上没有这个工具，内�
 
 ## 区域文件格式（schema v4）
 
-一般不需要手写。格式在 v3 的基础上增加了三个可选字段：
+一般不需要手写。格式在 v3 的基础上增加了几个可选字段：
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
 | `displayName` | 空 | 显示名，最多 64 个字符，可以是中文 |
 | `color` | 自动 | `#RRGGBB`，编辑器里盒子的颜色 |
 | `enabled` | `true` | `false` 时区域保留但不播放 |
+| `startOffsetMs` | `0` | 进入区域时从音乐的第几毫秒开始播，0 到 21600000 |
 
 其余字段（`dimension`、`pos1`、`pos2`、`playbackMode`、`tracks` 或 `playlist`、`resumeOnReenter`、`priority`）与 v3 相同。v1、v2、v3 文件仍可读取，重新保存时写成 v4。
 
@@ -162,6 +170,7 @@ Axiom 只有 Fabric 版，所以 Forge 和 NeoForge 上没有这个工具，内�
 - 区域只能是长方体。
 - 调整正在播放的区域的音量或曲目时，音乐会带淡入淡出地重新开始，而不是原地变化。
 - 面板里没有试听按钮；要听效果请走进区域。
+- 人站在区域里时改“开始位置”不会让正在播的音乐跳过去，离开再进来才生效。
 - 多人游戏下各玩家各自解码播放，彼此之间不保证帧级同步。
 
 ## 构建

@@ -777,6 +777,40 @@ class AreaJsonCodecTest {
     }
 
     @Test
+    void startOffsetIsWrittenOnlyWhenSetAndReadsBack() {
+        AreaDefinition fromStart = area(false);
+        AreaDefinition later = fromStart.withStartOffsetMs(90_500);
+
+        JsonObject plain = JsonParser.parseString(codec.write(fromStart)).getAsJsonObject();
+        JsonObject offset = JsonParser.parseString(codec.write(later)).getAsJsonObject();
+
+        assertFalse(plain.has("startOffsetMs"));
+        assertEquals(90_500, offset.get("startOffsetMs").getAsInt());
+        assertEquals(later, codec.read("boss", new StringReader(codec.write(later))));
+        assertEquals(0, codec.read("boss", new StringReader(codec.write(fromStart))).startOffsetMs());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"-1", "21600001", "\"1:30\"", "1.5"})
+    void rejectsStartOffsetOutsideItsRange(String value) {
+        String json = v3Json("\"parallel\"", ",\n  \"startOffsetMs\": " + value)
+                .replace("\"schemaVersion\": 3", "\"schemaVersion\": 4");
+
+        JsonParseException error = assertThrows(
+                JsonParseException.class, () -> codec.read("square", new StringReader(json)));
+        assertTrue(error.getMessage().contains("startOffsetMs"), error.getMessage());
+    }
+
+    @Test
+    void version3RejectsStartOffset() {
+        String json = v3Json("\"parallel\"", ",\n  \"startOffsetMs\": 1000");
+
+        JsonParseException error = assertThrows(
+                JsonParseException.class, () -> codec.read("square", new StringReader(json)));
+        assertTrue(error.getMessage().contains("Unknown field"));
+    }
+
+    @Test
     void readsVersion3WithEditorDefaults() {
         AreaDefinition area = codec.read("square", new StringReader(v3Json("\"parallel\"", "")));
 

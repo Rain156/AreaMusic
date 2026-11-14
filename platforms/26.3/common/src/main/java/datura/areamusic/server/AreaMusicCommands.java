@@ -14,11 +14,13 @@ import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.edit.AreaEdits;
+import datura.areamusic.edit.TrackTime;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 
 import java.util.Locale;
 import java.util.Objects;
@@ -69,7 +71,9 @@ public final class AreaMusicCommands {
                                         context, operations,
                                         area -> AreaEdits.removeMusic(area, musicId(context))))))))
                 .then(Commands.literal("reload")
-                        .executes(context -> operations.requestReload(context.getSource()))));
+                        .executes(context -> operations.requestReload(context.getSource())))
+                .then(Commands.literal("help").executes(AreaMusicCommands::showHelp))
+                .executes(AreaMusicCommands::showHelp));
     }
 
     private static RequiredArgumentBuilder<CommandSourceStack, String> setProperties(
@@ -79,11 +83,17 @@ public final class AreaMusicCommands {
         areaId.then(Commands.literal("name")
                 .then(Commands.argument("name", StringArgumentType.greedyString())
                         .executes(context -> edit(context, operations, area ->
-                                area.withDisplayName(StringArgumentType.getString(context, "name"))))));
+                                area.withDisplayName(checkedName(StringArgumentType.getString(context, "name")))))));
         areaId.then(Commands.literal("volume")
                 .then(Commands.argument("percent", IntegerArgumentType.integer(0, 100))
                         .executes(context -> edit(context, operations, area -> AreaEdits.withVolume(
                                 area, IntegerArgumentType.getInteger(context, "percent") / 100.0f)))));
+        areaId.then(Commands.literal("start")
+                .then(Commands.argument("time", StringArgumentType.greedyString())
+                        .suggests((context, builder) ->
+                                SharedSuggestionProvider.suggest(new String[]{"0:00", "0:30", "1:00"}, builder))
+                        .executes(context -> edit(context, operations, area ->
+                                area.withStartOffsetMs(parseStart(StringArgumentType.getString(context, "time")))))));
         areaId.then(Commands.literal("priority")
                 .then(Commands.argument("priority", IntegerArgumentType.integer())
                         .executes(context -> edit(context, operations, area ->
@@ -171,9 +181,46 @@ public final class AreaMusicCommands {
             return AreaDefinition.AUTO_COLOR;
         }
         if (!COLOR.matcher(trimmed).matches()) {
-            throw new IllegalArgumentException("Color must be auto or #RRGGBB");
+            throw new InvalidValue("color");
         }
         return Integer.parseInt(trimmed.substring(trimmed.length() - 6), 16);
+    }
+
+    private static String checkedName(String name) {
+        String trimmed = name.strip();
+        if (trimmed.codePointCount(0, trimmed.length()) > AreaDefinition.MAX_DISPLAY_NAME_LENGTH) {
+            throw new InvalidValue("name");
+        }
+        return trimmed;
+    }
+
+    /**
+     * A value the command cannot use, with a reason that has a translation: the suffix of a
+     * {@code commands.areamusic.invalid.*} key. Other failures only have an English message.
+     */
+    static final class InvalidValue extends IllegalArgumentException {
+        private final String reason;
+
+        InvalidValue(String reason) {
+            super("Invalid " + reason);
+            this.reason = reason;
+        }
+
+        String translationKey() {
+            return "commands.areamusic.invalid." + reason;
+        }
+    }
+
+    /** A position in the music such as {@code 1:30} or {@code 90}, in milliseconds. */
+    static int parseStart(String text) {
+        return TrackTime.parseMillis(text).orElseThrow(() -> new InvalidValue("start"));
+    }
+
+    private static int showHelp(CommandContext<CommandSourceStack> context) {
+        for (Component line : CommandReplies.help()) {
+            context.getSource().sendSuccess(() -> line, false);
+        }
+        return 1;
     }
 
     private static int createArea(

@@ -61,6 +61,12 @@ public final class AudioStreamPreparer implements AudioStreamPreparation {
         );
     }
 
+    private static final long REACHED_OFFSET = -1L;
+
+    /**
+     * Opens the file and skips to {@code frameOffset}. An offset past the end wraps around, as if
+     * the music had been repeating.
+     */
     public CompletableFuture<AudioInputStream> prepare(Path path, long frameOffset) {
         Objects.requireNonNull(path, "path");
         if (frameOffset < 0L) {
@@ -125,7 +131,20 @@ public final class AudioStreamPreparer implements AudioStreamPreparation {
             if (!preparation.registerOpenedStream(stream)) {
                 return;
             }
-            discardExactly(stream, preparation.offsetBytes, preparation.future);
+            long streamBytes = discard(stream, preparation.offsetBytes, preparation.future);
+            if (streamBytes != REACHED_OFFSET) {
+                // The offset lies past the end, as a start position longer than the track does.
+                // Music repeats, so carry on from where that many frames would have led.
+                preparation.closeOpenedStream();
+                stream = streamFactory.open(preparation.path);
+                if (!preparation.registerOpenedStream(stream)) {
+                    return;
+                }
+                long wrapped = preparation.offsetBytes % streamBytes;
+                if (discard(stream, wrapped, preparation.future) != REACHED_OFFSET) {
+                    throw new EOFException("Decoded stream became shorter while preparing its offset");
+                }
+            }
             if (tryClaimCompletion(preparation) && preparation.future.complete(stream)) {
                 preparation.transferOwnership(stream);
             }
@@ -154,7 +173,12 @@ public final class AudioStreamPreparer implements AudioStreamPreparation {
         }
     }
 
-    private static void discardExactly(
+    /**
+     * Reads and drops {@code offsetBytes} of decoded audio.
+     *
+     * @return {@link #REACHED_OFFSET}, or the length of the whole stream when it ended first
+     */
+    private static long discard(
             AudioInputStream stream,
             long offsetBytes,
             CompletableFuture<AudioInputStream> future
@@ -170,9 +194,11 @@ public final class AudioStreamPreparer implements AudioStreamPreparation {
             int requested = (int) Math.min(remaining, (long) discard.length);
             int read = stream.read(discard, 0, requested);
             if (read < 0) {
-                throw new EOFException(
-                        "Reached end of decoded stream before requested frame offset"
-                );
+                long streamBytes = offsetBytes - remaining;
+                if (streamBytes == 0L) {
+                    throw new EOFException("Decoded stream is empty");
+                }
+                return streamBytes;
             }
             if (read == 0) {
                 consecutiveZeroReads++;
@@ -191,6 +217,7 @@ public final class AudioStreamPreparer implements AudioStreamPreparation {
             remaining -= read;
             consecutiveZeroReads = 0;
         }
+        return REACHED_OFFSET;
     }
 
     private static void requireFrameAligned(long bytes, String operation) throws IOException {

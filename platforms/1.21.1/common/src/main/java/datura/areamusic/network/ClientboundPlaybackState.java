@@ -32,6 +32,7 @@ public record ClientboundPlaybackState(long revision, PlaybackState state) {
         }
         buffer.writeUtf(state.areaId(), MAX_AREA_ID_LENGTH);
         buffer.writeBoolean(state.resumeOnReenter());
+        buffer.writeVarInt(state.startOffsetMs());
         PlaybackDefinition definition = state.definition().orElseThrow(
                 () -> new IllegalStateException("Playing state has no playback definition")
         );
@@ -66,11 +67,12 @@ public record ClientboundPlaybackState(long revision, PlaybackState state) {
         }
         String areaId = buffer.readUtf(MAX_AREA_ID_LENGTH);
         boolean resumeOnReenter = buffer.readBoolean();
+        int startOffsetMs = buffer.readVarInt();
         PlaybackMode mode = PlaybackMode.fromNetworkId(buffer.readVarInt());
         PlaybackDefinition definition = mode == PlaybackMode.PARALLEL
                 ? decodeParallel(buffer)
                 : decodePlaylistLoop(buffer);
-        PlaybackState state = PlaybackState.playing(areaId, definition, resumeOnReenter);
+        PlaybackState state = PlaybackState.playing(areaId, definition, resumeOnReenter, startOffsetMs);
         return new ClientboundPlaybackState(revision, state);
     }
 

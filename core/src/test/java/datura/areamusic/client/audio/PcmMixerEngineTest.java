@@ -2,6 +2,7 @@ package datura.areamusic.client.audio;
 
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.music.MusicLibrary;
+import datura.areamusic.playback.ParallelPlayback;
 import datura.areamusic.playback.PlaybackState;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -221,6 +222,34 @@ class PcmMixerEngineTest {
 
             assertEquals(List.of("same.wav", "same.wav", "third.wav"), openOrder);
             assertEquals(4000, firstLeftSample(engine.renderFrames(1, 1.0f)));
+        }
+    }
+
+    @Test
+    void entersEveryTrackAtTheStartOffsetAndLoopsFromTheBeginning() throws Exception {
+        Path root = tempDir.resolve("music");
+        // One millisecond is 44 frames, so the offset lands on sample 1044 and 5044.
+        writeWav(root.resolve("loop.wav"), increasingFrames(1000, 46));
+        writeWav(root.resolve("layer.wav"), increasingFrames(5000, 60));
+
+        try (PcmMixerEngine engine = new PcmMixerEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root))) {
+            engine.apply(1L, PlaybackState.playing(
+                    "area",
+                    new ParallelPlayback(List.of(
+                            track("loop.wav", 0, true, 0, 0),
+                            track("layer.wav", 0, false, 0, 0))),
+                    false,
+                    1
+            ));
+
+            // Getting to the offset takes a moment; both tracks then come in on the same frame.
+            assertEquals(1044 + 5044, firstNonSilentSample(engine));
+            byte[] rendered = engine.renderFrames(2, 1.0f);
+
+            assertEquals(1045 + 5045, leftSample(rendered, 0));
+            // The loop reached its end and starts over from its first frame, not from the offset.
+            assertEquals(1000 + 5046, leftSample(rendered, 1));
         }
     }
 

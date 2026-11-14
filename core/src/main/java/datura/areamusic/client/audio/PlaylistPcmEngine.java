@@ -588,7 +588,9 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
                 ? PlaylistPlaybackTimeline.restore(
                         snapshot.timeline(), definition.playlist().size()
                 )
-                : PlaylistPlaybackTimeline.fresh(definition.playlist().size());
+                : PlaylistPlaybackTimeline.fresh(
+                        definition.playlist().size(),
+                        state.startOffsetFrames(AudioStreamFactory.SAMPLE_RATE));
         return new Session(revision, state, definition, timeline);
     }
 

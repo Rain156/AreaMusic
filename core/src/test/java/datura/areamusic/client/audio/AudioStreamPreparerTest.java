@@ -229,20 +229,39 @@ class AudioStreamPreparerTest {
     }
 
     @Test
-    void endOfStreamBeforeOffsetFailsAndClosesTheOpenedStream() throws Exception {
+    void emptyStreamFailsForAnyOffsetAndClosesTheOpenedStream() throws Exception {
         AtomicInteger closeCount = new AtomicInteger();
-        AudioInputStream source = new CountingAudioInputStream(
-                pcmFrames((short) 100), closeCount
-        );
+        AudioInputStream source = new CountingAudioInputStream(pcmFrames(), closeCount);
 
         try (AudioStreamPreparer preparer = new AudioStreamPreparer(fixedFactory(source), 1)) {
             ExecutionException failure = assertThrows(ExecutionException.class, () -> preparer
-                    .prepare(Path.of("short.wav"), 2)
+                    .prepare(Path.of("empty.wav"), 2)
                     .get(1, TimeUnit.SECONDS));
 
             assertInstanceOf(IOException.class, failure.getCause());
-            assertTrue(failure.getCause().getMessage().contains("offset"));
+            assertTrue(failure.getCause().getMessage().contains("empty"));
             assertClosedExactlyOnce(closeCount);
+        }
+    }
+
+    @Test
+    void offsetPastTheEndWrapsAroundAsIfTheMusicHadBeenRepeating() throws Exception {
+        Path wav = tempDir.resolve("wrap.wav");
+        writeWav(wav, new short[]{100, 200, 300});
+
+        // Frame 5 of a three-frame track is its third frame, one repeat later.
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(
+                new AudioStreamFactory(), 1
+        ); AudioInputStream prepared = preparer.prepare(wav, 5).get(1, TimeUnit.SECONDS)) {
+            byte[] frame = prepared.readNBytes(AudioStreamFactory.MIX_FORMAT.getFrameSize());
+            assertEquals(300, PcmMath.readLittleEndian(frame, 0));
+        }
+        // Exactly one length lands on the first frame again.
+        try (AudioStreamPreparer preparer = new AudioStreamPreparer(
+                new AudioStreamFactory(), 1
+        ); AudioInputStream prepared = preparer.prepare(wav, 6).get(1, TimeUnit.SECONDS)) {
+            byte[] frame = prepared.readNBytes(AudioStreamFactory.MIX_FORMAT.getFrameSize());
+            assertEquals(100, PcmMath.readLittleEndian(frame, 0));
         }
     }
 

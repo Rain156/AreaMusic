@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 public final class AreaMusicNetwork {
-    private static final String PROTOCOL_VERSION = "4";
+    private static final String PROTOCOL_VERSION = "5";
     private static final ClientPacketHandler NO_OP_CLIENT_HANDLER = new ClientPacketHandler() {
         @Override
         public void onPlayback(long revision, PlaybackState state) {

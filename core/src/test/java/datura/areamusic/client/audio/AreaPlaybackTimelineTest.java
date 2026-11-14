@@ -292,6 +292,38 @@ class AreaPlaybackTimelineTest {
     }
 
     @Test
+    void freshTimelineCanBeginPartWayIntoEveryTrackAndSurvivesASnapshot() {
+        List<AreaTrackDefinition> definitions = List.of(
+                new AreaTrackDefinition("now.ogg", 0, 1.0f, true, 0, 0),
+                new AreaTrackDefinition("later.ogg", 2, 1.0f, true, 0, 0));
+
+        AreaPlaybackTimeline timeline = AreaPlaybackTimeline.fresh(definitions, 100, 250L);
+
+        assertEquals(250L, timeline.positionInLoopFrames(0));
+        assertEquals(250L, timeline.positionInLoopFrames(1));
+        assertEquals(List.of(0), timeline.dueTrackIndices());
+        assertEquals(200L, timeline.remainingDelayFrames(1));
+
+        // A track waiting out its delay keeps its starting position through a snapshot.
+        AreaPlaybackTimeline restored = AreaPlaybackTimeline.restore(
+                timeline.snapshot(), definitions, 100);
+        assertEquals(250L, restored.positionInLoopFrames(1));
+        assertFalse(restored.started(1));
+
+        timeline.markStarted(0);
+        timeline.recordFramesRead(0, 10L);
+        assertEquals(260L, timeline.positionInLoopFrames(0));
+        timeline.markLoopRestarted(0);
+        assertEquals(0L, timeline.positionInLoopFrames(0));
+
+        AreaPlaybackTimeline takenOver = AreaPlaybackTimeline.fresh(definitions, 100, 250L);
+        takenOver.markStartedAt(0, 7L);
+        assertEquals(7L, takenOver.positionInLoopFrames(0));
+        assertThrows(IllegalArgumentException.class,
+                () -> AreaPlaybackTimeline.fresh(definitions, 100, -1L));
+    }
+
+    @Test
     void rejectsInvalidRestoredTrackStateAndInputs() {
         List<AreaTrackDefinition> definitions = List.of(track("delayed", 10));
 
@@ -315,8 +347,6 @@ class AreaPlaybackTimelineTest {
                 new AreaPlaybackTimeline.TrackSnapshot(0, -1, true, false, false));
         assertRestoreRejected(definitions,
                 new AreaPlaybackTimeline.TrackSnapshot(1, 0, true, false, false));
-        assertRestoreRejected(definitions,
-                new AreaPlaybackTimeline.TrackSnapshot(0, 1, false, false, false));
         assertRestoreRejected(definitions,
                 new AreaPlaybackTimeline.TrackSnapshot(0, 0, false, true, false));
         assertRestoreRejected(definitions,

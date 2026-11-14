@@ -80,24 +80,43 @@ class PlaybackStateTest {
     }
 
     @Test
+    void carriesTheAreasStartOffsetAndConvertsItToFrames() {
+        AreaDefinition area = AreaDefinition.create(
+                "area", "minecraft:overworld",
+                new datura.areamusic.area.AreaPosition(0, 0, 0),
+                new datura.areamusic.area.AreaPosition(1, 1, 1),
+                List.of(TRACK), false, 0
+        ).withStartOffsetMs(1_500);
+
+        PlaybackState state = PlaybackState.fromArea(area);
+
+        assertEquals(1_500, state.startOffsetMs());
+        assertEquals(66_150L, state.startOffsetFrames(44_100));
+        assertEquals(0, PlaybackState.playing("area", List.of(TRACK), false).startOffsetMs());
+        assertThrows(IllegalArgumentException.class, () -> PlaybackState.playing(
+                "area", new ParallelPlayback(List.of(TRACK)), false, -1));
+    }
+
+    @Test
     void rejectsPlayingStateWithoutDefinition() {
         assertThrows(IllegalArgumentException.class,
-                () -> new PlaybackState(true, "area", Optional.empty(), false));
+                () -> new PlaybackState(true, "area", Optional.empty(), false, 0));
     }
 
     @Test
     void rejectsNullDefinitionContainer() {
         assertThrows(NullPointerException.class,
-                () -> new PlaybackState(true, "area", null, false));
+                () -> new PlaybackState(true, "area", null, false, 0));
     }
 
     @Test
     void normalizesStoppedStateFields() {
         PlaybackState stopped = new PlaybackState(
-                false, "ignored", Optional.of(new ParallelPlayback(List.of(TRACK))), true
+                false, "ignored", Optional.of(new ParallelPlayback(List.of(TRACK))), true, 5_000
         );
 
         assertEquals(PlaybackState.stopped(), stopped);
+        assertEquals(0, stopped.startOffsetMs());
         assertEquals(Optional.empty(), stopped.definition());
         assertEquals(Optional.empty(), stopped.mode());
         assertEquals(List.of(), stopped.musicIds());

@@ -30,7 +30,10 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
     private final boolean ownsStreamPreparer;
     private final List<AreaSession> outgoingSessions = new ArrayList<>();
     private final List<AudioFailure> failures = new ArrayList<>();
+    private static final int NO_GROUP = 0;
+
     private final Map<ResumeKey, SessionSnapshot> resumeSnapshots = new HashMap<>();
+    private int lastGroup = NO_GROUP;
     private MusicLibrary musicLibrary;
     private PlaybackState currentState = PlaybackState.stopped();
     private AreaSession currentSession;
@@ -327,8 +330,7 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
             long position = previous.timeline.positionInLoopFrames(runtime.trackIndex);
             iterator.remove();
             if (!incoming.timeline.started(destinationIndex)) {
-                incoming.timeline.markStarted(destinationIndex);
-                incoming.timeline.recordFramesRead(destinationIndex, position);
+                incoming.timeline.markStartedAt(destinationIndex, position);
             }
             runtime.attach(incoming, destinationIndex, destination);
             runtime.lifecycleGain.fadeTo(
@@ -410,7 +412,9 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
                 revision,
                 libraryGeneration,
                 state,
-                AreaPlaybackTimeline.fresh(state.tracks(), AudioStreamFactory.SAMPLE_RATE),
+                AreaPlaybackTimeline.fresh(
+                        state.tracks(), AudioStreamFactory.SAMPLE_RATE,
+                        state.startOffsetFrames(AudioStreamFactory.SAMPLE_RATE)),
                 false
         );
     }
@@ -424,7 +428,8 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
             PlaybackState destinationState
     ) {
         AreaPlaybackTimeline fresh = AreaPlaybackTimeline.fresh(
-                destinationState.tracks(), AudioStreamFactory.SAMPLE_RATE
+                destinationState.tracks(), AudioStreamFactory.SAMPLE_RATE,
+                destinationState.startOffsetFrames(AudioStreamFactory.SAMPLE_RATE)
         );
         List<AreaPlaybackTimeline.TrackSnapshot> projected = new ArrayList<>(
                 fresh.snapshot().tracks()
@@ -507,23 +512,36 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
                 ).failure());
                 continue;
             }
-            try {
-                CompletableFuture<AudioInputStream> future = streamPreparer.prepare(
-                        path, session.timeline.positionInLoopFrames(trackIndex)
-                );
-                session.preparations.put(
-                        trackIndex,
-                        new PendingPreparation(trackIndex, definition, path, future)
-                );
-            } catch (RuntimeException exception) {
-                session.timeline.markFailed(trackIndex);
-                failures.add(new AudioPlaybackException(
-                        AudioFailure.Kind.DECODE,
-                        definition.musicId(),
-                        "Could not prepare " + definition.musicId(),
-                        exception
-                ).failure());
-            }
+            schedulePreparation(session, trackIndex, definition, path, NO_GROUP);
+        }
+    }
+
+    /**
+     * Opens a track at its position in the timeline, away from this thread: getting there means
+     * decoding everything before it.
+     *
+     * @param group tracks prepared in the same group start on the same frame, however long each
+     *              one takes to get ready; {@link #NO_GROUP} for none
+     */
+    private void schedulePreparation(
+            AreaSession session, int trackIndex, AreaTrackDefinition definition, Path path, int group
+    ) {
+        try {
+            CompletableFuture<AudioInputStream> future = streamPreparer.prepare(
+                    path, session.timeline.positionInLoopFrames(trackIndex)
+            );
+            session.preparations.put(
+                    trackIndex,
+                    new PendingPreparation(trackIndex, definition, path, future, group)
+            );
+        } catch (RuntimeException exception) {
+            session.timeline.markFailed(trackIndex);
+            failures.add(new AudioPlaybackException(
+                    AudioFailure.Kind.DECODE,
+                    definition.musicId(),
+                    "Could not prepare " + definition.musicId(),
+                    exception
+            ).failure());
         }
     }
 
@@ -535,7 +553,7 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
         while (iterator.hasNext()) {
             PendingPreparation pending = iterator.next();
             CompletableFuture<AudioInputStream> future = pending.future();
-            if (!future.isDone()) {
+            if (!future.isDone() || !groupReady(session, pending.group())) {
                 continue;
             }
             if (!currentSessionHasRoom()) {
@@ -573,6 +591,19 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
             );
             session.tracks.add(runtime);
         }
+    }
+
+    /** Whether every track that is to start together with this group has finished preparing. */
+    private static boolean groupReady(AreaSession session, int group) {
+        if (group == NO_GROUP) {
+            return true;
+        }
+        for (PendingPreparation other : session.preparations.values()) {
+            if (other.group() == group && !other.future().isDone()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void failPreparation(
@@ -644,6 +675,7 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
             return;
         }
 
+        int group = ++lastGroup;
         for (int trackIndex : session.timeline.dueTrackIndices()) {
             AreaTrackDefinition definition = session.state.tracks().get(trackIndex);
             Path path = musicLibrary.find(definition.musicId()).orElse(null);
@@ -654,6 +686,12 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
                         definition.musicId(),
                         "Local MusicID is missing: " + definition.musicId()
                 ).failure());
+                continue;
+            }
+            if (session.timeline.positionInLoopFrames(trackIndex) > 0L) {
+                // The area starts part-way into its music. Tracks due together stay together.
+                session.timeline.markStarted(trackIndex);
+                schedulePreparation(session, trackIndex, definition, path, group);
                 continue;
             }
 
@@ -1021,7 +1059,8 @@ public final class PcmMixerEngine implements PcmPlaybackEngine {
             int trackIndex,
             AreaTrackDefinition definition,
             Path path,
-            CompletableFuture<AudioInputStream> future
+            CompletableFuture<AudioInputStream> future,
+            int group
     ) {
     }
 

@@ -9,15 +9,18 @@ import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.edit.AreaEdits;
+import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.playback.PlaylistLoopPlayback;
 import net.minecraft.commands.CommandSource;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.function.UnaryOperator;
@@ -138,6 +141,9 @@ class AreaMusicCommandsTest {
         assertEquals("村庄 广场", change("set plaza name 村庄 广场").apply(base).displayName());
         assertEquals(0.4f, AreaEdits.volumeOf(change("set plaza volume 40").apply(base)));
         assertEquals(-3, change("set plaza priority -3").apply(base).priority());
+        assertEquals(90_000, change("set plaza start 1:30").apply(base).startOffsetMs());
+        assertEquals(12_500, change("set plaza start 12.5").apply(base).startOffsetMs());
+        assertEquals(0, change("set plaza start 0").apply(base.withStartOffsetMs(5_000)).startOffsetMs());
         assertTrue(change("set plaza resume true").apply(base).resumeOnReenter());
         assertFalse(change("set plaza enabled false").apply(base).enabled());
         assertEquals(150, AreaEdits.fadeInOf(change("set plaza fadein 150").apply(base)));
@@ -171,6 +177,10 @@ class AreaMusicCommandsTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> change("set plaza color purple").apply(base));
+        assertThrows(IllegalArgumentException.class,
+                () -> change("set plaza start soon").apply(base));
+        assertThrows(IllegalArgumentException.class,
+                () -> change("set plaza start 7:00:00").apply(base));
         assertThrows(IllegalArgumentException.class,
                 () -> change("set plaza name " + "x".repeat(65)).apply(base));
         assertThrows(IllegalArgumentException.class,
@@ -209,6 +219,102 @@ class AreaMusicCommandsTest {
                     .map(suggestion -> suggestion.getText())
                     .collect(Collectors.toSet());
             assertEquals(Set.of("plaza", "cave"), suggestions, prefix);
+        }
+    }
+
+    @Test
+    void helpIsShownForTheBareCommandAndListsEverySettingThatSetAccepts() throws Exception {
+        CommandDispatcher<CommandSourceStack> dispatcher = new CommandDispatcher<>();
+        AreaMusicCommands.register(dispatcher, new RecordingOperations());
+        Set<String> settings = dispatcher.getRoot().getChild("areamusic").getChild("set")
+                .getChild("areaId").getChildren().stream()
+                .map(CommandNode::getName)
+                .collect(Collectors.toSet());
+
+        String help = text(CommandReplies.help());
+
+        assertTrue(settings.contains("start") && settings.size() >= 12, settings.toString());
+        for (String setting : settings) {
+            assertTrue(help.contains(setting), setting + " is missing from the help");
+        }
+        for (String subcommand : List.of("list", "info", "create", "set", "music", "tp", "delete", "reload")) {
+            assertTrue(help.contains("/areamusic " + subcommand), subcommand);
+        }
+        assertEquals(1, dispatcher.execute("areamusic", commandSource()));
+        assertEquals(1, dispatcher.execute("areamusic help", commandSource()));
+    }
+
+    @Test
+    void anEditReplyNamesExactlyWhatChanged() {
+        AreaDefinition before = sampleArea();
+        AreaDefinition after = AreaEdits.withVolume(
+                before.withDisplayName("广场").withStartOffsetMs(90_000), 0.4f);
+
+        String reply = text(List.of(CommandReplies.updated(before, after)));
+
+        assertTrue(reply.contains("commands.areamusic.edit.success"), reply);
+        for (String property : List.of("name", "volume", "start")) {
+            assertTrue(reply.contains("commands.areamusic.property." + property + "}"), reply);
+        }
+        for (String untouched : List.of("priority", "mode", "music", "bounds", "color", "enabled")) {
+            assertFalse(reply.contains("commands.areamusic.property." + untouched + "}"), reply);
+        }
+        assertTrue(reply.contains("广场") && reply.contains("40%") && reply.contains("1:30"), reply);
+        assertTrue(text(List.of(CommandReplies.updated(before, before)))
+                .contains("commands.areamusic.edit.unchanged"));
+    }
+
+    @Test
+    void listAndInfoShowWhatMattersAboutAnArea() {
+        AreaDefinition plain = sampleArea();
+        AreaDefinition tuned = plain.withStartOffsetMs(5_500).withEnabled(false);
+        MusicLibrary nothing = MusicLibrary.empty(Path.of("music"));
+
+        String plainInfo = text(CommandReplies.info(plain, nothing));
+        String tunedInfo = text(CommandReplies.info(tuned, nothing));
+        String list = text(CommandReplies.list(List.of(plain, tuned), nothing));
+
+        assertFalse(plainInfo.contains("commands.areamusic.info.start"), plainInfo);
+        assertTrue(tunedInfo.contains("{commands.areamusic.info.start 0:05.5}"), tunedInfo);
+        assertTrue(tunedInfo.contains("commands.areamusic.list.disabled"), tunedInfo);
+        assertTrue(plainInfo.contains("first.ogg") && plainInfo.contains("0 64 0 \u2192 10 80 10"), plainInfo);
+        assertTrue(plainInfo.contains("11\u00d717\u00d711"), plainInfo);
+        assertTrue(plainInfo.contains("commands.areamusic.info.music_missing"), plainInfo);
+        assertTrue(list.contains("{commands.areamusic.list.header 2}"), list);
+        assertTrue(list.contains("commands.areamusic.list.missing_music"), list);
+        assertEquals(1, list.split("commands.areamusic.list.disabled", -1).length - 1, list);
+    }
+
+    /** Flattens replies to text: literals as they are, translations as {@code {key args}}. */
+    private static String text(List<Component> lines) {
+        StringBuilder out = new StringBuilder();
+        for (Component line : lines) {
+            append(out, line);
+            out.append('\n');
+        }
+        return out.toString();
+    }
+
+    private static void append(StringBuilder out, Component component) {
+        if (component.getContents() instanceof TranslatableContents translatable) {
+            out.append('{').append(translatable.getKey());
+            for (Object argument : translatable.getArgs()) {
+                out.append(' ');
+                if (argument instanceof Component nested) {
+                    append(out, nested);
+                } else {
+                    out.append(argument);
+                }
+            }
+            out.append('}');
+        } else {
+            component.getContents().visit(literal -> {
+                out.append(literal);
+                return java.util.Optional.empty();
+            });
+        }
+        for (Component sibling : component.getSiblings()) {
+            append(out, sibling);
         }
     }
 

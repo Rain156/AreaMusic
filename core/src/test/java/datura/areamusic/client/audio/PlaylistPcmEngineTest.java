@@ -3,6 +3,7 @@ package datura.areamusic.client.audio;
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.music.MusicLibrary;
 import datura.areamusic.playback.PlaybackState;
+import datura.areamusic.playback.PlaylistLoopPlayback;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -834,6 +835,57 @@ class PlaylistPcmEngineTest {
             assertEquals(new Request(duplicate, 0L), preparer.requests().get(0));
             assertEquals(new Request(duplicate, 0L), preparer.requests().get(1));
             assertTrue(engine.hasWork());
+        }
+    }
+
+    @Test
+    void entersAtTheStartOffsetAndLaterEntriesStartFromTheBeginning() throws Exception {
+        Path first = createMusicFile("first.ogg");
+        Path second = createMusicFile("second.ogg");
+        ManualPreparer preparer = new ManualPreparer();
+        PlaybackState state = PlaybackState.playing(
+                "area",
+                new PlaylistLoopPlayback(List.of("first.ogg", "second.ogg"), 1.0f, 0, 100),
+                false,
+                2_000
+        );
+        long startFrames = 2L * AudioStreamFactory.SAMPLE_RATE;
+        try (PlaylistPcmEngine engine = new PlaylistPcmEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root), preparer
+        )) {
+            engine.apply(123L, state);
+            assertEquals(new Request(first, startFrames), preparer.requests().get(0));
+            preparer.complete(0, streamWithSamples(10, 10, 20, 20));
+            engine.renderFrames(1, 1.0f);
+            assertEquals(new Request(second, 0L), preparer.requests().get(1));
+
+            // Walking out and back in without resume starts at the offset again.
+            engine.apply(123L, PlaybackState.stopped());
+            engine.apply(123L, state);
+            assertEquals(new Request(first, startFrames), preparer.requests().get(2));
+        }
+    }
+
+    @Test
+    void resumingTakesPrecedenceOverTheStartOffset() throws Exception {
+        Path song = createMusicFile("song.ogg");
+        ManualPreparer preparer = new ManualPreparer();
+        PlaybackState state = PlaybackState.playing(
+                "area", new PlaylistLoopPlayback(List.of("song.ogg"), 1.0f, 0, 0), true, 2_000
+        );
+        long startFrames = 2L * AudioStreamFactory.SAMPLE_RATE;
+        try (PlaylistPcmEngine engine = new PlaylistPcmEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root), preparer
+        )) {
+            engine.apply(123L, state);
+            preparer.complete(0, constantStream(10, 8));
+            engine.renderFrames(3, 1.0f);
+            engine.apply(123L, PlaybackState.stopped());
+            engine.renderFrames(1, 1.0f);
+            engine.apply(123L, state);
+
+            Request resumed = preparer.requests().get(preparer.requests().size() - 1);
+            assertEquals(new Request(song, startFrames + 3), resumed);
         }
     }
 

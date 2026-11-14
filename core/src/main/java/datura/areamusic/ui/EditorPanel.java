@@ -6,6 +6,7 @@ import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.edit.AreaEdits;
 import datura.areamusic.edit.AreaEdits.SimpleMode;
+import datura.areamusic.edit.TrackTime;
 import datura.areamusic.editor.EditorModel;
 import datura.areamusic.net.ClientSync;
 
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.OptionalInt;
 
 /**
  * The whole editor panel, built from {@link PanelUi} widgets every frame. Everyday controls come
@@ -319,6 +321,19 @@ public final class EditorPanel {
     }
 
     private void buildAdvanced(PanelUi ui, AreaDefinition area, SimpleMode shown) {
+        String start = ui.textInput(
+                "start", t("areamusic.editor.start"), TrackTime.format(area.startOffsetMs()), 12);
+        if (start != null) {
+            OptionalInt millis = TrackTime.parseMillis(start);
+            if (millis.isPresent()) {
+                model.apply(current -> current.withStartOffsetMs(millis.getAsInt()));
+            } else {
+                notice = t("areamusic.editor.start_invalid", start);
+                noticeIsError = true;
+                noticeSince = System.nanoTime();
+            }
+        }
+        ui.hint(t("areamusic.editor.start_hint"));
         Float fadeIn = ui.slider(
                 "fade_in", t("areamusic.editor.fade_in"), AreaEdits.fadeInOf(area) / 1000.0f, 0.0f, 10.0f, "%.1f s");
         if (fadeIn != null) {

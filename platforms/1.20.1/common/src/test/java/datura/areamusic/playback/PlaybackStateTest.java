@@ -36,6 +36,32 @@ class PlaybackStateTest {
     }
 
     @Test
+    void startOffsetTravelsWithThePlaybackStateAndIsValidatedOnArrival() {
+        PlaybackState state = PlaybackState.playing(
+                "square",
+                new datura.areamusic.playback.ParallelPlayback(List.of(
+                        new AreaTrackDefinition("track.ogg", 0, 1.0f, true, 2000, 2000))),
+                true,
+                90_500
+        );
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        ClientboundPlaybackState.encode(new ClientboundPlaybackState(7L, state), buffer);
+
+        assertEquals(state, ClientboundPlaybackState.decode(buffer).state());
+
+        FriendlyByteBuf tooLate = new FriendlyByteBuf(Unpooled.buffer());
+        tooLate.writeVarLong(1L);
+        tooLate.writeBoolean(true);
+        tooLate.writeUtf("area");
+        tooLate.writeBoolean(false);
+        tooLate.writeVarInt(21_600_001);
+        tooLate.writeVarInt(PlaybackMode.PARALLEL.networkId());
+        tooLate.writeVarInt(1);
+        writeNetworkTrack(tooLate, "track.ogg", 0, 1.0f, 0, 0);
+        assertThrows(IllegalArgumentException.class, () -> ClientboundPlaybackState.decode(tooLate));
+    }
+
+    @Test
     void parallelPayloadWritesModeBeforeTrackCount() {
         PlaybackState state = PlaybackState.playing("square", List.of(
                 new AreaTrackDefinition("track.ogg", 0, 1.0f, true, 2000, 2000)
@@ -48,6 +74,7 @@ class PlaybackStateTest {
         assertTrue(buffer.readBoolean());
         assertEquals("square", buffer.readUtf(64));
         assertFalse(buffer.readBoolean());
+        assertEquals(0, buffer.readVarInt());
         assertEquals(PlaybackMode.PARALLEL.networkId(), buffer.readVarInt());
         assertEquals(1, buffer.readVarInt());
     }
@@ -84,6 +111,7 @@ class PlaybackStateTest {
         assertTrue(buffer.readBoolean());
         assertEquals("playlist", buffer.readUtf(64));
         assertTrue(buffer.readBoolean());
+        assertEquals(0, buffer.readVarInt());
         assertEquals(PlaybackMode.PLAYLIST_LOOP.networkId(), buffer.readVarInt());
         assertEquals(2, buffer.readVarInt());
         assertEquals("first.ogg", buffer.readUtf(1024));
@@ -274,6 +302,7 @@ class PlaybackStateTest {
         buffer.writeBoolean(true);
         buffer.writeUtf("area");
         buffer.writeBoolean(false);
+        buffer.writeVarInt(0);
         buffer.writeVarInt(modeId);
         buffer.writeVarInt(definitionCount);
         return buffer;

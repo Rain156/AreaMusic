@@ -19,9 +19,12 @@ public record AreaDefinition(
         int priority,
         String displayName,
         int color,
-        boolean enabled
+        boolean enabled,
+        int startOffsetMs
 ) {
     public static final int MAX_TRACKS = 16;
+    /** Six hours: far longer than any track, and small enough that frame counts stay exact. */
+    public static final int MAX_START_OFFSET_MS = 6 * 60 * 60 * 1000;
     public static final int AUTO_COLOR = -1;
     public static final int MAX_DISPLAY_NAME_LENGTH = 64;
     public static final Pattern ID_PATTERN = Pattern.compile("[a-z0-9][a-z0-9_-]{0,63}");
@@ -50,6 +53,26 @@ public record AreaDefinition(
         if (color != AUTO_COLOR && (color < 0 || color > 0xFFFFFF)) {
             throw new IllegalArgumentException("color must be AUTO_COLOR or an RGB value");
         }
+        if (startOffsetMs < 0 || startOffsetMs > MAX_START_OFFSET_MS) {
+            throw new IllegalArgumentException(
+                    "startOffsetMs must be between 0 and " + MAX_START_OFFSET_MS
+            );
+        }
+    }
+
+    public AreaDefinition(
+            String id,
+            String dimension,
+            AreaPosition pos1,
+            AreaPosition pos2,
+            PlaybackDefinition playback,
+            boolean resumeOnReenter,
+            int priority,
+            String displayName,
+            int color,
+            boolean enabled
+    ) {
+        this(id, dimension, pos1, pos2, playback, resumeOnReenter, priority, displayName, color, enabled, 0);
     }
 
     public AreaDefinition(
@@ -61,7 +84,7 @@ public record AreaDefinition(
             boolean resumeOnReenter,
             int priority
     ) {
-        this(id, dimension, pos1, pos2, playback, resumeOnReenter, priority, "", AUTO_COLOR, true);
+        this(id, dimension, pos1, pos2, playback, resumeOnReenter, priority, "", AUTO_COLOR, true, 0);
     }
 
     public String label() {
@@ -75,49 +98,61 @@ public record AreaDefinition(
     public AreaDefinition withBounds(AreaPosition newPos1, AreaPosition newPos2) {
         return new AreaDefinition(
                 id, dimension, newPos1, newPos2, playback, resumeOnReenter, priority,
-                displayName, color, enabled
+                displayName, color, enabled, startOffsetMs
         );
     }
 
     public AreaDefinition withPlayback(PlaybackDefinition newPlayback) {
         return new AreaDefinition(
                 id, dimension, pos1, pos2, newPlayback, resumeOnReenter, priority,
-                displayName, color, enabled
+                displayName, color, enabled, startOffsetMs
         );
     }
 
     public AreaDefinition withDisplayName(String newDisplayName) {
         return new AreaDefinition(
                 id, dimension, pos1, pos2, playback, resumeOnReenter, priority,
-                newDisplayName, color, enabled
+                newDisplayName, color, enabled, startOffsetMs
         );
     }
 
     public AreaDefinition withColor(int newColor) {
         return new AreaDefinition(
                 id, dimension, pos1, pos2, playback, resumeOnReenter, priority,
-                displayName, newColor, enabled
+                displayName, newColor, enabled, startOffsetMs
         );
     }
 
     public AreaDefinition withEnabled(boolean newEnabled) {
         return new AreaDefinition(
                 id, dimension, pos1, pos2, playback, resumeOnReenter, priority,
-                displayName, color, newEnabled
+                displayName, color, newEnabled, startOffsetMs
         );
     }
 
     public AreaDefinition withPriority(int newPriority) {
         return new AreaDefinition(
                 id, dimension, pos1, pos2, playback, resumeOnReenter, newPriority,
-                displayName, color, enabled
+                displayName, color, enabled, startOffsetMs
+        );
+    }
+
+    /**
+     * Where in the music playback begins when a player walks in, in milliseconds. After that the
+     * music loops from its beginning as usual. With {@link #resumeOnReenter} a player coming back
+     * continues where they left off instead.
+     */
+    public AreaDefinition withStartOffsetMs(int newStartOffsetMs) {
+        return new AreaDefinition(
+                id, dimension, pos1, pos2, playback, resumeOnReenter, priority,
+                displayName, color, enabled, newStartOffsetMs
         );
     }
 
     public AreaDefinition withResumeOnReenter(boolean newResumeOnReenter) {
         return new AreaDefinition(
                 id, dimension, pos1, pos2, playback, newResumeOnReenter, priority,
-                displayName, color, enabled
+                displayName, color, enabled, startOffsetMs
         );
     }
 
