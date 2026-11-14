@@ -153,6 +153,7 @@ public final class AreaMusicEditor implements PanelHost {
         }
         state = State.PANEL;
         hideHud(true);
+        controls.adoptHeldKeys();
         minecraft.gui.setScreen(new AreaMusicEditorScreen(this, panel));
     }
 

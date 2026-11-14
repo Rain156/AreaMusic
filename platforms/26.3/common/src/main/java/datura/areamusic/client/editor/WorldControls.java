@@ -60,6 +60,18 @@ final class WorldControls {
         }
     }
 
+    /**
+     * Picks up the movement keys that are held right now. Call just before the panel opens, while
+     * the game still knows them: opening a screen makes it forget, and the player would stop dead
+     * every time the panel came back after picking corners.
+     */
+    void adoptHeldKeys() {
+        KeyMapping[] keys = movementKeys();
+        for (int index = 0; index < keys.length; index++) {
+            held[index] = keys[index].isDown();
+        }
+    }
+
     boolean looking() {
         return lookButton != NOT_LOOKING;
     }

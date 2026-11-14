@@ -102,7 +102,10 @@ final class AreaMusicEditorScreen extends Screen {
             // Also when it lands off the panel: that is what closes an open field or drop-down.
             input.mousePressed(x, y);
         }
-        if (!onPanel && (left || button == GLFW.GLFW_MOUSE_BUTTON_RIGHT)) {
+        if (!onPanel && (left
+                || button == GLFW.GLFW_MOUSE_BUTTON_RIGHT
+                || button == GLFW.GLFW_MOUSE_BUTTON_MIDDLE)) {
+            // Any of the three buttons, so it works whichever one a 3D tool has taught the hand.
             controls.startLooking(button);
         }
         return true;
