@@ -1,5 +1,6 @@
 package datura.areamusic.editor;
 
+import datura.areamusic.area.AreaBox;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
 
@@ -36,7 +37,9 @@ public final class EditorOverlay {
         /** A corner of the selected area moved. */
         RESIZED,
         /** The selected area is in another dimension; nothing changed. */
-        WRONG_DIMENSION
+        WRONG_DIMENSION,
+        /** The second corner of a further box was set; the box now belongs to its area. */
+        BOX_ADDED
     }
 
     /** Everything to draw in {@code dimension}: visible areas, then the area being drawn. */
@@ -46,9 +49,14 @@ public final class EditorOverlay {
             if (!area.dimension().equals(dimension) || model.hidden(area.id())) {
                 continue;
             }
-            boxes.add(box(
-                    area.pos1(), area.pos2(), area.effectiveColor(),
-                    area.id().equals(model.selectedId()), false, area.label()));
+            // Every box of an area in its color; the name goes on the first only.
+            boolean first = true;
+            for (AreaBox part : area.boxes()) {
+                boxes.add(box(
+                        part.pos1(), part.pos2(), area.effectiveColor(),
+                        area.id().equals(model.selectedId()), false, first ? area.label() : ""));
+                first = false;
+            }
         }
         EditorModel.Draft draft = model.draft();
         if (draft != null && draft.dimension().equals(dimension)) {
@@ -78,10 +86,16 @@ public final class EditorOverlay {
             if (!area.dimension().equals(dimension) || model.hidden(area.id())) {
                 continue;
             }
-            Box box = box(area.pos1(), area.pos2(), 0, false, false, "");
-            double distance = box.contains(originX, originY, originZ)
-                    ? 0.0
-                    : entryDistance(box, originX, originY, originZ, directionX, directionY, directionZ);
+            double distance = -1.0;
+            for (AreaBox part : area.boxes()) {
+                Box box = box(part.pos1(), part.pos2(), 0, false, false, "");
+                double toPart = box.contains(originX, originY, originZ)
+                        ? 0.0
+                        : entryDistance(box, originX, originY, originZ, directionX, directionY, directionZ);
+                if (toPart >= 0.0 && (distance < 0.0 || toPart < distance)) {
+                    distance = toPart;
+                }
+            }
             if (distance < 0.0 || distance > maxDistance) {
                 continue;
             }
@@ -106,7 +120,8 @@ public final class EditorOverlay {
     ) {
         if (model.draft() == null) {
             AreaDefinition selected = model.selected().orElse(null);
-            if (selected != null) {
+            // Background music for a whole dimension has no corners; a click starts a new area.
+            if (selected != null && !selected.wholeDimension()) {
                 if (!selected.dimension().equals(dimension)) {
                     return CornerResult.WRONG_DIMENSION;
                 }
@@ -118,9 +133,14 @@ public final class EditorOverlay {
             model.startDraft(dimension);
         }
         if (!model.draft().dimension().equals(dimension)) {
+            if (model.draft().extraFor() != null) {
+                return CornerResult.WRONG_DIMENSION;
+            }
             model.startDraft(dimension);
         }
-        model.draftCorner(corner, block);
+        if (model.draftCorner(corner, block)) {
+            return CornerResult.BOX_ADDED;
+        }
         return model.draft().complete() ? CornerResult.DRAFT_COMPLETE : CornerResult.DRAFT_STARTED;
     }
 

@@ -58,7 +58,26 @@ class PlaybackStateTest {
         tooLate.writeVarInt(PlaybackMode.PARALLEL.networkId());
         tooLate.writeVarInt(1);
         writeNetworkTrack(tooLate, "track.ogg", 0, 1.0f, 0, 0);
+        tooLate.writeUtf("");
         assertThrows(IllegalArgumentException.class, () -> ClientboundPlaybackState.decode(tooLate));
+    }
+
+    @Test
+    void titleShuffleAndGapTravelWithThePlaybackState() {
+        PlaybackState state = PlaybackState.playing(
+                "square",
+                new PlaylistLoopPlayback(List.of("a.ogg", "b.ogg"), 0.5f, 100, 200, true, 4_000),
+                false,
+                0
+        ).withTitle("南门广场");
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        ClientboundPlaybackState.encode(new ClientboundPlaybackState(7L, state), buffer);
+
+        PlaybackState decoded = ClientboundPlaybackState.decode(buffer).state();
+
+        assertEquals(state, decoded);
+        assertEquals("南门广场", decoded.title());
+        assertEquals(0, buffer.readableBytes());
     }
 
     @Test
@@ -119,6 +138,9 @@ class PlaybackStateTest {
         assertEquals(0.75f, buffer.readFloat());
         assertEquals(250, buffer.readVarInt());
         assertEquals(900, buffer.readVarInt());
+        assertFalse(buffer.readBoolean(), "not shuffled");
+        assertEquals(0, buffer.readVarInt(), "no gap");
+        assertEquals("", buffer.readUtf(256), "no title");
         assertEquals(0, buffer.readableBytes());
     }
 
@@ -347,5 +369,7 @@ class PlaybackStateTest {
         buffer.writeFloat(volume);
         buffer.writeVarInt(fadeInMs);
         buffer.writeVarInt(fadeOutMs);
+        buffer.writeBoolean(false);
+        buffer.writeVarInt(0);
     }
 }

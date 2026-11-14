@@ -32,6 +32,68 @@ class PlaylistPlaybackTimelineTest {
     }
 
     @Test
+    void shuffledRoundsPlayEveryEntryOnceAndNeverTheSameTrackTwiceInARow() {
+        PlaylistPlaybackTimeline timeline = PlaylistPlaybackTimeline.fresh(5, 0L, true, 42L);
+        java.util.List<Integer> played = new java.util.ArrayList<>();
+        played.add(timeline.currentIndex());
+        for (int step = 0; step < 49; step++) {
+            // What is announced as next is what plays next: the engine prepares it in advance.
+            int announced = timeline.nextPlayableIndex().orElseThrow();
+            assertEquals(announced, timeline.advanceToNextPlayable().orElseThrow());
+            assertEquals(0L, timeline.framePosition());
+            played.add(timeline.currentIndex());
+        }
+
+        boolean everInWrittenOrder = true;
+        for (int round = 0; round < 10; round++) {
+            java.util.List<Integer> entries = played.subList(round * 5, round * 5 + 5);
+            assertEquals(java.util.Set.of(0, 1, 2, 3, 4), new java.util.HashSet<>(entries), "round " + round);
+            everInWrittenOrder &= entries.equals(java.util.List.of(0, 1, 2, 3, 4));
+        }
+        assertFalse(everInWrittenOrder, "ten rounds in written order is not a shuffle");
+        for (int index = 1; index < played.size(); index++) {
+            assertFalse(played.get(index).equals(played.get(index - 1)), "repeat at " + index);
+        }
+
+        // The same seed draws the same orders, a different one does not.
+        PlaylistPlaybackTimeline again = PlaylistPlaybackTimeline.fresh(5, 0L, true, 42L);
+        java.util.List<Integer> replay = new java.util.ArrayList<>();
+        replay.add(again.currentIndex());
+        for (int step = 0; step < 49; step++) {
+            replay.add(again.advanceToNextPlayable().orElseThrow());
+        }
+        assertEquals(played, replay);
+    }
+
+    @Test
+    void aShuffledRoundSurvivesASnapshotAndSkipsFailedEntries() {
+        PlaylistPlaybackTimeline timeline = PlaylistPlaybackTimeline.fresh(4, 100L, true, 7L);
+        timeline.advanceToNextPlayable();
+        timeline.recordFramesRead(30L);
+        int current = timeline.currentIndex();
+        int upcoming = timeline.nextPlayableIndex().orElseThrow();
+
+        PlaylistPlaybackTimeline restored = PlaylistPlaybackTimeline.restore(
+                timeline.snapshot(), 4, true, 99L);
+
+        assertEquals(current, restored.currentIndex());
+        assertEquals(30L, restored.framePosition());
+        assertEquals(upcoming, restored.nextPlayableIndex().orElseThrow(), "same round as before");
+
+        restored.markFailed(upcoming);
+        assertFalse(restored.nextPlayableIndex().orElseThrow() == upcoming);
+        assertThrows(IllegalArgumentException.class, () -> PlaylistPlaybackTimeline.restore(
+                new PlaylistPlaybackTimeline.Snapshot(3, 0, 0L, java.util.List.of(), java.util.List.of(0, 0, 2)), 3));
+    }
+
+    @Test
+    void aShuffledSingleEntryJustRepeats() {
+        PlaylistPlaybackTimeline timeline = PlaylistPlaybackTimeline.fresh(1, 0L, true, 1L);
+        assertEquals(0, timeline.currentIndex());
+        assertEquals(0, timeline.advanceToNextPlayable().orElseThrow());
+    }
+
+    @Test
     void skipsFailedEntriesInCyclicOrder() {
         PlaylistPlaybackTimeline timeline = PlaylistPlaybackTimeline.fresh(4);
         timeline.markFailed(1);

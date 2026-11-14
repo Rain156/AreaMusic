@@ -23,6 +23,9 @@ public record ClientboundPlaybackState(long revision, PlaybackState state) {
         Objects.requireNonNull(state, "state");
     }
 
+    /** An area name is at most 64 characters; this leaves room for any of them to be wide. */
+    private static final int MAX_TITLE_LENGTH = 256;
+
     public static void encode(ClientboundPlaybackState message, FriendlyByteBuf buffer) {
         buffer.writeVarLong(message.revision);
         PlaybackState state = message.state;
@@ -55,9 +58,12 @@ public record ClientboundPlaybackState(long revision, PlaybackState state) {
             buffer.writeFloat(playlistLoop.volume());
             buffer.writeVarInt(playlistLoop.fadeInMs());
             buffer.writeVarInt(playlistLoop.fadeOutMs());
+            buffer.writeBoolean(playlistLoop.shuffle());
+            buffer.writeVarInt(playlistLoop.gapMs());
         } else {
             throw new AssertionError("Unknown playback definition: " + definition.getClass());
         }
+        buffer.writeUtf(state.title(), MAX_TITLE_LENGTH);
     }
 
     public static ClientboundPlaybackState decode(FriendlyByteBuf buffer) {
@@ -72,7 +78,9 @@ public record ClientboundPlaybackState(long revision, PlaybackState state) {
         PlaybackDefinition definition = mode == PlaybackMode.PARALLEL
                 ? decodeParallel(buffer)
                 : decodePlaylistLoop(buffer);
-        PlaybackState state = PlaybackState.playing(areaId, definition, resumeOnReenter, startOffsetMs);
+        String title = buffer.readUtf(MAX_TITLE_LENGTH);
+        PlaybackState state = PlaybackState.playing(areaId, definition, resumeOnReenter, startOffsetMs)
+                .withTitle(title);
         return new ClientboundPlaybackState(revision, state);
     }
 
@@ -107,7 +115,9 @@ public record ClientboundPlaybackState(long revision, PlaybackState state) {
         float volume = buffer.readFloat();
         int fadeInMs = buffer.readVarInt();
         int fadeOutMs = buffer.readVarInt();
-        return new PlaylistLoopPlayback(playlist, volume, fadeInMs, fadeOutMs);
+        boolean shuffle = buffer.readBoolean();
+        int gapMs = buffer.readVarInt();
+        return new PlaylistLoopPlayback(playlist, volume, fadeInMs, fadeOutMs, shuffle, gapMs);
     }
 
 }

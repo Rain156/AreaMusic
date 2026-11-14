@@ -18,7 +18,7 @@ class AreaMusicNetworkTest {
         Field protocolVersion = AreaMusicNetwork.class.getDeclaredField("PROTOCOL_VERSION");
         protocolVersion.setAccessible(true);
 
-        assertEquals("5", protocolVersion.get(null));
+        assertEquals("6", protocolVersion.get(null));
     }
 
     @Test

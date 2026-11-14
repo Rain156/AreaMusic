@@ -1,5 +1,6 @@
 package datura.areamusic.edit;
 
+import datura.areamusic.area.AreaBox;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaTrackDefinition;
@@ -90,8 +91,7 @@ public final class AreaEdits {
     /** Sets the playlist volume, or the volume of every track. */
     public static AreaDefinition withVolume(AreaDefinition area, float volume) {
         if (area.playback() instanceof PlaylistLoopPlayback playlist) {
-            return area.withPlayback(new PlaylistLoopPlayback(
-                    playlist.playlist(), volume, playlist.fadeInMs(), playlist.fadeOutMs()));
+            return area.withPlayback(playlist.withVolume(volume));
         }
         return mapTracks(area, track -> new AreaTrackDefinition(
                 track.musicId(), track.delaySeconds(), volume, track.loop(),
@@ -100,8 +100,7 @@ public final class AreaEdits {
 
     public static AreaDefinition withFadeIn(AreaDefinition area, int fadeInMs) {
         if (area.playback() instanceof PlaylistLoopPlayback playlist) {
-            return area.withPlayback(new PlaylistLoopPlayback(
-                    playlist.playlist(), playlist.volume(), fadeInMs, playlist.fadeOutMs()));
+            return area.withPlayback(playlist.withFades(fadeInMs, playlist.fadeOutMs()));
         }
         return mapTracks(area, track -> new AreaTrackDefinition(
                 track.musicId(), track.delaySeconds(), track.volume(), track.loop(),
@@ -110,8 +109,7 @@ public final class AreaEdits {
 
     public static AreaDefinition withFadeOut(AreaDefinition area, int fadeOutMs) {
         if (area.playback() instanceof PlaylistLoopPlayback playlist) {
-            return area.withPlayback(new PlaylistLoopPlayback(
-                    playlist.playlist(), playlist.volume(), playlist.fadeInMs(), fadeOutMs));
+            return area.withPlayback(playlist.withFades(playlist.fadeInMs(), fadeOutMs));
         }
         return mapTracks(area, track -> new AreaTrackDefinition(
                 track.musicId(), track.delaySeconds(), track.volume(), track.loop(),
@@ -176,7 +174,65 @@ public final class AreaEdits {
             throw new IllegalArgumentException(
                     "A playlist holds at most " + PlaylistLoopPlayback.MAX_ENTRIES + " tracks");
         }
-        return area.withPlayback(new PlaylistLoopPlayback(musicIds, volume, fadeIn, fadeOut));
+        return area.withPlayback(area.playback() instanceof PlaylistLoopPlayback playlist
+                ? playlist.withPlaylist(musicIds)
+                : new PlaylistLoopPlayback(musicIds, volume, fadeIn, fadeOut));
+    }
+
+    /** Whether a playlist plays in a new random order each round. False for the other modes. */
+    public static boolean shuffleOf(AreaDefinition area) {
+        return area.playback() instanceof PlaylistLoopPlayback playlist && playlist.shuffle();
+    }
+
+    /** The quiet between two playlist tracks in milliseconds. Zero for the other modes. */
+    public static int gapOf(AreaDefinition area) {
+        return area.playback() instanceof PlaylistLoopPlayback playlist ? playlist.gapMs() : 0;
+    }
+
+    public static AreaDefinition withShuffle(AreaDefinition area, boolean shuffle) {
+        return area.withPlayback(requirePlaylist(area).withShuffle(shuffle));
+    }
+
+    public static AreaDefinition withGap(AreaDefinition area, int gapMs) {
+        return area.withPlayback(requirePlaylist(area).withGapMs(gapMs));
+    }
+
+    private static PlaylistLoopPlayback requirePlaylist(AreaDefinition area) {
+        if (area.playback() instanceof PlaylistLoopPlayback playlist) {
+            return playlist;
+        }
+        throw new IllegalArgumentException("Only a playlist can be shuffled or have gaps");
+    }
+
+    /** Adds a box to the area, for a room that is not one cuboid. */
+    public static AreaDefinition addBox(AreaDefinition area, AreaPosition pos1, AreaPosition pos2) {
+        if (area.wholeDimension()) {
+            throw new IllegalArgumentException("This area covers its whole dimension already");
+        }
+        if (area.extraBoxes().size() >= AreaDefinition.MAX_EXTRA_BOXES) {
+            throw new IllegalArgumentException(
+                    "An area has at most " + (AreaDefinition.MAX_EXTRA_BOXES + 1) + " boxes");
+        }
+        List<AreaBox> boxes = new ArrayList<>(area.extraBoxes());
+        boxes.add(new AreaBox(pos1, pos2));
+        return area.withExtraBoxes(boxes);
+    }
+
+    /**
+     * Removes a box by its number as shown to the user: 1 is the main box, which goes only when
+     * another can take its place.
+     */
+    public static AreaDefinition removeBox(AreaDefinition area, int number) {
+        List<AreaBox> boxes = new ArrayList<>(area.boxes());
+        if (number < 1 || number > boxes.size()) {
+            throw new IllegalArgumentException("No box number " + number);
+        }
+        if (boxes.size() == 1) {
+            throw new IllegalArgumentException("An area needs at least one box; delete the area instead");
+        }
+        boxes.remove(number - 1);
+        AreaBox main = boxes.remove(0);
+        return area.withBounds(main.pos1(), main.pos2()).withExtraBoxes(boxes);
     }
 
     /** Removes the last occurrence of the track. An area always keeps at least one track. */
@@ -194,8 +250,7 @@ public final class AreaEdits {
         if (area.playback() instanceof PlaylistLoopPlayback playlist) {
             List<String> remaining = new ArrayList<>(musicIds);
             remaining.remove(index);
-            return area.withPlayback(new PlaylistLoopPlayback(
-                    remaining, playlist.volume(), playlist.fadeInMs(), playlist.fadeOutMs()));
+            return area.withPlayback(playlist.withPlaylist(remaining));
         }
         List<AreaTrackDefinition> remaining = new ArrayList<>(area.tracks());
         remaining.remove(index);
@@ -227,8 +282,7 @@ public final class AreaEdits {
         if (area.playback() instanceof PlaylistLoopPlayback playlist) {
             List<String> remaining = new ArrayList<>(musicIds);
             remaining.remove(index);
-            return area.withPlayback(new PlaylistLoopPlayback(
-                    remaining, playlist.volume(), playlist.fadeInMs(), playlist.fadeOutMs()));
+            return area.withPlayback(playlist.withPlaylist(remaining));
         }
         List<AreaTrackDefinition> remaining = new ArrayList<>(area.tracks());
         remaining.remove(index);

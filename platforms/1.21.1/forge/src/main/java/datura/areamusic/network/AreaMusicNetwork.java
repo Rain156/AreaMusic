@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class AreaMusicNetwork {
     private static final String MOD_ID = "areamusic";
-    private static final int PROTOCOL_VERSION = 5;
+    private static final int PROTOCOL_VERSION = 6;
     private static final AtomicReference<ClientPacketHandler> CLIENT_HANDLER =
             new AtomicReference<>();
 

@@ -1,5 +1,7 @@
 package datura.areamusic.server;
 
+import datura.areamusic.area.AreaBox;
+import datura.areamusic.area.AreaCondition;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
 import datura.areamusic.edit.AreaEdits;
@@ -30,8 +32,9 @@ final class CommandReplies {
     private static final String ROOT = "/areamusic ";
     /** What {@code set} can change, in the order the help lists them. */
     private static final List<String> PROPERTIES = List.of(
-            "name", "volume", "mode", "start", "fadein", "fadeout",
-            "priority", "resume", "enabled", "color", "pos1", "pos2");
+            "name", "volume", "mode", "start", "fadein", "fadeout", "shuffle", "gap",
+            "time", "weather", "priority", "resume", "enabled", "announce", "color",
+            "wholedimension", "pos1", "pos2");
 
     private CommandReplies() {
     }
@@ -103,6 +106,24 @@ final class CommandReplies {
         if (AreaEdits.fadeOutOf(before) != AreaEdits.fadeOutOf(after)) {
             changes.add(change("fadeout", seconds(AreaEdits.fadeOutOf(after))));
         }
+        if (AreaEdits.shuffleOf(before) != AreaEdits.shuffleOf(after)) {
+            changes.add(change("shuffle", onOff(AreaEdits.shuffleOf(after))));
+        }
+        if (AreaEdits.gapOf(before) != AreaEdits.gapOf(after)) {
+            changes.add(change("gap", seconds(AreaEdits.gapOf(after))));
+        }
+        if (before.condition().dayPart() != after.condition().dayPart()) {
+            changes.add(change("time", dayPart(after)));
+        }
+        if (before.condition().weather() != after.condition().weather()) {
+            changes.add(change("weather", weather(after)));
+        }
+        if (before.announce() != after.announce()) {
+            changes.add(change("announce", onOff(after.announce())));
+        }
+        if (before.wholeDimension() != after.wholeDimension()) {
+            changes.add(change("wholedimension", onOff(after.wholeDimension())));
+        }
         if (before.priority() != after.priority()) {
             changes.add(change("priority", Component.literal(Integer.toString(after.priority()))));
         }
@@ -118,11 +139,8 @@ final class CommandReplies {
                     : Component.empty().append(swatch(after)).append(
                             String.format(Locale.ROOT, "#%06X", after.color()))));
         }
-        if (!before.pos1().equals(after.pos1()) || !before.pos2().equals(after.pos2())) {
-            changes.add(change("bounds", Component.empty()
-                    .append(corners(after))
-                    .append(separator())
-                    .append(size(after))));
+        if (!before.boxes().equals(after.boxes()) && !after.wholeDimension()) {
+            changes.add(change("bounds", extent(after)));
         }
         return changes;
     }
@@ -145,10 +163,13 @@ final class CommandReplies {
             if (!area.displayName().isEmpty()) {
                 line.append(Component.literal("  " + area.id()).withStyle(LABEL));
             }
-            line.append(separator()).append(Component.literal(size(area)).withStyle(LABEL));
+            line.append(separator()).append(extent(area).copy().withStyle(LABEL));
             line.append(separator()).append(music(area).withStyle(LABEL));
-            if (!area.dimension().equals("minecraft:overworld")) {
+            if (!area.dimension().equals("minecraft:overworld") && !area.wholeDimension()) {
                 line.append(separator()).append(Component.literal(shortId(area.dimension())).withStyle(LABEL));
+            }
+            if (!area.condition().equals(AreaCondition.ALWAYS)) {
+                line.append(separator()).append(when(area).withStyle(LINK));
             }
             if (!area.enabled()) {
                 line.append(separator()).append(
@@ -186,16 +207,34 @@ final class CommandReplies {
             header.append("  ").append(
                     Component.translatable("commands.areamusic.list.disabled").withStyle(WARNING));
         }
-        header.append("  ").append(clickable(
-                Component.translatable("commands.areamusic.info.teleport").withStyle(LINK),
-                ROOT + "tp " + area.id(), true,
-                Component.translatable("commands.areamusic.hover.teleport")));
+        if (!area.wholeDimension()) {
+            // Music for a whole dimension has no place to go to.
+            header.append("  ").append(clickable(
+                    Component.translatable("commands.areamusic.info.teleport").withStyle(LINK),
+                    ROOT + "tp " + area.id(), true,
+                    Component.translatable("commands.areamusic.hover.teleport")));
+        }
         lines.add(header);
 
-        lines.add(row("bounds", Component.empty()
-                .append(corners(area))
-                .append(separator()).append(size(area))
-                .append(separator()).append(area.dimension())));
+        if (area.wholeDimension()) {
+            lines.add(row("bounds", Component.translatable(
+                    "commands.areamusic.info.whole_dimension", area.dimension())));
+        } else {
+            List<AreaBox> boxes = area.boxes();
+            for (int index = 0; index < boxes.size(); index++) {
+                AreaBox box = boxes.get(index);
+                MutableComponent line = Component.empty();
+                if (boxes.size() > 1) {
+                    line.append(Component.literal((index + 1) + "  ").withStyle(LABEL));
+                }
+                line.append(corners(box.pos1(), box.pos2()))
+                        .append(separator()).append(size(box.pos1(), box.pos2()));
+                if (index == 0) {
+                    line.append(separator()).append(area.dimension());
+                }
+                lines.add(index == 0 ? row("bounds", line) : continued("bounds", line));
+            }
+        }
 
         MutableComponent playback = Component.empty()
                 .append(mode(area))
@@ -205,7 +244,17 @@ final class CommandReplies {
             playback.append(separator()).append(Component.translatable(
                     "commands.areamusic.info.start", TrackTime.format(area.startOffsetMs())));
         }
+        if (AreaEdits.shuffleOf(area)) {
+            playback.append(separator()).append(Component.translatable("commands.areamusic.info.shuffle"));
+        }
+        if (AreaEdits.gapOf(area) > 0) {
+            playback.append(separator()).append(Component.translatable(
+                    "commands.areamusic.info.gap", secondsText(AreaEdits.gapOf(area))));
+        }
         lines.add(row("playback", playback));
+        if (!area.condition().equals(AreaCondition.ALWAYS)) {
+            lines.add(row("when", when(area)));
+        }
 
         List<String> musicIds = area.musicIds();
         for (int index = 0; index < musicIds.size(); index++) {
@@ -228,7 +277,9 @@ final class CommandReplies {
         lines.add(row("other", Component.empty()
                 .append(Component.translatable("commands.areamusic.info.priority", area.priority()))
                 .append(separator())
-                .append(Component.translatable("commands.areamusic.info.resume", onOff(area.resumeOnReenter())))));
+                .append(Component.translatable("commands.areamusic.info.resume", onOff(area.resumeOnReenter())))
+                .append(separator())
+                .append(Component.translatable("commands.areamusic.info.announce", onOff(area.announce())))));
         return lines;
     }
 
@@ -259,6 +310,8 @@ final class CommandReplies {
         lines.add(Component.literal("   ").append(Component.translatable(
                 "commands.areamusic.help.settings", String.join("  ", PROPERTIES)).withStyle(LABEL)));
         lines.add(usage("music", "music add/remove <area> <music>"));
+        lines.add(usage("box", "box add <area> <pos1> <pos2>"));
+        lines.add(usage("box_remove", "box remove <area> <number>"));
         lines.add(usage("tp", "tp <area>"));
         lines.add(usage("delete", "delete <area>"));
         lines.add(usage("reload", "reload"));
@@ -283,6 +336,41 @@ final class CommandReplies {
     private static MutableComponent swatch(AreaDefinition area) {
         int rgb = area.effectiveColor();
         return Component.literal("■ ").withStyle(style -> style.withColor(TextColor.fromRgb(rgb)));
+    }
+
+    /** "Night · Rain": the part of the day and the weather the area keeps to. */
+    private static MutableComponent when(AreaDefinition area) {
+        MutableComponent text = Component.empty();
+        boolean timed = area.condition().dayPart() != AreaCondition.DayPart.ANY;
+        if (timed) {
+            text.append(dayPart(area));
+        }
+        if (area.condition().weather() != AreaCondition.Weather.ANY) {
+            if (timed) {
+                text.append(" · ");
+            }
+            text.append(weather(area));
+        }
+        return text;
+    }
+
+    private static Component dayPart(AreaDefinition area) {
+        return Component.translatable("commands.areamusic.time." + area.condition().dayPart().id());
+    }
+
+    private static Component weather(AreaDefinition area) {
+        return Component.translatable("commands.areamusic.weather." + area.condition().weather().id());
+    }
+
+    /** How big the area is: its size, the number of its boxes, or "whole dimension". */
+    private static Component extent(AreaDefinition area) {
+        if (area.wholeDimension()) {
+            return Component.translatable("commands.areamusic.list.whole_dimension", shortId(area.dimension()));
+        }
+        if (area.extraBoxes().isEmpty()) {
+            return Component.literal(size(area));
+        }
+        return Component.translatable("commands.areamusic.list.boxes", area.boxes().size());
     }
 
     private static MutableComponent mode(AreaDefinition area) {
@@ -312,16 +400,19 @@ final class CommandReplies {
         return Math.round(volume * 100.0f) + "%";
     }
 
-    private static String corners(AreaDefinition area) {
-        AreaPosition pos1 = area.pos1();
-        AreaPosition pos2 = area.pos2();
+    private static String corners(AreaPosition pos1, AreaPosition pos2) {
         return pos1.x() + " " + pos1.y() + " " + pos1.z()
                 + " → " + pos2.x() + " " + pos2.y() + " " + pos2.z();
     }
 
     static String size(AreaDefinition area) {
-        AreaPosition min = area.min();
-        AreaPosition max = area.max();
+        return size(area.pos1(), area.pos2());
+    }
+
+    private static String size(AreaPosition pos1, AreaPosition pos2) {
+        AreaBox box = new AreaBox(pos1, pos2);
+        AreaPosition min = box.min();
+        AreaPosition max = box.max();
         return (max.x() - min.x() + 1L) + "×" + (max.y() - min.y() + 1L)
                 + "×" + (max.z() - min.z() + 1L);
     }

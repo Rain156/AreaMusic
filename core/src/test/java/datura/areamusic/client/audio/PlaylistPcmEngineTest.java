@@ -77,6 +77,90 @@ class PlaylistPcmEngineTest {
     }
 
     @Test
+    void staysQuietForTheGapBetweenTwoTracksButNotBeforeTheFirst() throws Exception {
+        createMusicFile("first.ogg");
+        createMusicFile("second.ogg");
+        ManualPreparer preparer = new ManualPreparer();
+        // One millisecond of quiet is 44 frames.
+        PlaybackState state = PlaybackState.playing(
+                "area",
+                new PlaylistLoopPlayback(List.of("first.ogg", "second.ogg"), 1.0f, 0, 0, false, 1),
+                false,
+                0
+        );
+        try (PlaylistPcmEngine engine = new PlaylistPcmEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root), preparer
+        )) {
+            engine.apply(3L, state);
+            preparer.complete(0, streamWithSamples(100, 100));
+            engine.renderFrames(0, 1.0f);
+            preparer.complete(1, streamWithSamples(200, 200));
+
+            List<Integer> rendered = leftSamples(engine.renderFrames(46, 1.0f));
+
+            assertEquals(100, rendered.get(0), "no gap before the first track");
+            assertEquals(java.util.Collections.nCopies(44, 0), rendered.subList(1, 45));
+            assertEquals(200, rendered.get(45));
+        }
+    }
+
+    @Test
+    void shuffledPlaylistPlaysInTheOrderItsSeedDraws() throws Exception {
+        List<String> names = List.of("a.ogg", "b.ogg", "c.ogg", "d.ogg");
+        List<Path> files = new ArrayList<>();
+        for (String name : names) {
+            files.add(createMusicFile(name));
+        }
+        PlaylistPlaybackTimeline expected = PlaylistPlaybackTimeline.fresh(4, 0L, true, 11L);
+        ManualPreparer preparer = new ManualPreparer();
+        try (PlaylistPcmEngine engine = new PlaylistPcmEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root), preparer
+        )) {
+            engine.setShuffleSeeds(() -> 11L);
+            engine.apply(3L, PlaybackState.playing(
+                    "area", new PlaylistLoopPlayback(names, 1.0f, 0, 0, true, 0), false, 0));
+            assertEquals(files.get(expected.currentIndex()), preparer.requests().get(0).path());
+
+            preparer.complete(0, streamWithSamples(100, 100));
+            engine.renderFrames(0, 1.0f);
+            assertEquals(
+                    files.get(expected.nextPlayableIndex().orElseThrow()),
+                    preparer.requests().get(1).path(),
+                    "the track prepared in advance is the next of the shuffled round");
+        }
+    }
+
+    @Test
+    void changingTheVolumeOfAPlayingPlaylistCarriesOnAndSlidesOver() throws Exception {
+        createMusicFile("song.ogg");
+        ManualPreparer preparer = new ManualPreparer();
+        try (PlaylistPcmEngine engine = new PlaylistPcmEngine(
+                new AudioStreamFactory(), MusicLibrary.scan(root), preparer
+        )) {
+            engine.apply(3L, PlaybackState.playingPlaylistLoop(
+                    "area", List.of("song.ogg"), 1.0f, 0, 0, false));
+            preparer.complete(0, constantStream(1000, 40_000));
+            assertEquals(List.of(1000, 1000), leftSamples(engine.renderFrames(2, 1.0f)));
+            int requestsBefore = preparer.requests().size();
+
+            // A new revision, as any edit brings, with only the volume and a fade changed.
+            engine.apply(4L, PlaybackState.playingPlaylistLoop(
+                    "area", List.of("song.ogg"), 0.5f, 300, 0, false));
+
+            List<Integer> sliding = leftSamples(engine.renderFrames(12_000, 1.0f));
+            assertEquals(requestsBefore, preparer.requests().size(), "nothing was reopened");
+            assertTrue(sliding.get(0) > 900, "no jump at the moment of the change: " + sliding.get(0));
+            assertTrue(sliding.get(5_000) < 900 && sliding.get(5_000) > 500, sliding.get(5_000).toString());
+            assertEquals(500, sliding.get(11_999));
+
+            // A different track list is a different playlist and does start over.
+            engine.apply(5L, PlaybackState.playingPlaylistLoop(
+                    "area", List.of("song.ogg", "song.ogg"), 0.5f, 0, 0, false));
+            assertTrue(preparer.requests().size() > requestsBefore);
+        }
+    }
+
+    @Test
     void identicalRevisionAndStateDoNotRestartAHealthySession() throws Exception {
         createMusicFile("first.ogg");
         createMusicFile("second.ogg");

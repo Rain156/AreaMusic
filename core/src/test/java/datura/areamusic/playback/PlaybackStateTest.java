@@ -100,23 +100,24 @@ class PlaybackStateTest {
     @Test
     void rejectsPlayingStateWithoutDefinition() {
         assertThrows(IllegalArgumentException.class,
-                () -> new PlaybackState(true, "area", Optional.empty(), false, 0));
+                () -> new PlaybackState(true, "area", Optional.empty(), false, 0, ""));
     }
 
     @Test
     void rejectsNullDefinitionContainer() {
         assertThrows(NullPointerException.class,
-                () -> new PlaybackState(true, "area", null, false, 0));
+                () -> new PlaybackState(true, "area", null, false, 0, ""));
     }
 
     @Test
     void normalizesStoppedStateFields() {
         PlaybackState stopped = new PlaybackState(
-                false, "ignored", Optional.of(new ParallelPlayback(List.of(TRACK))), true, 5_000
+                false, "ignored", Optional.of(new ParallelPlayback(List.of(TRACK))), true, 5_000, "ignored"
         );
 
         assertEquals(PlaybackState.stopped(), stopped);
         assertEquals(0, stopped.startOffsetMs());
+        assertEquals("", stopped.title());
         assertEquals(Optional.empty(), stopped.definition());
         assertEquals(Optional.empty(), stopped.mode());
         assertEquals(List.of(), stopped.musicIds());

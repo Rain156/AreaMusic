@@ -10,11 +10,13 @@ import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import datura.areamusic.area.AreaCondition;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaTrackDefinition;
 import datura.areamusic.edit.AreaEdits;
 import datura.areamusic.edit.TrackTime;
+import datura.areamusic.playback.PlaylistLoopPlayback;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
@@ -70,6 +72,22 @@ public final class AreaMusicCommands {
                                 .then(musicId(operations).executes(context -> edit(
                                         context, operations,
                                         area -> AreaEdits.removeMusic(area, musicId(context))))))))
+                .then(Commands.literal("box")
+                        .then(Commands.literal("add").then(areaId(operations)
+                                .then(Commands.argument("pos1", BlockPosArgument.blockPos())
+                                        .then(Commands.argument("pos2", BlockPosArgument.blockPos())
+                                                .executes(context -> edit(context, operations, area ->
+                                                        AreaEdits.addBox(
+                                                                area,
+                                                                position(context, "pos1"),
+                                                                position(context, "pos2"))))))))
+                        .then(Commands.literal("remove").then(areaId(operations)
+                                .then(Commands.argument("number", IntegerArgumentType.integer(
+                                                1, AreaDefinition.MAX_EXTRA_BOXES + 1))
+                                        .executes(context -> edit(context, operations, area ->
+                                                AreaEdits.removeBox(
+                                                        area,
+                                                        IntegerArgumentType.getInteger(context, "number"))))))))
                 .then(Commands.literal("reload")
                         .executes(context -> operations.requestReload(context.getSource())))
                 .then(Commands.literal("help").executes(AreaMusicCommands::showHelp))
@@ -94,6 +112,37 @@ public final class AreaMusicCommands {
                                 SharedSuggestionProvider.suggest(new String[]{"0:00", "0:30", "1:00"}, builder))
                         .executes(context -> edit(context, operations, area ->
                                 area.withStartOffsetMs(parseStart(StringArgumentType.getString(context, "time")))))));
+        areaId.then(Commands.literal("shuffle")
+                .then(Commands.argument("value", BoolArgumentType.bool())
+                        .executes(context -> edit(context, operations, area ->
+                                AreaEdits.withShuffle(area, BoolArgumentType.getBool(context, "value"))))));
+        areaId.then(Commands.literal("gap")
+                .then(Commands.argument("seconds", IntegerArgumentType.integer(
+                                0, PlaylistLoopPlayback.MAX_GAP_MS / 1000))
+                        .executes(context -> edit(context, operations, area -> AreaEdits.withGap(
+                                area, IntegerArgumentType.getInteger(context, "seconds") * 1000)))));
+        areaId.then(Commands.literal("announce")
+                .then(Commands.argument("value", BoolArgumentType.bool())
+                        .executes(context -> edit(context, operations, area ->
+                                area.withAnnounce(BoolArgumentType.getBool(context, "value"))))));
+        areaId.then(Commands.literal("wholedimension")
+                .then(Commands.argument("value", BoolArgumentType.bool())
+                        .executes(context -> edit(context, operations, area ->
+                                area.withWholeDimension(BoolArgumentType.getBool(context, "value"))))));
+        LiteralArgumentBuilder<CommandSourceStack> time = Commands.literal("time");
+        for (AreaCondition.DayPart dayPart : AreaCondition.DayPart.values()) {
+            time.then(Commands.literal(dayPart.id())
+                    .executes(context -> edit(context, operations,
+                            area -> area.withCondition(area.condition().withDayPart(dayPart)))));
+        }
+        areaId.then(time);
+        LiteralArgumentBuilder<CommandSourceStack> weather = Commands.literal("weather");
+        for (AreaCondition.Weather kind : AreaCondition.Weather.values()) {
+            weather.then(Commands.literal(kind.id())
+                    .executes(context -> edit(context, operations,
+                            area -> area.withCondition(area.condition().withWeather(kind)))));
+        }
+        areaId.then(weather);
         areaId.then(Commands.literal("priority")
                 .then(Commands.argument("priority", IntegerArgumentType.integer())
                         .executes(context -> edit(context, operations, area ->
@@ -142,6 +191,11 @@ public final class AreaMusicCommands {
                             AreaPosition corner = new AreaPosition(pos.getX(), pos.getY(), pos.getZ());
                             return edit(context, operations, area -> change.apply(area, corner));
                         }));
+    }
+
+    private static AreaPosition position(CommandContext<CommandSourceStack> context, String name) {
+        BlockPos pos = BlockPosArgument.getBlockPos(context, name);
+        return new AreaPosition(pos.getX(), pos.getY(), pos.getZ());
     }
 
     private static RequiredArgumentBuilder<CommandSourceStack, Integer> fadeArgument() {

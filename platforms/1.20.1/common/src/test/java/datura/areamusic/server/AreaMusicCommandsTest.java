@@ -134,6 +134,18 @@ class AreaMusicCommandsTest {
         assertEquals("村庄 广场", change("set plaza name 村庄 广场").apply(base).displayName());
         assertEquals(0.4f, AreaEdits.volumeOf(change("set plaza volume 40").apply(base)));
         assertEquals(-3, change("set plaza priority -3").apply(base).priority());
+        AreaDefinition playlist = AreaEdits.addMusic(base, "second.ogg");
+        assertTrue(AreaEdits.shuffleOf(change("set plaza shuffle true").apply(playlist)));
+        assertEquals(4_000, AreaEdits.gapOf(change("set plaza gap 4").apply(playlist)));
+        assertEquals(datura.areamusic.area.AreaCondition.DayPart.NIGHT,
+                change("set plaza time night").apply(base).condition().dayPart());
+        assertEquals(datura.areamusic.area.AreaCondition.Weather.THUNDER,
+                change("set plaza weather thunder").apply(base).condition().weather());
+        assertFalse(change("set plaza announce false").apply(base).announce());
+        assertTrue(change("set plaza wholedimension true").apply(base).wholeDimension());
+        AreaDefinition twoBoxes = change("box add plaza 20 64 0 30 70 4").apply(base);
+        assertEquals(new AreaPosition(30, 70, 4), twoBoxes.extraBoxes().get(0).pos2());
+        assertEquals(base, change("box remove plaza 2").apply(twoBoxes));
         assertEquals(90_000, change("set plaza start 1:30").apply(base).startOffsetMs());
         assertEquals(12_500, change("set plaza start 12.5").apply(base).startOffsetMs());
         assertEquals(0, change("set plaza start 0").apply(base.withStartOffsetMs(5_000)).startOffsetMs());
@@ -170,6 +182,10 @@ class AreaMusicCommandsTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> change("set plaza color purple").apply(base));
+        assertThrows(IllegalArgumentException.class,
+                () -> change("set plaza shuffle true").apply(base), "only a playlist can be shuffled");
+        assertThrows(IllegalArgumentException.class,
+                () -> change("box remove plaza 1").apply(base), "the only box cannot go");
         assertThrows(IllegalArgumentException.class,
                 () -> change("set plaza start soon").apply(base));
         assertThrows(IllegalArgumentException.class,

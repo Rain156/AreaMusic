@@ -1,5 +1,6 @@
 package datura.areamusic.editor;
 
+import datura.areamusic.area.AreaBox;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPosition;
 import datura.areamusic.edit.AreaEdits;
@@ -254,40 +255,91 @@ public final class EditorModel {
 
     /** Copies the selected area next to itself and selects the copy. */
     public Optional<String> duplicateSelected() {
+        return duplicateSelected(false);
+    }
+
+    /**
+     * @param inPlace whether the copy covers exactly the same place. That is how one place gets a
+     *                second tune: copy it in place, then tell each copy when it plays.
+     */
+    public Optional<String> duplicateSelected(boolean inPlace) {
         AreaDefinition source = selected().orElse(null);
         if (source == null) {
             return Optional.empty();
         }
         String id = AreaIds.generate(source.id(), areas::containsKey);
         int shift = source.max().x() - source.min().x() + 1;
-        AreaPosition pos1 = source.pos1();
-        AreaPosition pos2 = source.pos2();
-        AreaDefinition copy = new AreaDefinition(
-                id, source.dimension(),
-                new AreaPosition(pos1.x() + shift, pos1.y(), pos1.z()),
-                new AreaPosition(pos2.x() + shift, pos2.y(), pos2.z()),
-                source.playback(), source.resumeOnReenter(), source.priority(),
-                source.displayName(), AreaDefinition.AUTO_COLOR, source.enabled(),
-                source.startOffsetMs());
+        AreaDefinition copy = source.withId(id).withColor(AreaDefinition.AUTO_COLOR);
+        if (!source.wholeDimension() && !inPlace) {
+            // Beside the original, so both can be seen; every box moves by the same amount.
+            copy = copy.withBounds(shifted(source.pos1(), shift), shifted(source.pos2(), shift))
+                    .withExtraBoxes(source.extraBoxes().stream()
+                            .map(box -> new AreaBox(shifted(box.pos1(), shift), shifted(box.pos2(), shift)))
+                            .toList());
+        }
         request(new EditOp.Put(copy), Kind.NORMAL);
         selectedId = id;
         return Optional.of(id);
     }
 
     /** Begins a new area; its two corners are set next. */
+    private static AreaPosition shifted(AreaPosition position, int blocksAlongX) {
+        return new AreaPosition(position.x() + blocksAlongX, position.y(), position.z());
+    }
+
     public void startDraft(String dimension) {
         draft = new Draft(Objects.requireNonNull(dimension, "dimension"), null, null);
         selectedId = null;
     }
 
-    /** Sets corner 1 or 2 of the draft. */
-    public void draftCorner(int corner, AreaPosition position) {
-        if (draft == null) {
-            return;
+    /**
+     * Starts drawing one more box for the selected area, for a room that is not one cuboid. The
+     * box is added as soon as its second corner is set; no music needs choosing.
+     *
+     * @return false when no area is selected or it cannot take another box
+     */
+    public boolean startExtraBox() {
+        AreaDefinition area = selected().orElse(null);
+        if (area == null || area.wholeDimension()
+                || area.extraBoxes().size() >= AreaDefinition.MAX_EXTRA_BOXES) {
+            return false;
+        }
+        draft = new Draft(area.dimension(), null, null, area.id(), false);
+        return true;
+    }
+
+    /**
+     * A draft for background music that plays everywhere in a dimension. It has no corners to
+     * set; it only needs music.
+     */
+    public void draftWholeDimension(String dimension) {
+        AreaPosition origin = new AreaPosition(0, 0, 0);
+        draft = new Draft(Objects.requireNonNull(dimension, "dimension"), origin, origin, null, true);
+        selectedId = null;
+    }
+
+    /**
+     * Sets corner 1 or 2 of the draft.
+     *
+     * @return true when that finished a box being added to an area, which is then done
+     */
+    public boolean draftCorner(int corner, AreaPosition position) {
+        if (draft == null || draft.wholeDimension()) {
+            return false;
         }
         draft = corner == 1
-                ? new Draft(draft.dimension(), position, draft.pos2())
-                : new Draft(draft.dimension(), draft.pos1(), position);
+                ? new Draft(draft.dimension(), position, draft.pos2(), draft.extraFor(), false)
+                : new Draft(draft.dimension(), draft.pos1(), position, draft.extraFor(), false);
+        if (draft.extraFor() == null || !draft.complete()) {
+            return false;
+        }
+        Draft box = draft;
+        draft = null;
+        if (areas.containsKey(box.extraFor())) {
+            selectedId = box.extraFor();
+            apply(area -> AreaEdits.addBox(area, box.pos1(), box.pos2()));
+        }
+        return true;
     }
 
     /** A ready-made draft: a cube of the given radius centered on a position. */
@@ -305,13 +357,14 @@ public final class EditorModel {
 
     /** Creates the drafted area with one looping track and selects it. */
     public Optional<String> completeDraft(String musicId) {
-        if (draft == null || !draft.complete()) {
+        if (draft == null || !draft.complete() || draft.extraFor() != null) {
             return Optional.empty();
         }
         String id = AreaIds.generate(musicId, areas::containsKey);
         AreaDefinition area;
         try {
-            area = AreaEdits.single(id, draft.dimension(), draft.pos1(), draft.pos2(), musicId);
+            area = AreaEdits.single(id, draft.dimension(), draft.pos1(), draft.pos2(), musicId)
+                    .withWholeDimension(draft.wholeDimension());
         } catch (IllegalArgumentException exception) {
             lastError = new EditError(null, String.valueOf(exception.getMessage()));
             return Optional.empty();
@@ -355,7 +408,20 @@ public final class EditorModel {
     }
 
     /** An area being drawn. Either corner may still be null. */
-    public record Draft(String dimension, AreaPosition pos1, AreaPosition pos2) {
+    /**
+     * Something being drawn: a new area, one more box for an existing area, or background music
+     * for a whole dimension.
+     *
+     * @param extraFor       the area the box is being added to, or null for a new area
+     * @param wholeDimension whether the new area covers its dimension and so has no corners
+     */
+    public record Draft(
+            String dimension, AreaPosition pos1, AreaPosition pos2, String extraFor, boolean wholeDimension
+    ) {
+        public Draft(String dimension, AreaPosition pos1, AreaPosition pos2) {
+            this(dimension, pos1, pos2, null, false);
+        }
+
         public boolean complete() {
             return pos1 != null && pos2 != null;
         }

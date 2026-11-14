@@ -72,7 +72,9 @@ public final class ClientPlaybackSession implements AutoCloseable {
         if (revision < highestSeenRevision) {
             return;
         }
-        PlaybackState checkedState = Objects.requireNonNull(state, "state");
+        // The name shown on walking in is not part of what plays: with it left in, renaming an
+        // area would look like a different state and restart its music.
+        PlaybackState checkedState = Objects.requireNonNull(state, "state").withTitle("");
         PlaybackUpdate update = new PlaybackUpdate(revision, checkedState);
         latestUpdate = update;
         highestSeenRevision = revision;
@@ -91,13 +93,14 @@ public final class ClientPlaybackSession implements AutoCloseable {
             return;
         }
         musicLibrary = Objects.requireNonNull(library, "library");
-        PlaybackUpdate update = new PlaybackUpdate(revision, Objects.requireNonNull(state, "state"));
+        PlaybackState checkedState = Objects.requireNonNull(state, "state").withTitle("");
+        PlaybackUpdate update = new PlaybackUpdate(revision, checkedState);
         latestUpdate = update;
         highestSeenRevision = revision;
         if (pendingReloadRevision < 0L) {
             compatibleUpdate = update;
             if (mixer != null) {
-                mixer.updateMusicLibraryAndApply(library, revision, audible(state));
+                mixer.updateMusicLibraryAndApply(library, revision, audible(checkedState));
             }
         }
     }

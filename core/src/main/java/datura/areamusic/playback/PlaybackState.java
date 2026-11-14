@@ -12,16 +12,19 @@ public record PlaybackState(
         String areaId,
         Optional<PlaybackDefinition> definition,
         boolean resumeOnReenter,
-        int startOffsetMs
+        int startOffsetMs,
+        String title
 ) {
     public PlaybackState {
         Objects.requireNonNull(areaId, "areaId");
         Objects.requireNonNull(definition, "definition");
+        Objects.requireNonNull(title, "title");
         if (!playing) {
             areaId = "";
             definition = Optional.empty();
             resumeOnReenter = false;
             startOffsetMs = 0;
+            title = "";
         } else {
             if (areaId.isBlank()) {
                 throw new IllegalArgumentException("Area ID must not be blank");
@@ -38,7 +41,7 @@ public record PlaybackState(
     }
 
     public static PlaybackState stopped() {
-        return new PlaybackState(false, "", Optional.empty(), false, 0);
+        return new PlaybackState(false, "", Optional.empty(), false, 0, "");
     }
 
     public static PlaybackState playing(
@@ -68,8 +71,16 @@ public record PlaybackState(
     ) {
         return new PlaybackState(
                 true, areaId, Optional.of(Objects.requireNonNull(definition, "definition")),
-                resumeOnReenter, startOffsetMs
+                resumeOnReenter, startOffsetMs, ""
         );
+    }
+
+    /**
+     * The same state with a name to show the player on walking in, or none for an empty string.
+     * It does not change what is played.
+     */
+    public PlaybackState withTitle(String newTitle) {
+        return new PlaybackState(playing, areaId, definition, resumeOnReenter, startOffsetMs, newTitle);
     }
 
     public static PlaybackState playingPlaylistLoop(
@@ -108,7 +119,8 @@ public record PlaybackState(
 
     public static PlaybackState fromArea(AreaDefinition area) {
         Objects.requireNonNull(area, "area");
-        return playing(area.id(), area.playback(), area.resumeOnReenter(), area.startOffsetMs());
+        return playing(area.id(), area.playback(), area.resumeOnReenter(), area.startOffsetMs())
+                .withTitle(area.announce() ? area.displayName() : "");
     }
 
     /** {@link #startOffsetMs} in audio frames. */

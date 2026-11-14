@@ -31,6 +31,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Random;
 import java.util.Set;
@@ -466,6 +467,77 @@ class SyncLoopbackTest {
 
         assertEquals("Mine", editor.find("cave").orElseThrow().displayName());
         assertEquals(1, host.finished);
+    }
+
+    @Test
+    void anAreaGrowsByFurtherBoxesDrawnInTheWorld() throws Exception {
+        server.addMusic("day.ogg", 1_000);
+        server.rescan();
+        server.put(area("village", "day.ogg"));
+        Client alice = server.join("alice", true);
+        EditorModel editor = alice.sync.editor();
+        editor.open();
+        pump(3);
+        String overworld = "minecraft:overworld";
+
+        assertFalse(editor.startExtraBox(), "nothing is selected");
+        editor.select("village");
+        assertTrue(editor.startExtraBox());
+        assertEquals("village", editor.draft().extraFor());
+
+        AreaPosition near = new AreaPosition(11, 60, 0);
+        AreaPosition far = new AreaPosition(30, 70, 4);
+        assertEquals(datura.areamusic.editor.EditorOverlay.CornerResult.DRAFT_STARTED,
+                datura.areamusic.editor.EditorOverlay.cornerClicked(editor, 1, overworld, near));
+        assertEquals(datura.areamusic.editor.EditorOverlay.CornerResult.BOX_ADDED,
+                datura.areamusic.editor.EditorOverlay.cornerClicked(editor, 2, overworld, far));
+        pump(3);
+
+        AreaDefinition village = editor.find("village").orElseThrow();
+        assertNull(editor.draft());
+        assertEquals("village", editor.selectedId());
+        assertEquals(List.of(new datura.areamusic.area.AreaBox(near, far)), village.extraBoxes());
+        assertEquals(2, datura.areamusic.editor.EditorOverlay.boxes(editor, overworld).size());
+        // Looking along the corridor, outside the main box, still finds the area.
+        assertEquals(Optional.of("village"), datura.areamusic.editor.EditorOverlay.pick(
+                editor, overworld, 40.5, 65.5, 2.5, -1.0, 0.0, 0.0, 64.0));
+
+        editor.undo();
+        pump(3);
+        assertEquals(List.of(), editor.find("village").orElseThrow().extraBoxes());
+    }
+
+    @Test
+    void wholeDimensionMusicNeedsNoCornersAndACopyInPlaceSharesItsBounds() throws Exception {
+        server.addMusic("day.ogg", 1_000);
+        server.rescan();
+        server.put(area("village", "day.ogg"));
+        Client alice = server.join("alice", true);
+        EditorModel editor = alice.sync.editor();
+        editor.open();
+        pump(3);
+        String overworld = "minecraft:overworld";
+
+        editor.draftWholeDimension(overworld);
+        assertTrue(editor.draft().complete());
+        String backdropId = editor.completeDraft("day.ogg").orElseThrow();
+        pump(3);
+        AreaDefinition backdrop = editor.find(backdropId).orElseThrow();
+        assertTrue(backdrop.wholeDimension());
+        assertEquals(1, datura.areamusic.editor.EditorOverlay.boxes(editor, overworld).stream()
+                .filter(box -> !box.draft()).count(), "only the village is drawn");
+        // With it selected, a click in the world starts a new area instead of moving corners.
+        assertEquals(datura.areamusic.editor.EditorOverlay.CornerResult.DRAFT_STARTED,
+                datura.areamusic.editor.EditorOverlay.cornerClicked(editor, 1, overworld, A));
+        editor.cancelDraft();
+
+        editor.select("village");
+        String nightId = editor.duplicateSelected(true).orElseThrow();
+        pump(3);
+        AreaDefinition village = editor.find("village").orElseThrow();
+        AreaDefinition night = editor.find(nightId).orElseThrow();
+        assertEquals(village.boxes(), night.boxes());
+        assertEquals(nightId, editor.selectedId());
     }
 
     @Test

@@ -88,7 +88,7 @@ class AreaMusicNetworkTest {
             return registrar;
         });
 
-        assertEquals("5", protocol.get());
+        assertEquals("6", protocol.get());
         assertSame(HandlerThread.MAIN, thread.get());
         assertEquals(3, registrar.registrations.size());
         assertSame(AreaMusicNetwork.SyncToClientPayload.TYPE, registrar.registrations.get(2).type);

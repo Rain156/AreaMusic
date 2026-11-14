@@ -1,5 +1,7 @@
 package datura.areamusic.ui;
 
+import datura.areamusic.area.AreaBox;
+import datura.areamusic.area.AreaCondition;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaPalette;
 import datura.areamusic.area.AreaPosition;
@@ -9,6 +11,7 @@ import datura.areamusic.edit.AreaEdits.SimpleMode;
 import datura.areamusic.edit.TrackTime;
 import datura.areamusic.editor.EditorModel;
 import datura.areamusic.net.ClientSync;
+import datura.areamusic.playback.PlaylistLoopPlayback;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -159,6 +162,10 @@ public final class EditorPanel {
                 afterBuild.add(() -> model.draftAround(
                         host.playerDimension(), host.playerPosition(), EditorModel.DEFAULT_AROUND_RADIUS));
             }
+            ui.sameRow();
+            if (ui.quietButton("whole_dimension", t("areamusic.editor.whole_dimension"))) {
+                afterBuild.add(() -> model.draftWholeDimension(host.playerDimension()));
+            }
             if (model.areas().isEmpty()) {
                 ui.hint(t("areamusic.editor.first_hint"));
             }
@@ -166,11 +173,24 @@ public final class EditorPanel {
         }
 
         int corners = (draft.pos1() == null ? 0 : 1) + (draft.pos2() == null ? 0 : 1);
-        ui.steps(List.of(
-                t("areamusic.editor.step.corner1"),
-                t("areamusic.editor.step.corner2"),
-                t("areamusic.editor.step.music")
-        ), draft.complete() ? 2 : corners);
+        if (draft.wholeDimension()) {
+            // Nothing to draw: it plays everywhere in this dimension and only needs music.
+            ui.label(t("areamusic.editor.draft.whole_dimension", shortId(draft.dimension())));
+            ui.hint(t("areamusic.editor.draft.whole_dimension_hint"));
+        } else if (draft.extraFor() != null) {
+            ui.steps(List.of(
+                    t("areamusic.editor.step.corner1"),
+                    t("areamusic.editor.step.corner2")
+            ), corners);
+            ui.hint(t("areamusic.editor.draft.extra_box",
+                    model.find(draft.extraFor()).map(AreaDefinition::label).orElse(draft.extraFor())));
+        } else {
+            ui.steps(List.of(
+                    t("areamusic.editor.step.corner1"),
+                    t("areamusic.editor.step.corner2"),
+                    t("areamusic.editor.step.music")
+            ), draft.complete() ? 2 : corners);
+        }
         if (!draft.complete()) {
             ui.label(t(host.crosshairPicking()
                     ? "areamusic.editor.draft.pick_crosshair"
@@ -182,7 +202,9 @@ public final class EditorPanel {
                 ui.sameRow();
             }
         } else {
-            ui.label(t("areamusic.editor.draft.size", size(draft.pos1(), draft.pos2())));
+            if (!draft.wholeDimension()) {
+                ui.label(t("areamusic.editor.draft.size", size(draft.pos1(), draft.pos2())));
+            }
             if (model.musicIds().isEmpty()) {
                 ui.hint(t("areamusic.editor.draft.no_music"));
             } else {
@@ -224,8 +246,10 @@ public final class EditorPanel {
             String label = area.enabled()
                     ? area.label()
                     : area.label() + "  \u00b7  " + t("areamusic.editor.disabled");
-            String meta = !area.dimension().equals(here)
-                    ? area.dimension().substring(area.dimension().indexOf(':') + 1)
+            String meta = area.wholeDimension()
+                    ? t("areamusic.editor.whole_dimension_of", shortId(area.dimension()))
+                    : !area.dimension().equals(here)
+                    ? shortId(area.dimension())
                     : area.musicIds().size() == 1
                     ? shortName(area.musicIds().get(0))
                     : t("areamusic.editor.track_count", area.musicIds().size());
@@ -268,14 +292,16 @@ public final class EditorPanel {
         buildStartAndPreview(ui, area);
 
         ui.space();
-        if (ui.button("teleport", t("areamusic.editor.teleport"))) {
-            host.teleportTo(area.id());
+        if (!area.wholeDimension()) {
+            if (ui.button("teleport", t("areamusic.editor.teleport"))) {
+                host.teleportTo(area.id());
+            }
+            ui.sameRow();
+            if (ui.button("repick", t("areamusic.editor.repick"))) {
+                host.pickCornersInWorld();
+            }
+            ui.sameRow();
         }
-        ui.sameRow();
-        if (ui.button("repick", t("areamusic.editor.repick"))) {
-            host.pickCornersInWorld();
-        }
-        ui.sameRow();
         boolean hidden = model.hidden(area.id());
         if (ui.quietButton("toggle_hidden", t(hidden ? "areamusic.editor.show" : "areamusic.editor.hide"))) {
             model.setHidden(area.id(), !hidden);
@@ -411,6 +437,17 @@ public final class EditorPanel {
         if (fadeOut != null) {
             model.apply(current -> AreaEdits.withFadeOut(current, Math.round(fadeOut * 10.0f) * 100));
         }
+        if (area.playback() instanceof PlaylistLoopPlayback) {
+            Boolean shuffle = ui.checkbox("shuffle", t("areamusic.editor.shuffle"), AreaEdits.shuffleOf(area));
+            if (shuffle != null) {
+                model.apply(current -> AreaEdits.withShuffle(current, shuffle));
+            }
+            Float gap = ui.slider(
+                    "gap", t("areamusic.editor.gap"), AreaEdits.gapOf(area) / 1000.0f, 0.0f, 30.0f, "%.1f s");
+            if (gap != null) {
+                model.apply(current -> AreaEdits.withGap(current, Math.round(gap * 2.0f) * 500));
+            }
+        }
         Integer priority = ui.intInput("priority", t("areamusic.editor.priority"), area.priority(), -1000, 1000);
         if (priority != null) {
             model.apply(current -> current.withPriority(priority));
@@ -424,6 +461,32 @@ public final class EditorPanel {
         if (enabled != null) {
             model.apply(current -> current.withEnabled(enabled));
         }
+        Boolean announce = ui.checkbox("announce", t("areamusic.editor.announce"), area.announce());
+        if (announce != null) {
+            model.apply(current -> current.withAnnounce(announce));
+        }
+
+        ui.section(t("areamusic.editor.when"));
+        AreaCondition condition = area.condition();
+        Integer dayPart = ui.choice("when_time", List.of(
+                t("areamusic.editor.time.any"), t("areamusic.editor.time.day"), t("areamusic.editor.time.night")
+        ), condition.dayPart().ordinal());
+        if (dayPart != null) {
+            model.apply(current -> current.withCondition(
+                    current.condition().withDayPart(AreaCondition.DayPart.values()[dayPart])));
+        }
+        Integer weather = ui.choice("when_weather", List.of(
+                t("areamusic.editor.weather.any"), t("areamusic.editor.weather.clear"),
+                t("areamusic.editor.weather.rain"), t("areamusic.editor.weather.thunder")
+        ), condition.weather().ordinal());
+        if (weather != null) {
+            model.apply(current -> current.withCondition(
+                    current.condition().withWeather(AreaCondition.Weather.values()[weather])));
+        }
+        ui.hint(t("areamusic.editor.when_hint"));
+        if (ui.quietButton("duplicate_here", t("areamusic.editor.duplicate_here"))) {
+            afterBuild.add(() -> model.duplicateSelected(true));
+        }
 
         ui.section(t("areamusic.editor.color"));
         List<Integer> colors = new ArrayList<>();
@@ -434,6 +497,20 @@ public final class EditorPanel {
             model.apply(current -> current.withColor(color));
         }
 
+        if (!area.wholeDimension()) {
+            buildBounds(ui, area);
+        }
+
+        if (shown == SimpleMode.LAYERS && area.tracks().size() > 1) {
+            ui.section(t("areamusic.editor.per_track"));
+            for (int index = 0; index < area.tracks().size(); index++) {
+                buildTrack(ui, index, area.tracks().get(index));
+            }
+        }
+    }
+
+    /** The main box with its exact corners, and any further boxes the area is made of. */
+    private void buildBounds(PanelUi ui, AreaDefinition area) {
         ui.section(t("areamusic.editor.bounds", size(area.pos1(), area.pos2())));
         if (ui.button("grow", t("areamusic.editor.grow"))) {
             model.apply(current -> AreaEdits.grow(current, 1));
@@ -445,12 +522,31 @@ public final class EditorPanel {
         buildCorner(ui, area, 1);
         buildCorner(ui, area, 2);
 
-        if (shown == SimpleMode.LAYERS && area.tracks().size() > 1) {
-            ui.section(t("areamusic.editor.per_track"));
-            for (int index = 0; index < area.tracks().size(); index++) {
-                buildTrack(ui, index, area.tracks().get(index));
+        List<AreaBox> extras = area.extraBoxes();
+        for (int index = 0; index < extras.size(); index++) {
+            AreaBox box = extras.get(index);
+            // Numbered as the user counts them: the main box is number one.
+            int number = index + 2;
+            if (ui.listRow("box" + number,
+                    t("areamusic.editor.box", number, size(box.pos1(), box.pos2())), REMOVE, false, -1)) {
+                model.apply(current -> AreaEdits.removeBox(current, number));
             }
         }
+        if (extras.size() < AreaDefinition.MAX_EXTRA_BOXES) {
+            if (ui.button("add_box", t("areamusic.editor.add_box"))) {
+                afterBuild.add(() -> {
+                    if (model.startExtraBox()) {
+                        host.pickCornersInWorld();
+                    }
+                });
+            }
+            ui.hint(t("areamusic.editor.add_box_hint"));
+        }
+    }
+
+    /** "the_nether" from "minecraft:the_nether". */
+    private static String shortId(String id) {
+        return id.substring(id.indexOf(':') + 1);
     }
 
     private void buildCorner(PanelUi ui, AreaDefinition area, int corner) {

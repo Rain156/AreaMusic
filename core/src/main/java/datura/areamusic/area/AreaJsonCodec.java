@@ -53,13 +53,16 @@ public final class AreaJsonCodec {
     );
     private static final Set<String> V4_PARALLEL_ROOT_FIELDS = Set.of(
             "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "tracks",
-            "resumeOnReenter", "priority", "displayName", "color", "enabled", "startOffsetMs"
+            "resumeOnReenter", "priority", "displayName", "color", "enabled", "startOffsetMs",
+            "time", "weather", "wholeDimension", "announce", "extraBoxes"
     );
     private static final Set<String> V4_PLAYLIST_LOOP_ROOT_FIELDS = Set.of(
             "schemaVersion", "dimension", "pos1", "pos2", "playbackMode", "playlist",
             "volume", "fadeInMs", "fadeOutMs", "resumeOnReenter", "priority",
-            "displayName", "color", "enabled", "startOffsetMs"
+            "displayName", "color", "enabled", "startOffsetMs",
+            "time", "weather", "wholeDimension", "announce", "extraBoxes", "shuffle", "gapMs"
     );
+    private static final Set<String> BOX_FIELDS = Set.of("pos1", "pos2");
     private static final Pattern COLOR_PATTERN = Pattern.compile("#[0-9a-fA-F]{6}");
     private static final Set<String> TRACK_FIELDS = Set.of(
             "musicId", "delaySeconds", "volume", "loop", "fadeInMs", "fadeOutMs"
@@ -102,6 +105,8 @@ public final class AreaJsonCodec {
         int color = optionalColor(root, "color");
         boolean enabled = optionalBoolean(root, "enabled", true);
         int startOffsetMs = optionalInt(root, "startOffsetMs", 0);
+        boolean wholeDimension = optionalBoolean(root, "wholeDimension", false);
+        boolean announce = optionalBoolean(root, "announce", true);
 
         try {
             PlaybackDefinition playback;
@@ -125,13 +130,23 @@ public final class AreaJsonCodec {
                         requirePlaylist(root),
                         optionalVolume(root, "volume", PlaylistLoopPlayback.DEFAULT_VOLUME),
                         optionalInt(root, "fadeInMs", PlaylistLoopPlayback.DEFAULT_FADE_IN_MS),
-                        optionalInt(root, "fadeOutMs", PlaylistLoopPlayback.DEFAULT_FADE_OUT_MS)
+                        optionalInt(root, "fadeOutMs", PlaylistLoopPlayback.DEFAULT_FADE_OUT_MS),
+                        optionalBoolean(root, "shuffle", false),
+                        optionalInt(root, "gapMs", 0)
                 );
                 resumeOnReenter = optionalBoolean(root, "resumeOnReenter", false);
             }
+            AreaCondition condition = new AreaCondition(
+                    root.has("time")
+                            ? AreaCondition.DayPart.fromId(requireString(root, "time"))
+                            : AreaCondition.DayPart.ANY,
+                    root.has("weather")
+                            ? AreaCondition.Weather.fromId(requireString(root, "weather"))
+                            : AreaCondition.Weather.ANY);
             return new AreaDefinition(
                     areaId, dimension, pos1, pos2, playback, resumeOnReenter, priority,
-                    displayName, color, enabled, startOffsetMs
+                    displayName, color, enabled, startOffsetMs,
+                    condition, wholeDimension, announce, optionalBoxes(root)
             );
         } catch (IllegalArgumentException exception) {
             throw new JsonParseException("Invalid area '" + areaId + "': " + exception.getMessage(), exception);
@@ -166,6 +181,12 @@ public final class AreaJsonCodec {
             root.addProperty("volume", playlistLoop.volume());
             root.addProperty("fadeInMs", playlistLoop.fadeInMs());
             root.addProperty("fadeOutMs", playlistLoop.fadeOutMs());
+            if (playlistLoop.shuffle()) {
+                root.addProperty("shuffle", true);
+            }
+            if (playlistLoop.gapMs() != 0) {
+                root.addProperty("gapMs", playlistLoop.gapMs());
+            }
         } else {
             throw new AssertionError("Unknown playback definition: " + area.playback().getClass());
         }
@@ -181,7 +202,45 @@ public final class AreaJsonCodec {
         if (area.startOffsetMs() != 0) {
             root.addProperty("startOffsetMs", area.startOffsetMs());
         }
+        // The rest is written only when it differs from the default, so plain areas stay short.
+        if (area.condition().dayPart() != AreaCondition.DayPart.ANY) {
+            root.addProperty("time", area.condition().dayPart().id());
+        }
+        if (area.condition().weather() != AreaCondition.Weather.ANY) {
+            root.addProperty("weather", area.condition().weather().id());
+        }
+        if (area.wholeDimension()) {
+            root.addProperty("wholeDimension", true);
+        }
+        if (!area.announce()) {
+            root.addProperty("announce", false);
+        }
+        if (!area.extraBoxes().isEmpty()) {
+            JsonArray boxes = new JsonArray();
+            for (AreaBox box : area.extraBoxes()) {
+                JsonObject boxJson = new JsonObject();
+                boxJson.add("pos1", position(box.pos1()));
+                boxJson.add("pos2", position(box.pos2()));
+                boxes.add(boxJson);
+            }
+            root.add("extraBoxes", boxes);
+        }
         return GSON.toJson(root) + System.lineSeparator();
+    }
+
+    private static List<AreaBox> optionalBoxes(JsonObject root) {
+        if (!root.has("extraBoxes")) {
+            return List.of();
+        }
+        JsonArray array = requireArray(root, "extraBoxes");
+        List<AreaBox> boxes = new ArrayList<>(array.size());
+        for (int index = 0; index < array.size(); index++) {
+            String location = "extraBoxes[" + index + "]";
+            JsonObject box = requireObject(array.get(index), location);
+            rejectUnknownFields(box, BOX_FIELDS, location);
+            boxes.add(new AreaBox(requirePosition(box, "pos1"), requirePosition(box, "pos2")));
+        }
+        return boxes;
     }
 
     private static List<AreaTrackDefinition> requireTracks(JsonObject root) {

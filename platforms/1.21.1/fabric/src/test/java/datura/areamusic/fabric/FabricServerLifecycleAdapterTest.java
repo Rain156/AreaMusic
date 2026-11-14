@@ -33,7 +33,7 @@ class FabricServerLifecycleAdapterTest {
                 productionClasses
         );
 
-        assertEquals(116, visited.size());
+        assertEquals(122, visited.size());
         assertTrue(visited.contains("datura/areamusic/server/AreaMusicServer"));
     }
 

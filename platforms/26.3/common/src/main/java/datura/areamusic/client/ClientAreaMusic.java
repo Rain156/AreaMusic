@@ -175,6 +175,12 @@ public final class ClientAreaMusic implements ClientPacketHandler {
         if (closed) {
             return;
         }
+        if (state.playing() && !state.title().isEmpty()
+                && !state.areaId().equals(currentState.areaId())) {
+            // Walked into a named area: say where this is, once.
+            clientRuntime.displayOverlayMessage(
+                    Component.translatable("message.areamusic.entered", state.title()));
+        }
         currentState = state;
         sync.prioritize(state.musicIds());
         MusicLibrary newer = deferredLibrary;

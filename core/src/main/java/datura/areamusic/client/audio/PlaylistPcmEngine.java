@@ -28,7 +28,11 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
     private final boolean ownsStreamPreparer;
     private final List<AudioFailure> failures = new ArrayList<>();
     private final List<Session> outgoingSessions = new ArrayList<>();
+    private static final int RETUNE_FADE_MS = 250;
+
     private final Map<ResumeKey, SessionSnapshot> resumeSnapshots = new HashMap<>();
+    /** Where shuffled orders come from; replaced in tests so that they are the same every run. */
+    private java.util.function.LongSupplier shuffleSeeds = System::nanoTime;
     private MusicLibrary musicLibrary;
     private PlaybackState currentState = PlaybackState.stopped();
     private Session currentSession;
@@ -119,6 +123,14 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
         if (revision == lastRevision && state.equals(currentState) && currentSession != null) {
             return;
         }
+        if (currentSession != null && currentSession.sameTracks(state, definition)) {
+            // The same area with the same tracks: only how it sounds changed, so the music
+            // carries on and slides to the new volume instead of starting over.
+            currentSession.retune(revision, state, definition);
+            lastRevision = revision;
+            currentState = state;
+            return;
+        }
         lastRevision = revision;
         currentState = state;
         Session previous = currentSession;
@@ -159,7 +171,19 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
         while (outputFrame < frameCount) {
             pollCurrent();
             Session session = currentSession;
-            if (session == null || session.current == null) {
+            if (session == null) {
+                break;
+            }
+            if (session.gapRemainingFrames > 0L) {
+                // The quiet between two tracks; the next one is being got ready meanwhile.
+                int quiet = (int) Math.min(session.gapRemainingFrames, frameCount - outputFrame);
+                session.gapRemainingFrames -= quiet;
+                session.lifecycleGain.advance(quiet);
+                session.volumeGain.advance(quiet);
+                outputFrame += quiet;
+                continue;
+            }
+            if (session.current == null) {
                 break;
             }
 
@@ -201,6 +225,7 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
             if (!advanceAndPromote(session)) {
                 break;
             }
+            session.gapRemainingFrames = session.definition.gapFrames(AudioStreamFactory.SAMPLE_RATE);
         }
         activateGatedCurrentIfCapacity();
         pollCurrent();
@@ -210,6 +235,10 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
             PcmMath.writeLittleEndian(output, sample * 2, mixed[sample]);
         }
         return output;
+    }
+
+    void setShuffleSeeds(java.util.function.LongSupplier seeds) {
+        shuffleSeeds = Objects.requireNonNull(seeds, "seeds");
     }
 
     public List<AudioFailure> drainFailures() {
@@ -543,7 +572,7 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
             if (session.expeditedRemoval || session.current == null) {
                 continue;
             }
-            float gain = session.lifecycleGain.value() * session.definition.volume();
+            float gain = session.lifecycleGain.value() * session.volumeGain.value();
             if (quietest == null || gain < quietestGain) {
                 quietest = session;
                 quietestGain = gain;
@@ -586,11 +615,13 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
         PlaylistPlaybackTimeline timeline = snapshot != null
                 && snapshot.state().equals(state)
                 ? PlaylistPlaybackTimeline.restore(
-                        snapshot.timeline(), definition.playlist().size()
+                        snapshot.timeline(), definition.playlist().size(),
+                        definition.shuffle(), shuffleSeeds.getAsLong()
                 )
                 : PlaylistPlaybackTimeline.fresh(
                         definition.playlist().size(),
-                        state.startOffsetFrames(AudioStreamFactory.SAMPLE_RATE));
+                        state.startOffsetFrames(AudioStreamFactory.SAMPLE_RATE),
+                        definition.shuffle(), shuffleSeeds.getAsLong());
         return new Session(revision, state, definition, timeline);
     }
 
@@ -774,7 +805,7 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
     ) {
         for (int frame = 0; frame < frameCount; frame++) {
             float gain = session.lifecycleGain.value()
-                    * session.definition.volume()
+                    * session.volumeGain.value()
                     * masterGain;
             int sourceOffset = frame * FRAME_SIZE;
             int mixedSample = (outputFrameOffset + frame) * CHANNELS;
@@ -785,15 +816,18 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
                     PcmMath.readLittleEndian(pcm, sourceOffset + 2), gain
             );
             session.lifecycleGain.advance(1);
+            session.volumeGain.advance(1);
         }
     }
 
     private static final class Session {
-        private final long revision;
-        private final PlaybackState state;
-        private final PlaylistLoopPlayback definition;
+        private long revision;
+        private PlaybackState state;
+        private PlaylistLoopPlayback definition;
         private final PlaylistPlaybackTimeline timeline;
         private final FadeEnvelope lifecycleGain = new FadeEnvelope(0.0f);
+        private final FadeEnvelope volumeGain;
+        private long gapRemainingFrames;
         private PendingPreparation currentPreparation;
         private PendingPreparation nextPreparation;
         private RuntimeStream current;
@@ -812,6 +846,7 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
             this.state = state;
             this.definition = definition;
             this.timeline = timeline;
+            volumeGain = new FadeEnvelope(definition.volume());
             lifecycleGain.fadeTo(
                     1.0f,
                     definition.fadeInMs(),
@@ -821,6 +856,26 @@ public final class PlaylistPcmEngine implements PcmPlaybackEngine {
 
         private ResumeKey resumeKey() {
             return new ResumeKey(revision, state.areaId());
+        }
+
+        /** Whether {@code newState} is this area still playing these tracks in this manner. */
+        private boolean sameTracks(PlaybackState newState, PlaylistLoopPlayback newDefinition) {
+            return !newState.preview()
+                    && newState.areaId().equals(state.areaId())
+                    && newDefinition.playlist().equals(definition.playlist())
+                    && newDefinition.shuffle() == definition.shuffle();
+        }
+
+        /**
+         * Takes over the settings of a state for the same tracks without interrupting them. The
+         * volume slides over; fades, the gap and the start position apply from the next time
+         * they matter.
+         */
+        private void retune(long newRevision, PlaybackState newState, PlaylistLoopPlayback newDefinition) {
+            revision = newRevision;
+            state = newState;
+            definition = newDefinition;
+            volumeGain.fadeTo(newDefinition.volume(), RETUNE_FADE_MS, AudioStreamFactory.SAMPLE_RATE);
         }
 
         private boolean ownsResources() {

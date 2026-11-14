@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Registers the typed payloads and schedules their handling on the main thread of each side. */
 public final class AreaMusicNetwork {
-    private static final String PROTOCOL_VERSION = "5";
+    private static final String PROTOCOL_VERSION = "6";
     private static final AtomicReference<ClientPacketHandler> CLIENT_HANDLER =
             new AtomicReference<>();
     private static final PayloadRegistration REGISTRATION = new PayloadRegistration();

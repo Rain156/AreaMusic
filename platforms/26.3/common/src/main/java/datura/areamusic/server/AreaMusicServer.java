@@ -2,10 +2,12 @@ package datura.areamusic.server;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.logging.LogUtils;
+import datura.areamusic.area.AreaBox;
 import datura.areamusic.area.AreaDefinition;
 import datura.areamusic.area.AreaJsonCodec;
 import datura.areamusic.area.AreaPosition;
 import datura.areamusic.area.AreaStorage;
+import datura.areamusic.area.WorldMoment;
 import datura.areamusic.area.LegacyAreaMigration;
 import datura.areamusic.edit.AreaEditService;
 import datura.areamusic.edit.AreaEdits;
@@ -377,8 +379,7 @@ public final class AreaMusicServer {
             ));
             return 0;
         }
-        boolean boundsChanged = !updated.pos1().equals(current.pos1())
-                || !updated.pos2().equals(current.pos2());
+        boolean boundsChanged = !updated.boxes().equals(current.boxes());
         if (boundsChanged && !inBounds(state, updated)) {
             source.sendFailure(Component.translatable("commands.areamusic.create.out_of_bounds"));
             return 0;
@@ -442,6 +443,10 @@ public final class AreaMusicServer {
         ServerPlayer player = source.getPlayer();
         if (player == null) {
             source.sendFailure(Component.translatable("commands.areamusic.tp.player_only"));
+            return 0;
+        }
+        if (area.wholeDimension()) {
+            source.sendFailure(Component.translatable("commands.areamusic.tp.whole_dimension"));
             return 0;
         }
         ServerLevel level = levelOf(state.lifecycle.server(), area.dimension());
@@ -522,8 +527,7 @@ public final class AreaMusicServer {
         if (op instanceof EditOp.Put put) {
             AreaDefinition current = state.edits.find(put.area().id()).orElse(null);
             boolean boundsChanged = current == null
-                    || !current.pos1().equals(put.area().pos1())
-                    || !current.pos2().equals(put.area().pos2())
+                    || !current.boxes().equals(put.area().boxes())
                     || !current.dimension().equals(put.area().dimension());
             if (boundsChanged && !inBounds(state, put.area())) {
                 return EditResult.rejected(
@@ -546,10 +550,13 @@ public final class AreaMusicServer {
 
     private static boolean inBounds(ServerState state, AreaDefinition area) {
         ServerLevel level = levelOf(state.lifecycle.server(), area.dimension());
-        for (AreaPosition corner : List.of(area.pos1(), area.pos2())) {
-            BlockPos pos = new BlockPos(corner.x(), corner.y(), corner.z());
-            if (!Level.isInSpawnableBounds(pos) || level != null && !level.isInWorldBounds(pos)) {
-                return false;
+        // An area that covers its dimension has no boxes, so nothing of it can be out of bounds.
+        for (AreaBox box : area.boxes()) {
+            for (AreaPosition corner : List.of(box.pos1(), box.pos2())) {
+                BlockPos pos = new BlockPos(corner.x(), corner.y(), corner.z());
+                if (!Level.isInSpawnableBounds(pos) || level != null && !level.isInWorldBounds(pos)) {
+                    return false;
+                }
             }
         }
         return true;
@@ -702,7 +709,9 @@ public final class AreaMusicServer {
                 player.level().dimension().identifier(),
                 player.blockPosition(),
                 currentRevision,
-                currentAreas
+                currentAreas,
+                WorldMoment.at(
+                        player.level().getDefaultClockTime(), player.level().isRaining(), player.level().isThundering())
         ).ifPresent(playback -> sender.sendPlayback(player, currentRevision, playback));
     }
 

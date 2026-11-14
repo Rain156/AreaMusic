@@ -247,6 +247,7 @@ public final class AreaMusicEditor implements PanelHost {
             case DRAFT_STARTED -> hud(Component.translatable("areamusic.hud.corner_set", corner));
             case RESIZED -> hud(Component.translatable("areamusic.hud.resized", corner));
             case WRONG_DIMENSION -> hud(Component.translatable("areamusic.hud.wrong_dimension"));
+            case BOX_ADDED -> openPanel();
         }
     }
 

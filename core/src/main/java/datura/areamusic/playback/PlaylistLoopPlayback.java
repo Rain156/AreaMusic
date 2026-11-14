@@ -10,9 +10,13 @@ public record PlaylistLoopPlayback(
         List<String> playlist,
         float volume,
         int fadeInMs,
-        int fadeOutMs
+        int fadeOutMs,
+        boolean shuffle,
+        int gapMs
 ) implements PlaybackDefinition {
     public static final int MAX_ENTRIES = 256;
+    /** Ten minutes of quiet between two tracks is as long as anyone will wait. */
+    public static final int MAX_GAP_MS = 600_000;
     public static final float DEFAULT_VOLUME = 1.0f;
     public static final int DEFAULT_FADE_IN_MS = 2000;
     public static final int DEFAULT_FADE_OUT_MS = 2000;
@@ -47,6 +51,40 @@ public record PlaylistLoopPlayback(
         }
         validateFade("fadeInMs", fadeInMs);
         validateFade("fadeOutMs", fadeOutMs);
+        if (gapMs < 0 || gapMs > MAX_GAP_MS) {
+            throw new IllegalArgumentException("gapMs must be between 0 and " + MAX_GAP_MS);
+        }
+    }
+
+    /** In order, one track straight after the other. */
+    public PlaylistLoopPlayback(List<String> playlist, float volume, int fadeInMs, int fadeOutMs) {
+        this(playlist, volume, fadeInMs, fadeOutMs, false, 0);
+    }
+
+    public PlaylistLoopPlayback withPlaylist(List<String> newPlaylist) {
+        return new PlaylistLoopPlayback(newPlaylist, volume, fadeInMs, fadeOutMs, shuffle, gapMs);
+    }
+
+    public PlaylistLoopPlayback withVolume(float newVolume) {
+        return new PlaylistLoopPlayback(playlist, newVolume, fadeInMs, fadeOutMs, shuffle, gapMs);
+    }
+
+    public PlaylistLoopPlayback withFades(int newFadeInMs, int newFadeOutMs) {
+        return new PlaylistLoopPlayback(playlist, volume, newFadeInMs, newFadeOutMs, shuffle, gapMs);
+    }
+
+    /** Whether each round plays the tracks in a new random order. */
+    public PlaylistLoopPlayback withShuffle(boolean newShuffle) {
+        return new PlaylistLoopPlayback(playlist, volume, fadeInMs, fadeOutMs, newShuffle, gapMs);
+    }
+
+    /** How long it stays quiet after a track before the next one begins. */
+    public PlaylistLoopPlayback withGapMs(int newGapMs) {
+        return new PlaylistLoopPlayback(playlist, volume, fadeInMs, fadeOutMs, shuffle, newGapMs);
+    }
+
+    public long gapFrames(int sampleRate) {
+        return (long) gapMs * sampleRate / 1000L;
     }
 
     @Override
