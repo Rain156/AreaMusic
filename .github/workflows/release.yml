@@ -167,11 +167,9 @@ jobs:
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
         run: |
           set -euo pipefail
-          # A version with a suffix, such as 2.0.0-beta.1, is published as a pre-release.
-          prerelease=()
-          if [[ "$RELEASE_TAG" == *-* ]]; then
-            prerelease=(--prerelease)
-          fi
+          # Every release becomes "Latest", betas included. GitHub never shows a pre-release as
+          # Latest, and while 2.x only has betas that left the old 0.0.1 as the one people were
+          # sent to. The title and the file names still say when a version is a beta.
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/*.jar dist/SHA256SUMS --clobber
           else
@@ -179,5 +177,5 @@ jobs:
               --verify-tag \
               --title "AreaMusic ${RELEASE_TAG#v}" \
               --notes-file dist/RELEASE_NOTES.md \
-              "${prerelease[@]}"
+              --latest
           fi
